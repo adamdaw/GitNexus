@@ -359,6 +359,24 @@ describe.skipIf(!apexAvailable)('Apex trigger container node (REQ-004)', () => {
     );
     expect(triggerDefine).toBeDefined();
   });
+
+  it('does not emit trigger events or the sObject as nodes or node properties (§4)', () => {
+    // Foo.trigger: `trigger Foo on Account (before insert, after update)`.
+    const trigger = getNodesByLabelFull(result, 'Class').find(
+      (n) => n.name === 'Foo' && n.properties.apexConstruct === 'trigger',
+    );
+    expect(trigger).toBeDefined();
+    // No event metadata carried on the trigger node.
+    expect(trigger!.properties.events).toBeUndefined();
+    expect(trigger!.properties.triggerEvents).toBeUndefined();
+    // The sObject (Account) and event keywords are not emitted as graph nodes.
+    for (const label of ['Class', 'Interface', 'Enum', 'Method', 'Constructor', 'Property']) {
+      const names = getNodesByLabel(result, label);
+      expect(names).not.toContain('Account');
+      expect(names).not.toContain('insert');
+      expect(names).not.toContain('update');
+    }
+  });
 });
 
 // ── REQ-014 — annotation metadata on each member kind ───────────────────────
@@ -504,29 +522,8 @@ describe.skipIf(!apexAvailable)('Apex provider statelessness / determinism (§4 
   }, 60000);
 });
 
-// ── Graceful degradation when the optional grammar is unavailable ───────────
-// NOTE: no forceable red state — recognised .cls/.trigger files degrade to a
-// skip whether or not Apex is implemented; this guards the optional-grammar
-// path against regression. See .vsdd/tdd/WI-1-red-gate.md.
-describe('Apex grammar-unavailable degradation (NFR-001 — no crash)', () => {
-  it('completes the run with no Apex nodes when the grammar is absent', async () => {
-    if (apexAvailable) {
-      // When the grammar IS present we cannot exercise the absent path here;
-      // the optional-grammar skip is covered by host-level skip-flag e2e tests.
-      return;
-    }
-    const result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-types'), () => {});
-    expect(result).toBeDefined();
-    // "No Apex nodes" means no Apex *code* nodes — the generic file walker still
-    // creates a File node per .cls regardless of language support, so exclude
-    // container labels and look only for parsed code constructs.
-    const CODE_LABELS = new Set(['Class', 'Interface', 'Enum', 'Method', 'Constructor', 'Property']);
-    const apexCodeNodes: string[] = [];
-    result.graph.forEachNode((n) => {
-      if (CODE_LABELS.has(n.label) && (n.properties.filePath as string | undefined)?.endsWith('.cls')) {
-        apexCodeNodes.push(n.properties.name);
-      }
-    });
-    expect(apexCodeNodes).toEqual([]);
-  }, 60000);
-});
+// Grammar-unavailable degradation (the §8 "recognised files skipped, run
+// completes" clause) is exercised at the pipeline level in
+// test/unit/apex-skip-grammar.test.ts, which forces the runtime opt-out via a
+// fresh module load — a self-disabling skipIf guard here could not drive it once
+// the grammar is present.
