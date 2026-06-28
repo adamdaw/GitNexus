@@ -41,3 +41,16 @@ Mostly fix-induced drift from round 1 (consequential edits not fully propagated)
 | FIND-018 | minor | REQ-005/006 overlap & exhaustiveness | fixed | REQ-006 scoped to "a kind named in REQ-005" |
 | FIND-019 | minor | REQ-002 omits nested interfaces/enums | fixed | broadened to "nested type (class, interface, enum)"; elicitation updated |
 | FIND-020 | minor | §11 WI-2 "intra-file" label vs REQ-009 cross-type | fixed | WI-2 → "Resolution mechanics"; cross-file owned by WI-3 |
+
+## Round 4 (adversary: fresh cold invocation) — VERDICT: PASS, 5 minor findings
+
+No blockers, no majors. Reviewer affirmed intent fidelity, decomposition coverage, modal conformance,
+Constitution consistency. Minors fixed anyway (Gate 1 is fixed-only).
+
+| FIND | Sev | Topic | Status | Fix |
+|---|---|---|---|---|
+| FIND-021 | minor | NFR-003 has no acceptance scenario | fixed | added NFR-003 Gherkin (over-budget file skipped at same threshold) |
+| FIND-022 | minor | REQ-008 delegates to uncited Apex ruleset | fixed | cite "Apex's own documented overload-resolution rules"; fixture pins expected |
+| FIND-023 | minor | REQ-002 "node" vs §2/REQ-004 "container node" | fixed | REQ-002 → container node |
+| FIND-024 | minor | REQ-006 redundant with REQ-005/015 | fixed | REQ-006 reduced to the distinct no-false-unresolved obligation (Intent's literal condition) |
+| FIND-025 | minor | REQ-015 non-sequential numbering | fixed | §5 note: minted at Gate 1, slotted by theme |

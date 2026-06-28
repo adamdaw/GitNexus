@@ -49,7 +49,8 @@ languages model no standard library, and parity excludes it.
 
 ## 5. Functional Requirements (EARS)
 
-*Modal discipline: SHALL only. Each REQ is observable without reading the implementation.*
+*Modal discipline: SHALL only. Each REQ is observable without reading the implementation. REQ-015 was
+minted during Gate 1 and is slotted by theme (resolution), not appended numerically.*
 
 **Recognition**
 - **REQ-001** — The system SHALL classify `.cls` and `.trigger` files as Apex source.
@@ -57,7 +58,7 @@ languages model no standard library, and parity excludes it.
 **Graph population**
 - **REQ-002** — WHEN the system analyses a repository containing Apex source, the system SHALL represent
   each user-defined Apex class, interface, enum, and nested type (a nested class, interface, or enum) as a
-  node in the knowledge graph.
+  container node in the knowledge graph.
 - **REQ-003** — WHEN the system analyses Apex source, the system SHALL represent each method,
   constructor, property, field, and enum constant of a user-defined Apex type as a node associated with
   its declaring type.
@@ -68,9 +69,9 @@ languages model no standard library, and parity excludes it.
 - **REQ-005** — The system SHALL resolve a reference that unambiguously denotes another user-defined
   Apex symbol — method invocation, constructor invocation, type usage, or field/property access — to
   that symbol's node as a resolved edge. (The ambiguous case is governed by REQ-015.)
-- **REQ-006** — IF a reference of a kind named in REQ-005 unambiguously targets a user-defined symbol
-  defined in the analysed repository, THEN the system SHALL emit a resolved edge to that symbol and SHALL
-  NOT record it as an unresolved symbol.
+- **REQ-006** — The system SHALL NOT report a reference that REQ-005 resolves as an unknown or unresolved
+  symbol. (This is INTENT-001's literal acceptance condition; REQ-005 emits the edge, REQ-006 forbids the
+  false unresolved record for the same reference.)
 - **REQ-015** — IF a reference to a user-defined Apex symbol cannot be resolved to a single unambiguous
   target, THEN the system SHALL emit no binding and SHALL record the reference as unresolved (conservative
   resolution, per the governing principle of preferring no binding over a misleading one).
@@ -78,8 +79,9 @@ languages model no standard library, and parity excludes it.
   (`implements`) between user-defined Apex types as edges in the knowledge graph.
 - **REQ-008** — The system SHALL resolve an overloaded user-defined Apex method at a call site by
   parameter count and declared parameter types; WHERE an argument type is assignable but not identical to
-  a declared parameter type, the system SHALL select the overload that Apex's own overload-resolution
-  rules select. (Benchmark parity, REQ-012, concerns node and edge kind, not the selection algorithm.)
+  a declared parameter type, the system SHALL select the overload that Apex's own documented
+  overload-resolution rules select. (Benchmark parity, REQ-012, concerns node and edge kind, not the
+  selection algorithm; the acceptance fixture pins the expected overload for its case.)
 - **REQ-009** — The system SHALL resolve field and property access chains across user-defined Apex types.
 - **REQ-010** — The system SHALL resolve references between user-defined Apex symbols declared in
   different files of the analysed repository without requiring an explicit import statement.
@@ -205,6 +207,13 @@ Scenario: Annotations are captured as metadata
   Given an Apex method annotated with @AuraEnabled
   When GitNexus analyses the repository
   Then the method node carries the annotation as metadata
+
+# NFR-003
+Scenario: An over-budget Apex file is skipped at the same threshold as peers
+  Given an Apex file exceeding the per-file resource budget
+  When GitNexus analyses the repository
+  Then the file is skipped at the same threshold applied to other languages
+  And no Apex-specific budget exemption is applied
 
 # NFR-001
 Scenario: Malformed Apex does not crash the run
