@@ -16,10 +16,11 @@ languages model no standard library, and parity excludes it.
 
 ## 2. Definitions
 
-- **Apex source file** — a file the system classifies as Apex (`.cls`, `.trigger`) or an anonymous
-  Apex block (`.apex`).
+- **Apex source file** — a file the system classifies as Apex (`.cls`, `.trigger`). Anonymous `.apex`
+  blocks are out of scope this cycle (deferred — REQ-105).
 - **User-defined Apex symbol** — a class, interface, enum, inner class, method, constructor, property,
-  field, or trigger declared within the **analysed repository**.
+  field, enum constant, or trigger declared within the **analysed repository**.
+- **Container node** — a graph node that owns member nodes (e.g. a class, interface, enum, or trigger).
 - **External symbol** — a symbol not defined in the analysed repository: Salesforce standard library
   (e.g. `System`, `Database`, `Schema`), sObject types (`Account`, `Foo__c`), or managed-package types.
 - **Resolved edge** — a graph relationship from a reference to the node of the symbol it denotes.
@@ -40,8 +41,8 @@ languages model no standard library, and parity excludes it.
 - **BR-1 (Must):** GitNexus analyses an Apex codebase and produces a knowledge graph of its
   user-defined symbols. *Success:* a repository of Apex files yields class/method/trigger nodes.
 - **BR-2 (Must):** References among user-defined Apex symbols resolve, so Apex no longer reports unknown
-  symbols for in-repository targets. *Success:* zero unresolved references to in-repository Apex
-  symbols on the acceptance corpus.
+  symbols for in-repository targets. *Success:* zero unresolved references to unambiguous in-repository
+  Apex symbols across the acceptance scenarios (§9).
 - **BR-3 (Must):** Apex resolution quality matches the Java/Kotlin benchmark for applicable capabilities.
 - **BR-4 (Must):** Adding Apex does not regress any other language. *Success:* the existing suite stays
   green.
@@ -51,14 +52,14 @@ languages model no standard library, and parity excludes it.
 *Modal discipline: SHALL only. Each REQ is observable without reading the implementation.*
 
 **Recognition**
-- **REQ-001** — The system SHALL classify `.cls`, `.trigger`, and `.apex` files as Apex source.
+- **REQ-001** — The system SHALL classify `.cls` and `.trigger` files as Apex source.
 
 **Graph population**
 - **REQ-002** — WHEN the system analyses a repository containing Apex source, the system SHALL represent
   each user-defined Apex class, interface, enum, and inner class as a node in the knowledge graph.
 - **REQ-003** — WHEN the system analyses Apex source, the system SHALL represent each method,
-  constructor, property, and field of a user-defined Apex type as a node associated with its declaring
-  type.
+  constructor, property, field, and enum constant of a user-defined Apex type as a node associated with
+  its declaring type.
 - **REQ-004** — WHEN the system analyses a repository containing Apex triggers, the system SHALL
   represent each trigger as a container node in the knowledge graph.
 
@@ -66,13 +67,17 @@ languages model no standard library, and parity excludes it.
 - **REQ-005** — The system SHALL resolve a reference from one user-defined Apex symbol to another —
   method invocation, constructor invocation, type usage, and field/property access — to the referenced
   symbol's node as a resolved edge.
-- **REQ-006** — IF an Apex reference targets a user-defined symbol defined in the analysed repository,
-  THEN the system SHALL emit a resolved edge to that symbol and SHALL NOT record it as an unresolved
-  symbol.
+- **REQ-006** — IF an Apex reference unambiguously targets a user-defined symbol defined in the analysed
+  repository, THEN the system SHALL emit a resolved edge to that symbol and SHALL NOT record it as an
+  unresolved symbol.
+- **REQ-015** — IF a reference to a user-defined Apex symbol cannot be resolved to a single unambiguous
+  target, THEN the system SHALL emit no binding and SHALL record the reference as unresolved (conservative
+  resolution, per the governing principle of preferring no binding over a misleading one).
 - **REQ-007** — The system SHALL resolve Apex class inheritance (`extends`) and interface implementation
   (`implements`) between user-defined Apex types as edges in the knowledge graph.
 - **REQ-008** — The system SHALL resolve an overloaded user-defined Apex method at a call site by
-  parameter count and declared parameter types.
+  parameter count and declared parameter types, and WHERE an argument type is assignable but not
+  identical to a declared parameter type, the system SHALL match the benchmark's overload behaviour.
 - **REQ-009** — The system SHALL resolve field and property access chains across user-defined Apex types.
 - **REQ-010** — The system SHALL resolve references between user-defined Apex symbols declared in
   different files of the analysed repository without requiring an explicit import statement.
@@ -80,10 +85,10 @@ languages model no standard library, and parity excludes it.
   field, the system SHALL emit a resolved edge from the trigger to the referenced symbol.
 
 **Parity and external handling**
-- **REQ-012** — The system SHALL provide Apex resolution equal in kind to the Java/Kotlin benchmark
-  across the capabilities applicable to Apex: explicit-type binding, constructor-type inference,
-  inheritance/MRO-aware lookup, overload disambiguation, field/property-chain resolution, and cross-file
-  binding.
+- **REQ-012** — For each capability applicable to Apex — explicit-type binding, constructor-type
+  inference, inheritance and interface-implementation lookup, overload disambiguation,
+  field/property-chain resolution, and cross-file binding — the system SHALL resolve an Apex construct to
+  the same node category the Java/Kotlin benchmark resolves on an equivalent fixture.
 - **REQ-013** — IF an Apex reference targets an external symbol, THEN the system SHALL treat it as an
   external unresolved reference in the same manner as the benchmark treats its standard library, and
   SHALL NOT report it as an Apex-specific defect.
@@ -144,6 +149,13 @@ Scenario: An in-repository method call resolves with no unknown symbol
   Then there is a resolved edge from the call site to the called method
   And no unresolved symbol is recorded for that call
 
+# REQ-015
+Scenario: An ambiguous in-repository reference is left unresolved, not mis-bound
+  Given two user-defined Apex symbols a reference could equally denote
+  When GitNexus analyses the repository
+  Then no resolved edge is emitted for that reference
+  And the reference is recorded as unresolved rather than bound to a wrong target
+
 # REQ-007
 Scenario: Inheritance and interface implementation resolve
   Given an Apex class that extends a user-defined class and implements a user-defined interface
@@ -203,6 +215,8 @@ All four are schema/standard-library realm (excluded by parity) or moderate opti
   Apex variables.
 - **REQ-104 (deferred)** — Annotation framework / entry-point semantics (e.g. `@AuraEnabled`,
   `@InvocableMethod` entry-point detection).
+- **REQ-105 (deferred)** — Anonymous Apex (`.apex`) block recognition, graphing, and reference
+  resolution. (Script-style; no class structure; out of this cycle.)
 
 ## 11. Intended decomposition (epic → work items)
 
@@ -216,7 +230,10 @@ clears Gate 1. Modelled on the host's Swift-ingestion tiers:
 3. **WI-3 — Cross-file & trigger resolution:** implicit-namespace cross-file binding + trigger-body
    resolution (REQ-010, REQ-011).
 4. **WI-4 — Parity hardening & external handling:** Java/Kotlin parity fixtures + external-reference
-   handling (REQ-012, REQ-013, NFR-002, NFR-004).
+   handling (REQ-012, REQ-013, NFR-004).
+
+**NFR-001 (reliability) and NFR-002 (non-regression) are cross-cutting acceptance gates on every work
+item**, not assigned to a single one — any WI that touches parsing or shared code must satisfy both.
 
 ## 12. Requirements Traceability Matrix
 
@@ -228,6 +245,7 @@ clears Gate 1. Modelled on the host's Swift-ingestion tiers:
 | REQ-004 | BR-1 | automated |
 | REQ-005 | BR-2 | automated |
 | REQ-006 | BR-2 | automated |
+| REQ-015 | BR-2 | automated |
 | REQ-007 | BR-2, BR-3 | automated |
 | REQ-008 | BR-3 | automated |
 | REQ-009 | BR-2, BR-3 | automated |

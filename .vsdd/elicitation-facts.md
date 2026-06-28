@@ -22,6 +22,10 @@ against what was consciously scoped — not guessed. Facts only; the **why** liv
 - Trigger context-variable typing (`Trigger.new`/`old`/…).
 - SOQL/SOSL bind-variable references to local Apex variables.
 - Annotation framework / entry-point semantics.
+- Anonymous Apex (`.apex`) blocks — recognition/graphing/resolution (deferred → REQ-105; decided at
+  Gate 1 round 1).
+- Behaviour for ambiguous/unresolvable in-repository references — surfaced at Gate 1 round 1 and brought
+  in-scope as REQ-015 (conservative skip), not deferred.
 
 ## Candidate explicitly rejected (no REQ minted)
 
