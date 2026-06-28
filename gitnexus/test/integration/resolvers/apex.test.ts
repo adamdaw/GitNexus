@@ -76,12 +76,27 @@ describe.skipIf(!apexAvailable)('Apex type container nodes (REQ-002)', () => {
     expect(volumeEdge!.rel.sourceId).toContain('Shapes.InnerBox');
   });
 
-  it('records a name and a line range on a type node', () => {
-    const shapes = getNodesByLabelFull(result, 'Class').find((n) => n.name === 'Shapes');
+  it('records a name and a non-degenerate line range from the definition node', () => {
+    const classes = getNodesByLabelFull(result, 'Class');
+    const shapes = classes.find((n) => n.name === 'Shapes');
     expect(shapes).toBeDefined();
     expect(shapes!.properties.language).toBe('apex');
-    expect(typeof shapes!.properties.startLine).toBe('number');
-    expect(typeof shapes!.properties.endLine).toBe('number');
+    // Top-level Shapes opens the file: startLine 0, and the class spans many lines.
+    expect(shapes!.properties.startLine).toBe(0);
+    expect(shapes!.properties.endLine).toBeGreaterThan(shapes!.properties.startLine as number);
+    // A second type at a different position proves ranges are not uniformly 0/0.
+    const inner = classes.find((n) => n.name === 'InnerBox');
+    expect(inner).toBeDefined();
+    expect(inner!.properties.startLine).toBeGreaterThan(0);
+  });
+
+  it('emits deeply nested types with a fully-qualified id and no stack overflow (REQ-002 / §4)', () => {
+    // Deep.cls: D1>D2>D3>D4>D5, innermost owns deepField/deepMethod.
+    expect(getNodesByLabel(result, 'Class')).toContain('D5');
+    const ownerIds = getRelationships(result, 'HAS_PROPERTY')
+      .filter((e) => e.target === 'deepField')
+      .map((e) => e.rel.sourceId);
+    expect(ownerIds.some((id) => id.includes('D1.D2.D3.D4.D5'))).toBe(true);
   });
 
   it('emits a DEFINES edge from the File node to a top-level type (REQ-002)', () => {
@@ -186,6 +201,37 @@ describe.skipIf(!apexAvailable)('Apex overloads and duplicates (REQ-003)', () =>
       expect(node!.properties.annotations).toContain('@TestVisible');
     }
   });
+
+  it('distinguishes overloads by the canonical parameter-type signature, not a positional fallback (REQ-003)', () => {
+    // The two g overloads must carry distinct ids built from the rendered
+    // parameter-type text (whitespace-stripped, lower-cased): list<account> vs
+    // list<contact>. Asserting the signature segment (not just count===2) is what
+    // lets WI-2 recompute the id; a positional disambiguator would pass count but
+    // fail this.
+    const gOwnerIds = getRelationships(result, 'HAS_METHOD')
+      .filter((e) => e.target === 'g')
+      .map((e) => e.rel.targetId);
+    expect(gOwnerIds.some((id) => id.toLowerCase().includes('list<account>'))).toBe(true);
+    expect(gOwnerIds.some((id) => id.toLowerCase().includes('list<contact>'))).toBe(true);
+  });
+
+  it('case-normalises the identity id but preserves declared casing in the name (REQ-003)', () => {
+    // MixedName(Account a): the node.name preserves casing; the id segment is lower-cased
+    // so a call MIXEDNAME() resolves to the declaration.
+    const node = getNodesByLabelFull(result, 'Method').find((n) => n.name === 'MixedName');
+    expect(node).toBeDefined();
+    const id = getRelationships(result, 'HAS_METHOD').find((e) => e.target === 'MixedName')?.rel
+      .targetId;
+    expect(id).toBeDefined();
+    expect(id!.toLowerCase().includes('mixedname')).toBe(true);
+    expect(id).not.toContain('MixedName'); // identity component is lower-cased
+  });
+
+  it('retains both members of a same-line identical-signature duplicate (column disambiguator, REQ-003/§4)', () => {
+    // `public Integer same, same;` — two declarators, same name, same line.
+    // A line-only disambiguator would collide them; line+column keeps both.
+    expect(getNodesByLabelFull(result, 'Property').filter((n) => n.name === 'same').length).toBe(2);
+  });
 });
 
 // ── REQ-002 — isExported per declaration context ────────────────────────────
@@ -228,6 +274,10 @@ describe.skipIf(!apexAvailable)('Apex isExported by context (REQ-002)', () => {
   });
   it('interface method with no modifier -> true', () => {
     expect(exportedOf('Method', 'show')).toBe(true);
+  });
+  it('top-level type with no modifier -> false', () => {
+    // Visible.cls: `interface Visible` declared with no access modifier.
+    expect(exportedOf('Interface', 'Visible')).toBe(false);
   });
   it('enum constant -> true (own visibility, even inside its enum)', () => {
     expect(exportedOf('Property', 'HAPPY')).toBe(true);
@@ -341,6 +391,29 @@ describe.skipIf(!apexAvailable)('Apex malformed-input crash-safety (NFR-001/SEC-
 
   it('leaves no dangling edges after cascade drops', () => {
     expect(findDanglingEdges(result)).toEqual([]);
+  });
+
+  it('cascades the drop to nested types of a nameless owner, with no empty owner-segment id', () => {
+    // BrokenName.cls: a name-MISSING class containing method m AND a nested class
+    // InnerOfBroken (with innerM). The whole subtree drops — no orphan nested type,
+    // no member re-parented, and no id with an empty owner segment (e.g. `.Inner`).
+    expect(getNodesByLabel(result, 'Class')).not.toContain('InnerOfBroken');
+    expect(getNodesByLabel(result, 'Method')).not.toContain('innerM');
+    const allIds: string[] = [];
+    for (const t of ['DEFINES', 'HAS_METHOD', 'HAS_PROPERTY']) {
+      for (const e of getRelationships(result, t)) {
+        allIds.push(e.rel.sourceId, e.rel.targetId);
+      }
+    }
+    // No emitted id carries an empty qualified segment (leading dot or `..`).
+    expect(allIds.some((id) => /(^|:)\.|\.\./.test(id))).toBe(false);
+  });
+
+  it('handles empty and whitespace-only files without crashing or emitting nodes (§4 null/empty)', () => {
+    // Empty.cls (0 bytes) and Whitespace.cls (whitespace only) sit beside the valid
+    // and malformed files; the run still completes and the valid file is represented.
+    expect(result).toBeDefined();
+    expect(getNodesByLabel(result, 'Class')).toContain('Valid');
   });
 });
 

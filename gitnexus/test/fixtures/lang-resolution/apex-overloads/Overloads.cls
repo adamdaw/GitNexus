@@ -16,4 +16,8 @@ public class Overloads {
 
     @TestVisible
     public Integer p, q, r;
+
+    public void MixedName(Account a) {}
+
+    public Integer same, same;
 }

@@ -35,9 +35,10 @@ a grammar legitimately updates them. None is a behavioural target.
 ## Red-stays-red evidence (`vitest run`, post-scaffold)
 
 - **Behavioural targets RED (none greened):**
-  - `apex.test.ts` — 41/46 behavioural tests fail (the 5 passers are vacuous: the grammar-unavailable degradation no-op early-return, and "no degenerate node"/"no dangling edge" guard-invariants that hold trivially while there are zero Apex nodes — they strengthen in 3b).
+  - `apex.test.ts` — 47/53 behavioural tests fail (the 6 passers are vacuous negative/safety invariants: the grammar-unavailable degradation no-op early-return, and the "no degenerate node" / "no dangling edge" / "owner-cascade drops the nested type" guard-invariants that hold trivially while there are zero Apex nodes — they strengthen in 3b).
   - `ingestion-utils.test.ts` — the 4 Apex **recognition** tests (`.cls`/`.trigger` → `apex`, provider routing) **stay red**: recognition is a behavioural REQ (REQ-001), its impl is the gated extension map, which scaffolding did **not** touch.
 - **Infrastructure-presence tests GREEN (allowed):** `apex-vendored-grammar.test.ts` (2), `grammar-update-monitor.test.ts` (consistency guard + enumeration), `parser-loader-abi.test.ts` (ABI smoke), `assert-publish-grammar-coverage.test.ts` (publish guard).
-- **No new regressions:** full `test/unit` = **23 failed = 19 pre-existing environment failures** (git/CLI/incremental/pdg/sibling — unrelated, this change touches none) **+ 4 recognition anchors**. (Baseline before scaffolding was 26 = 19 env + 4 recognition + 2 manifest-hold-now-green − ... ; the 2 manifest-hold tests went green, the 2 transient vendoring regressions were fixed.)
+- **Degradation invariants GREEN (no forceable red — host machinery + scaffold):** `apex-skip-grammar.test.ts` (runtime `GITNEXUS_SKIP_OPTIONAL_GRAMMARS` opt-out: apex reports unavailable when skipped, available when not — host opt-out machinery + the scaffold's `userSkippable` flag, not WI-1 behaviour).
+- **No new regressions:** full `test/unit` = **23 failed = 19 pre-existing environment failures** (git/CLI/incremental/pdg/sibling — unrelated, this change touches none) **+ 4 recognition anchors**. The manifest-hold tests are green (infra-presence), the transient vendoring regressions fixed.
 
 **Conclusion:** the scaffold made the behavioural suite executable-red and greened only infrastructure-presence tests. The discriminator held: **behaviour stays red until real implementation (Step 3b).**
