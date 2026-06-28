@@ -128,6 +128,15 @@ describe.skipIf(!apexAvailable)('Apex type container nodes (REQ-002)', () => {
     const edge = defines.find((e) => e.target === 'Shapes' && e.sourceLabel === 'File');
     expect(edge).toBeDefined();
   });
+
+  it('does NOT emit a separate containment edge for a nested type (membership is via the qualified id)', () => {
+    // REQ-002: nested types carry no DEFINES/containment edge; their membership is
+    // expressed by id-qualification (Outer.Inner) only.
+    const defines = getRelationships(result, 'DEFINES');
+    for (const nested of ['InnerBox', 'Drawable', 'Palette']) {
+      expect(defines.find((e) => e.target === nested), nested).toBeUndefined();
+    }
+  });
 });
 
 // ── REQ-003 — member nodes (method/constructor/field/property/enum-const) ───
@@ -157,6 +166,11 @@ describe.skipIf(!apexAvailable)('Apex member nodes (REQ-003)', () => {
     expect(props).toContain('RED');
     expect(props).toContain('GREEN');
     expect(props).toContain('BLUE');
+  });
+
+  it('does NOT carry an annotations property on an enum constant (Apex forbids it, REQ-003)', () => {
+    const red = getNodesByLabelFull(result, 'Property').find((n) => n.name === 'RED');
+    expect(red?.properties.annotations).toBeUndefined();
   });
 
   it('connects method and constructor to the type via HAS_METHOD', () => {
