@@ -93,3 +93,27 @@ grammars/assets + language registration before Gate 3 (so behavioural tests are
 red-capable at review), or (ii) explicitly document that brownfield
 capability-additions satisfy the Red Gate via unit-level anchors + a
 justification for the capability-gated suite. Architect to choose.
+
+## UPDATE (2026-06-28) — resolution: test-scaffolding category (option i, refined)
+
+Architect chose option (i), built into the VSDD plugin as the **test-scaffolding
+category** (`feature/plugin` `df1de08`/`da8e079`/`a2cc59d`): non-functional infra
+may land before Gate 3 iff it greens **no behavioural target test**. Applied here:
+the Apex grammar is vendored + registered as scaffolding, flipping the integration
+suite **skip → red** (see `scaffold-ledger.md`). The "45 skipped" state above is
+**superseded** — those tests are now genuinely red. The no-red justification now
+covers only the grammar-unavailable degradation guard (truly no forceable red).
+
+Findings folded into the plugin this session (beyond #10):
+- **#11 — hook wiring.** The *active* gate hook was a stale `~/bin/vsdd-gate-check`
+  bash prototype (defunct schema, cwd-relative → silently no-ops off-project),
+  shadowing the real plugin hook, which itself ran from a **stale install cache**.
+  Fixed: removed the dead settings.json entry; synced the cache to the repo so the
+  live hook = the committed hook (with the scaffold exemption). The gate now
+  genuinely enforces (verified: blocks an untagged `.ts` edit, allows a tagged one).
+- **#12 — discriminator scope.** The first cut ("greens no target test") over-fired:
+  vendoring forces a manifest entry (consistency guard) that greens the manifest-hold
+  *infra-presence* test. Refined to **behavioural** target tests; vendored assets +
+  their registration are rung-3 build/infra, and infra-presence tests may green.
+- **No-red restriction.** With scaffolding in place, the no-red justification was
+  narrowed to an explicit last-resort residual of an exemption ladder.

@@ -22,6 +22,11 @@
     "proto": {
       "name": "tree-sitter-proto",
       "upstream": { "github": "coder3101/tree-sitter-proto" }
+    },
+    "apex": {
+      "name": "tree-sitter-apex",
+      "upstream": { "github": "aheber/tree-sitter-sfapex" },
+      "hold": "ABI-14 regeneration of the sfapex `apex` grammar — upstream parser.c is ABI-15 and will NOT load on the pinned tree-sitter@0.21.1. The monitor must NOT auto-update: any upstream pull re-introduces ABI-15. Re-generate with `tree-sitter generate --abi 14` and drop this hold only after a tree-sitter runtime upgrade."
     }
   }
 }

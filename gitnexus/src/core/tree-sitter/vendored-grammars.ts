@@ -33,6 +33,9 @@ export const VENDORED_GRAMMAR_PACKAGES: ReadonlySet<string> = new Set([
   'tree-sitter-proto',
   'tree-sitter-swift',
   'tree-sitter-kotlin',
+  // vsdd:scaffold (WI-1) — vendored ABI-14 Apex grammar (rung-3 build/infra).
+  // Lets the Apex parsing tests run-and-fail; greens no behavioural target.
+  'tree-sitter-apex',
 ]);
 
 /** Absolute directory of a vendored grammar package under `vendor/`. */

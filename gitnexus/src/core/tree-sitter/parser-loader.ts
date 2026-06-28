@@ -177,6 +177,22 @@ const SOURCES: Record<string, GrammarSource> = {
       'Likely cause: no prebuilt `.node` for this platform/architecture. ' +
       `See ${ISSUES_URL}/2107.`,
   },
+  // vsdd:scaffold (WI-1) — register the vendored ABI-14 Apex grammar so its
+  // behavioural parsing tests can run-and-fail at Gate-3 review (rung-3 build/
+  // infra). This greens no behavioural target: .cls files still aren't routed
+  // (no extension map) and there are no extractors, so parsing yields no Apex
+  // nodes. The SupportedLanguages.Apex enum, the extension map, and the provider
+  // are the gated implementation (Step 3b). Keyed by the literal 'apex' (the enum
+  // value) because the enum member does not exist before implementation.
+  apex: {
+    load: () => requireVendoredGrammar('tree-sitter-apex'),
+    optional: true,
+    userSkippable: true,
+    unavailableNote:
+      'Apex parsing disabled: vendored `tree-sitter-apex` (under ' +
+      '`gitnexus/vendor/tree-sitter-apex`) failed to load. ' +
+      'Likely cause: no prebuilt `.node` for this platform/architecture.',
+  },
 };
 
 /**

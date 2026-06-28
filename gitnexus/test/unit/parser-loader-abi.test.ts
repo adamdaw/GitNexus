@@ -117,6 +117,14 @@ const SMOKE_CASES: Record<string, SmokeCase> = {
     snippet: 'fun main() {}\n',
     rootType: 'source_file',
   },
+  // Vendored ABI-14 Apex grammar (WI-1). Keyed by the literal 'apex' (the enum
+  // value) since SupportedLanguages.Apex does not exist until implementation.
+  // Infra load-smoke only: asserts the grammar loads + parses to its root type.
+  apex: {
+    language: 'apex' as SupportedLanguages,
+    snippet: 'public class Foo { void bar() {} }\n',
+    rootType: 'parser_output',
+  },
 };
 
 describe('parser-loader ABI load-smoke (#1922)', () => {
