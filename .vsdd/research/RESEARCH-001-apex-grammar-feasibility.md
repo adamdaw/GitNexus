@@ -92,3 +92,69 @@ $ node test.cjs
 
 The representative Apex source (`sample.cls`) and the load harness (`test.cjs`) are reproduced
 in `.vsdd/sessions/2026-06-28.md` so the spike survives the ephemeral `/tmp` workspace.
+
+### Addendum (2026-06-28) — node-shape probe for WI-1 SDD (Gate 2 G01/G03)
+
+Extended the spike (`probe.cjs`) to confirm the node shapes WI-1's contract depends on. All parsed
+with **0 ERROR/MISSING**:
+
+```
+enum:    enum_declaration > modifiers, identifier, enum_body > enum_constant > identifier   (×N)
+trigger: trigger_declaration > identifier(name), identifier(sObject), trigger_event*, trigger_body > block
+class @: class_declaration > modifiers > annotation > identifier (+ annotation_argument_list), ...
+```
+
+Findings that bind the SDD:
+- **Enum constants** are `enum_constant` nodes under `enum_body` (each with an `identifier`) — a real,
+  capturable node. Closes the assumption in REQ-003.
+- **Triggers** parse as `trigger_declaration` (a node type distinct from `class_declaration`); the
+  trigger name is the first `identifier` child. Closes the unverified-trigger gap (the original spike
+  parsed only a `.cls`).
+- **Type-level annotations** sit in `class_declaration > modifiers > annotation` — same shape as
+  method annotations — so they are grammatically capturable. (Whether the *host* attaches annotations
+  to type nodes is a separate scope question — Gate 2 G02 — not a grammar limitation.)
+
+Second probe (`probe2.cjs`, Gate 2 H01/H02), all 0 ERROR/MISSING:
+- **Interfaces:** `interface_declaration` parses clean and exposes a `name` field
+  (`childForFieldName('name')` → `identifier "Payable"`); its members are `method_declaration` nodes
+  with name fields. Confirms REQ-002 interface container nodes (closes the H01 overclaim — the original
+  spike parsed no interface).
+- **Parameter `type` field spans the full type text for every shape (probe7).** The `formal_parameter`
+  `type` field's text includes the complete type expression for **array** (`array_type "Account[]"` —
+  brackets included), **qualified/inner** (`scoped_type_identifier "Outer.Inner"`), **multi-arg generic**
+  (`generic_type "Map<Id, Account>"`), and **nested generic** (`"List<List<Account>>"`), all
+  0 ERROR/MISSING. So "the type node's source text" is a complete, uniform canonical-rendering source for
+  every parameter-type shape (REQ-003 signature), not just simple + single-arg generic.
+- **Parameter types are extractable (probe6).** `method_declaration`/`constructor_declaration` →
+  `formal_parameters` → `formal_parameter`, and each `formal_parameter` exposes a **`type` field** (e.g.
+  `Integer`, `String`, `List<Account>` via `generic_type`) and a `name` field (0 ERROR/MISSING). So the
+  declared parameter-type signature needed to give type-only overloads distinct member ids (REQ-003) is
+  a verified grammar fact, not just a host-collision assumption.
+- **Uniform `name` field (probe5) — corrects an earlier over-complication.** `childForFieldName('name')`
+  returns the name identifier for **class, interface, enum, method, constructor, trigger, AND
+  enum_constant** — all of them. (The positional `identifier` children seen in earlier tree dumps ARE
+  the labelled `name` field; both are true.) The ONLY node whose name is not a direct `name` field is
+  `field_declaration` (name nested in `variable_declarator`). So name extraction has **two paths**, not
+  four: (1) the `name` field — every kind except `field_declaration`; (2) the declarator walk —
+  `field_declaration` (one name per `variable_declarator`). Earlier notes that trigger/enum_constant use
+  a "direct identifier, not the name field" were wrong; they use the uniform `name` field.
+- **Nested types — class and interface (not just enum).** `class_body` directly contains nested
+  `class_declaration` and `interface_declaration` nodes (probe4, 0 ERROR/MISSING) — so nesting is
+  grammar-supported for all three type kinds REQ-002 names, not only the nested `enum_declaration` the
+  main spike happened to show.
+- **Multi-declarator fields.** `public Integer a, b, c;` parses as **one** `field_declaration` with
+  **N `variable_declarator` children** (probe4). An annotated multi-declarator (`@TestVisible Integer
+  a, b;`) keeps the `annotation` in the shared `modifiers` node. So REQ-003 must emit one `Property`
+  per `variable_declarator`, and REQ-014 must propagate the field_declaration's annotations to every
+  resulting member.
+- **Member annotations are uniform.** An annotated field, an annotated auto-property, and an annotated
+  constructor all carry the same `modifiers > annotation > identifier` shape as an annotated method
+  (probe3, 0 ERROR/MISSING). So the member-level `extractAnnotations` path (walk `modifiers` for
+  `annotation` children) is uniform across method/constructor/field/property — backing REQ-014's
+  member-level annotation capture for all four kinds.
+- **Property vs field — there is NO `property_declaration` node.** A plain field
+  (`private final Integer x = 3;`), an auto-property (`public String name { get; set; }`), and a
+  property with an accessor modifier (`Decimal total { get; private set; }`) **all parse as
+  `field_declaration`**. The grammar does not distinguish Apex fields from auto-properties at the node
+  level (the accessor block is interior). `field_declaration` carries no direct `name` field — the name
+  is nested in its declarator (the field extractor's `extractName` walk handles it).

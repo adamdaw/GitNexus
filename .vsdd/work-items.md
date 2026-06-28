@@ -9,7 +9,27 @@ epic REQ-NNN, dependency acyclicity, criticality correctness (Core Principle 9).
 - **Status:** **Gate 1 decomposition checkpoint CLEARED (PASS_CLEAN, 2026-06-28)** — 3 fresh-context
   adversary rounds (FAIL→FAIL→PASS_CLEAN); pass record `.vsdd/pass-records/gate1-decomposition.md`,
   findings `.vsdd/findings/gate1-decomposition.md`. Work items valid for Phase 2 entry.
-  ITEM-001 → `active` (Phase 2 SDD authorship begins); ITEM-002…004 → `proposed`.
+- **Execution mode (Architect-chosen, 2026-06-28):** **per-item / vertical** — host-API uncertainty
+  dominates, so build WI-1 first to validate the foundation, then design WI-2…4 on validated ground.
+
+## Per-item state ledger (the authoritative per-WI tracker)
+
+*The project `state.json` is project-level and tracks only the **active/lead** item (a known plugin
+limitation — fold-back #8). This table is the authoritative per-item state until the plugin gains a
+per-item state machine. Keep it current as each item advances.*
+
+| Item | WI | Status | Phase | Gates cleared | Artifacts |
+|---|---|---|---|---|---|
+| ITEM-001 | WI-1 parse & graph | **active** | **3** (tests→impl) | 1, 1-decomp, **2** | light-SRS ✓, SDD-001 ✓, pass-records gate1/gate1-decomposition/gate2 ✓ |
+| ITEM-002 | WI-2 resolution mechanics | proposed | — | (epic 1+decomp) | light-SRS ✓; **SDD pending** |
+| ITEM-003 | WI-3 cross-file & trigger | proposed | — | (epic 1+decomp) | light-SRS ✓; SDD pending |
+| ITEM-004 | WI-4 parity & external | proposed | — | (epic 1+decomp) | light-SRS ✓; SDD pending |
+
+**Dependency-DAG execution (refines the binary mode):** the run follows the dependency graph, not a
+global vertical/horizontal switch — independent items may parallelise; a dependency chain is sequential;
+and the vertical-vs-batched choice can differ per subgraph. Here the DAG is essentially a chain
+(001→002→003→004, +002→004), so there is little to parallelise; WI-1 runs vertically to validate the
+foundation, then WI-2…4 follow in order.
 
 ## Coverage map (every epic REQ/NFR → exactly one owning work item)
 
@@ -32,17 +52,18 @@ completes their inherently-cross-file epic §9 scenarios end-to-end (see WI-2 / 
 
 **Cross-cutting (per epic SRS §11 — gates on *every* WI, not single-owned):** **NFR-001** (malformed/
 incomplete input → the *run* completes without crashing; the unparseable file is skipped) and
-**NFR-002** (no regression of other languages). NFR-001 is a *whole-run* property, not parse-only:
-tree-sitter does error recovery, so malformed source can yield a partial tree with `ERROR` nodes that
-flows past WI-1's parse into resolution — therefore each WI carries its own slice of NFR-001:
-- **WI-1** — the parse-path slice (SECT-001 trust boundary): safe-parse, buffer-size skip, and drop
-  of unparseable files so the run continues.
-- **WI-2/WI-3/WI-4** — the resolution-path slice: resolution completes without crashing on partial /
-  error-recovery trees and on references into skipped files (conservative skip, no throw).
+**NFR-002** (no regression of other languages). NFR-001 is a *whole-run* property: a malformed or
+incomplete Apex file must not crash the run at any stage, and incomplete input can reach the resolution
+stages as well as the parse stage — therefore each WI carries its own slice of NFR-001:
+- **WI-1** — the parse-stage slice (SECT-001 trust boundary): a malformed/over-budget file is skipped
+  and the run continues.
+- **WI-2/WI-3/WI-4** — the resolution-stage slice: resolution completes without crashing on incomplete
+  input and on references into skipped files (an unresolved reference is left unresolved, never a throw).
 
 Every in-scope epic REQ-001…015 is covered by exactly one owning WI; NFR-003 → WI-1, NFR-004 → WI-4,
-and NFR-001 + NFR-002 cross-cut every WI (epic §11). Deferred REQ-101…105 are out of this cycle (epic
-SRS §10) and own no work item.
+and NFR-001 + NFR-002 cross-cut every WI (epic §11). Deferred REQ-101…106 are out of this cycle (epic
+SRS §10) and own no work item. (REQ-014 is scoped to member-level annotations per SRS v1.1; type-level
+annotation capture is the deferred REQ-106.)
 
 ---
 
@@ -77,10 +98,10 @@ SRS §10) and own no work item.
     half is WI-3 (REQ-011) and is out of WI-1's acceptance.
   - "Annotations are captured as metadata" (REQ-014) — **automated**.
   - "An over-budget Apex file is skipped at the same threshold as peers" (NFR-003) — **automated**.
-  - "Malformed Apex does not crash the run" (NFR-001 — WI-1's **parse-path slice** of the cross-cutting
-    NFR-001: safe-parse + skip the unparseable file so the run continues) — **automated**.
+  - "Malformed Apex does not crash the run" (NFR-001 — WI-1's **parse-stage slice**: a malformed or
+    over-budget file is skipped and the run continues) — **automated**.
 - **Dependencies & criticality:** dependencies none; security-critical = true (SECT-001, as above).
-  Cross-cutting acceptance: NFR-001 (parse-path slice) + NFR-002.
+  Cross-cutting acceptance: NFR-001 (parse-stage slice) + NFR-002.
 
 ---
 
@@ -92,11 +113,11 @@ SRS §10) and own no work item.
 - **Requirement links:** REQ-005, REQ-006, REQ-015, REQ-007, REQ-008, REQ-009. (REQ-009 in full —
   WI-3 owns no resolution mechanic, only the cross-file *enabler* REQ-010.)
 - **Owner / assignee:** claude (Builder) — assigned.
-- **Criticality:** **security-critical = false.** Consumes WI-1's safe-parsed `ParsedFile`/AST; it
-  introduces no new untrusted-source parse path (the SECT-001 boundary is owned by WI-1). *Architect
+- **Criticality:** **security-critical = false.** Operates on WI-1's parsed output, not on raw source;
+  it introduces no new untrusted-source parse path (the SECT-001 boundary is owned by WI-1). *Architect
   approval: pending checkpoint sign-off (Adam); rationale: no new trust boundary, operates on parsed
-  artifacts.*
-- **Dependencies:** ITEM-001 (needs nodes + AST to resolve against).
+  output.*
+- **Dependencies:** ITEM-001 (needs the graph nodes to resolve against).
 - **Status:** proposed.
 - **Artifact pointers:** SDD WI-2 section (later); tests in `apex.test.ts`.
 
@@ -109,21 +130,22 @@ SRS §10) and own no work item.
   SRS). WI-2 owns each *mechanic* in full; cross-file reach for all of them is supplied by WI-3's
   REQ-010 enabler, not by co-ownership.
 - **Acceptance boundary (resolves the file-boundary ambiguity of the epic §9 scenarios):** WI-2's own
-  Gate-3 acceptance is verified on fixtures expressible within a **single compilation unit** — inner /
-  nested types in one `.cls` — which exercises every mechanic without the cross-file enabler. The epic
-  §9 scenarios that are *inherently cross-file* as written (REQ-005's "two classes" = two files;
-  REQ-009's "different files" chain) are **completed end-to-end at WI-3** once REQ-010 lands; they are
-  not claimed as same-unit acceptance here. WI-2 remains independently *deployable* (it emits resolved
-  edges for same-unit references immediately).
-- **Gherkin acceptance criteria** (epic SRS §9; **automated**; WI-2 form uses same-unit fixtures):
-  - "An in-repository method call resolves with no unknown symbol" (REQ-005/006) — same-unit fixture
-    (inner-class call); the two-file form completes at WI-3.
+  acceptance is verified within a **single declaration unit** (one top-level type and its nested types)
+  — the scope that exercises every mechanic without the cross-file enabler. The epic §9 scenarios that
+  are *inherently cross-file* as written (REQ-005's "two classes"; REQ-009's "different files" chain)
+  are **completed end-to-end at WI-3** once REQ-010 lands; they are not claimed as single-unit
+  acceptance here. WI-2 remains independently *deployable* (it resolves references within a declaration
+  unit immediately).
+- **Gherkin acceptance criteria** (epic SRS §9; **automated**; WI-2 form verified within a single
+  declaration unit):
+  - "An in-repository method call resolves with no unknown symbol" (REQ-005/006) — single-declaration-
+    unit case; the two-file form completes at WI-3.
   - "An ambiguous in-repository reference is left unresolved, not mis-bound" (REQ-015).
-  - "Inheritance and interface implementation resolve" (REQ-007) — same-unit fixture.
+  - "Inheritance and interface implementation resolve" (REQ-007) — single-declaration-unit case.
   - "Overloaded method resolves by argument shape" + "Overload selection on an assignable argument
     follows Apex rules" (REQ-008).
-  - Field/property-chain resolution (REQ-009) — same-unit fixture; the cross-file chain scenario
-    completes at WI-3.
+  - Field/property-chain resolution (REQ-009) — single-declaration-unit case; the cross-file chain
+    scenario completes at WI-3.
 - **Dependencies & criticality:** depends on ITEM-001; security-critical = false. Cross-cutting
   acceptance: NFR-002, and NFR-001's **resolution-path slice** — resolution completes without crashing
   on partial / error-recovery trees and on references into skipped files (conservative skip, no throw).

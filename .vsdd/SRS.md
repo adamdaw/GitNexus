@@ -3,7 +3,10 @@
 *Epic-tier SRS (VSDD §A.14). Business-facing **what** and **why**; no design or implementation
 detail. Derived from INTENT-001; reviewed against it and the Constitution at Gate 1.*
 
-- **SRS-id:** SRS-001 · **Intent:** INTENT-001 · **Status:** draft (pre-Gate-1)
+- **SRS-id:** SRS-001 · **Intent:** INTENT-001 · **Status:** Gate-1-cleared; **amended v1.1
+  (2026-06-28)** — REQ-014 descoped to member-level; REQ-106 minted (deferred). Driven by Gate 2
+  finding G02; Architect-approved (Adam, 2026-06-28). A scope-reduction + deferral amendment; re-enters
+  Gate 1 fidelity (verified by the fresh Gate 2 adversary reading SRS+SDD together).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope
@@ -99,8 +102,10 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   SHALL NOT report it as an Apex-specific defect.
 
 **Metadata**
-- **REQ-014** — The system SHALL capture annotations declared on Apex types and members as metadata on
-  the corresponding nodes.
+- **REQ-014** — The system SHALL capture annotations declared on Apex **members** (methods,
+  constructors, fields, and properties) as metadata on the corresponding nodes. (Amended v1.1: scoped
+  to member-level. Type-level annotation capture is deferred — REQ-106 — as it exceeds the Java/Kotlin
+  parity benchmark, which captures no type-level annotations, and has no host mechanism.)
 
 ## 6. Non-Functional Requirements (ISO 25010, measurable)
 
@@ -226,8 +231,10 @@ Scenario: Malformed Apex does not crash the run
 ## 10. Deferred requirements (minted, scheduled later)
 
 Each carries a REQ-NNN and a linked tracked item; out of this cycle by recorded decision, not omission.
-All five are deferred by recorded decision: REQ-101…103 are schema/standard-library realm (excluded by
-parity), REQ-104 is a moderate optional enhancement, and REQ-105 is a file-type scope deferral.
+All seven are deferred by recorded decision: REQ-101…103 are schema/standard-library realm (excluded by
+parity), REQ-104 is a moderate optional enhancement, REQ-105 is a file-type scope deferral, REQ-106
+(added v1.1) is type-level annotation capture (excluded by parity), and REQ-107 (added v1.1) is
+annotation argument-value capture (member annotations are captured name-only this cycle).
 
 - **REQ-101 (deferred)** — Semantic resolution of SOQL/SOSL field and object references.
 - **REQ-102 (deferred)** — Typing of trigger context variables (`Trigger.new`, `Trigger.old`, …).
@@ -237,6 +244,17 @@ parity), REQ-104 is a moderate optional enhancement, and REQ-105 is a file-type 
   `@InvocableMethod` entry-point detection).
 - **REQ-105 (deferred)** — Anonymous Apex (`.apex`) block recognition, graphing, and reference
   resolution. (Script-style; no class structure; out of this cycle.)
+- **REQ-106 (deferred, added v1.1)** — Capture of annotations declared on Apex **types**
+  (class/interface/enum/trigger), e.g. `@IsTest` or `@RestResource` on the type node. Deferred because
+  it exceeds the Java/Kotlin parity benchmark — no peer language captures type-level annotations
+  (the governing ground). Out of this cycle by recorded decision (Architect, 2026-06-28). Linked
+  item: ITEM-106.
+- **REQ-107 (deferred, added v1.1)** — Capture of annotation **argument values** (e.g. `cacheable=true`
+  in `@AuraEnabled(cacheable=true)`) as metadata. Member annotations are captured **name-only** this
+  cycle (REQ-014), consistent with the host's name-normalising annotation mechanism and the Java/Kotlin
+  benchmark; full argument-text capture is deferred. This is annotation *data* capture — distinct from
+  REQ-104 (annotation *semantics* / entry-point interpretation). Out of this cycle by recorded decision
+  (Architect, 2026-06-28). Linked item: ITEM-107.
 
 ## 11. Intended decomposition (epic → work items)
 

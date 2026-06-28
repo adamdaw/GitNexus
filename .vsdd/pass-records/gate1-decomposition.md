@@ -38,6 +38,14 @@ from the epic-SRS fidelity pass (`pass-records/gate1.md`).*
   2026-06-28** (directed; pending explicit countersignature in the close-out commit).
 - **Architect approval:** Adam — directed the decomposition + checkpoint and its closure after a clean
   final pass (pending explicit countersignature in the close-out commit).
-- **Verdict:** **PASS_CLEAN** — final cold re-review found no legitimate hole; all raised findings
-  resolved (fixed or rejected-against-source). The work-item set is valid for Phase 2 entry.
+- **Verdict (original loop):** PASS_CLEAN at r3. **Caveat:** rounds 2–3 prompts were *primed* with
+  production context ("re-review round", "you have no knowledge of prior rounds", "check fix-induced
+  drift"), which biases an adversary toward confirming the prior verdict (dogfood finding #6).
+- **Authoritative clean re-run (2026-06-28, at Architect direction):** a **context-free** decomposition
+  adversary (invocation `a6925cb0f1acac09c`; prompt carried only the admitted artefacts + the standing
+  checkpoint criteria — no history/fix/focus framing) returned **PASS** with one **minor** finding
+  (FIND-01: WHAT→HOW leak — mechanism names in light-SRS annotations/rationale), now **fixed**
+  (`work-items.md` scrubbed of `parseSourceSafe`/`ParsedFile`/AST/tree-sitter/`.cls` references). No
+  blocker or major under the clean review → the decomposition holds; Gate 1 epic is **not** revisited.
+- **Verdict:** **PASS** (clean re-run; FIND-01 fixed). The work-item set is valid for Phase 2 entry.
 - **Timestamp:** 2026-06-28 (session).

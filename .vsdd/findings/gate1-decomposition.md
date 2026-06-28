@@ -9,6 +9,7 @@ is never signed off. Reviewed across three fresh-context adversary rounds.*
 | FIND-D02 | 1 | coverage (NFR classification) | minor | **rejected → re-fixed** | Argued NFR-001 should be WI-1-owned, not cross-cutting. Accepting it caused FIND-E01. See note. |
 | FIND-D03 | 1 | slice-fidelity | minor | fixed | REQ-005/006 §9 scenario ("two classes") is naturally cross-file; WI-2 claimed it as same-file acceptance without stating the same-unit construct. |
 | FIND-E01 | 2 | slice-fidelity/consistency | major | fixed | The FIND-D02 fix (NFR-001 → WI-1-only) contradicted epic §11 (NFR-001 is cross-cutting) and left the whole-run no-crash property unverifiable on the resolution path (error-recovery partial trees reach the resolver). |
+| FIND-01 | clean re-run | slice-fidelity | minor | fixed | WHAT→HOW leak: light-SRS annotations/rationale named mechanisms (`parseSourceSafe`, `ParsedFile`/AST, tree-sitter error-recovery, `.cls`). Scrubbed to observable WHAT; mechanism detail relocated to the SDD. Found by the context-free re-run (the primed rounds missed it). |
 
 ## Resolutions
 
