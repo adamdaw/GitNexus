@@ -30,3 +30,14 @@ Mostly fix-induced drift from round 1 (consequential edits not fully propagated)
 | FIND-012 | minor | §10 stale "four" (five deferred REQs) | fixed | corrected to five + per-REQ characterisation |
 | FIND-013 | minor | §11 "resolution may lag" — non-SHALL modal leak | fixed | reworded non-normative |
 | FIND-014 | minor | NFR-001 double-assigned (WI-1 + cross-cutting); NFR-003 measurable only by reference | fixed | NFR-001 cross-cutting only; NFR-003 restated observably |
+
+## Round 3 (adversary: fresh cold invocation) — VERDICT: FAIL, 6 findings ("SRS is strong"; subtler)
+
+| FIND | Sev | Topic | Status | Fix |
+|---|---|---|---|---|
+| FIND-015 | major | NFR-003 round-2 fix introduced HOW-leak ("no separate ingestion path") + not perf-measurable | fixed | restated as observable threshold-parity property; architecture rule already lives in Constitution §2.2 |
+| FIND-016 | major | REQ-008 "match benchmark behaviour" ambiguous (algorithm vs Apex rules) | fixed | governed by Apex's own overload rules; parity (REQ-012) scoped to node/edge kind; assignable-case Gherkin added |
+| FIND-017 | minor | NFR-001 "unit" undefined | fixed | "unparseable file" |
+| FIND-018 | minor | REQ-005/006 overlap & exhaustiveness | fixed | REQ-006 scoped to "a kind named in REQ-005" |
+| FIND-019 | minor | REQ-002 omits nested interfaces/enums | fixed | broadened to "nested type (class, interface, enum)"; elicitation updated |
+| FIND-020 | minor | §11 WI-2 "intra-file" label vs REQ-009 cross-type | fixed | WI-2 → "Resolution mechanics"; cross-file owned by WI-3 |

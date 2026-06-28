@@ -56,7 +56,8 @@ languages model no standard library, and parity excludes it.
 
 **Graph population**
 - **REQ-002** — WHEN the system analyses a repository containing Apex source, the system SHALL represent
-  each user-defined Apex class, interface, enum, and inner class as a node in the knowledge graph.
+  each user-defined Apex class, interface, enum, and nested type (a nested class, interface, or enum) as a
+  node in the knowledge graph.
 - **REQ-003** — WHEN the system analyses Apex source, the system SHALL represent each method,
   constructor, property, field, and enum constant of a user-defined Apex type as a node associated with
   its declaring type.
@@ -67,17 +68,18 @@ languages model no standard library, and parity excludes it.
 - **REQ-005** — The system SHALL resolve a reference that unambiguously denotes another user-defined
   Apex symbol — method invocation, constructor invocation, type usage, or field/property access — to
   that symbol's node as a resolved edge. (The ambiguous case is governed by REQ-015.)
-- **REQ-006** — IF an Apex reference unambiguously targets a user-defined symbol defined in the analysed
-  repository, THEN the system SHALL emit a resolved edge to that symbol and SHALL NOT record it as an
-  unresolved symbol.
+- **REQ-006** — IF a reference of a kind named in REQ-005 unambiguously targets a user-defined symbol
+  defined in the analysed repository, THEN the system SHALL emit a resolved edge to that symbol and SHALL
+  NOT record it as an unresolved symbol.
 - **REQ-015** — IF a reference to a user-defined Apex symbol cannot be resolved to a single unambiguous
   target, THEN the system SHALL emit no binding and SHALL record the reference as unresolved (conservative
   resolution, per the governing principle of preferring no binding over a misleading one).
 - **REQ-007** — The system SHALL resolve Apex class inheritance (`extends`) and interface implementation
   (`implements`) between user-defined Apex types as edges in the knowledge graph.
 - **REQ-008** — The system SHALL resolve an overloaded user-defined Apex method at a call site by
-  parameter count and declared parameter types, and WHERE an argument type is assignable but not
-  identical to a declared parameter type, the system SHALL match the benchmark's overload behaviour.
+  parameter count and declared parameter types; WHERE an argument type is assignable but not identical to
+  a declared parameter type, the system SHALL select the overload that Apex's own overload-resolution
+  rules select. (Benchmark parity, REQ-012, concerns node and edge kind, not the selection algorithm.)
 - **REQ-009** — The system SHALL resolve field and property access chains across user-defined Apex types.
 - **REQ-010** — The system SHALL resolve references between user-defined Apex symbols declared in
   different files of the analysed repository without requiring an explicit import statement.
@@ -101,12 +103,12 @@ languages model no standard library, and parity excludes it.
 ## 6. Non-Functional Requirements (ISO 25010, measurable)
 
 - **NFR-001 (Reliability)** — WHILE analysing malformed or syntactically incomplete Apex source, the
-  system SHALL complete the analysis run without crashing and SHALL skip the unparseable unit.
+  system SHALL complete the analysis run without crashing and SHALL skip the unparseable file.
 - **NFR-002 (Compatibility)** — The system SHALL preserve existing resolution and graph behaviour for
   every other supported language (measured: the pre-existing test suite stays green).
-- **NFR-003 (Performance efficiency)** — The system SHALL ingest Apex using the same per-file
-  resource-budget mechanism as other supported languages, introducing no Apex-specific budget exception
-  or separate ingestion path.
+- **NFR-003 (Performance efficiency)** — The system SHALL apply the same per-file resource-budget
+  threshold to Apex files as to other supported languages: a file exceeding that threshold is skipped at
+  the same limit, with no Apex-specific exemption.
 - **NFR-004 (Maintainability)** — Apex resolution SHALL be covered by an automated resolution test
   comparable in kind to those covering peer supported languages.
 
@@ -172,6 +174,12 @@ Scenario: Overloaded method resolves by argument shape
   When GitNexus analyses the repository
   Then the resolved edge targets the matching overload
 
+Scenario: Overload selection on an assignable argument follows Apex rules
+  Given a user-defined Apex class with overloads whose parameter types differ
+  And a call site whose argument type is assignable but not identical to one parameter type
+  When GitNexus analyses the repository
+  Then the resolved edge targets the overload Apex's overload-resolution rules select
+
 # REQ-009, REQ-010
 Scenario: Cross-file field/property chain resolves without an import
   Given user-defined Apex types in different files where one accesses a property chain on the other
@@ -229,8 +237,9 @@ clears Gate 1. Modelled on the host's Swift-ingestion tiers:
 1. **WI-1 — Parse & graph population:** grammar integration + recognition + class/member/trigger nodes
    (REQ-001…004, REQ-014, NFR-003). Independently deployable — the graph populates before resolution is
    required.
-2. **WI-2 — Intra-file resolution:** calls, type usage, inheritance, overloads, field/property chains
-   within a file, including conservative skip of ambiguous references (REQ-005…009, REQ-015).
+2. **WI-2 — Resolution mechanics:** calls, type usage, inheritance, overloads, field/property
+   chain resolution, and conservative skip of ambiguous references (REQ-005…009, REQ-015). The
+   cross-file aspect of these mechanics is owned by WI-3.
 3. **WI-3 — Cross-file & trigger resolution:** implicit-namespace cross-file binding + trigger-body
    resolution (REQ-010, REQ-011).
 4. **WI-4 — Parity hardening & external handling:** Java/Kotlin parity fixtures + external-reference

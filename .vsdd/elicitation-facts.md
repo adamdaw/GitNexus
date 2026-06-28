@@ -50,8 +50,9 @@ against what was consciously scoped — not guessed. Facts only; the **why** liv
 
 ## Construct coverage decided in-scope (this cycle)
 
-- Parse + graph: classes, interfaces, enums, inner classes, methods, constructors, properties, fields,
-  triggers (as containers); annotations captured as node metadata.
+- Parse + graph: classes, interfaces, enums, nested types (nested class/interface/enum), methods,
+  constructors, properties, fields, enum constants, triggers (as containers); annotations captured as
+  node metadata.
 - Resolve (user-defined): calls, type usage, constructor invocation, inheritance/implementation,
   overloads, field/property chains, cross-file (no import), trigger-body references.
 - External symbols (stdlib/sObject/managed-package): handled as external/unresolved at benchmark parity.
