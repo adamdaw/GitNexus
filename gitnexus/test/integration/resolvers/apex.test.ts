@@ -507,19 +507,67 @@ describe.skipIf(!apexAvailable)('Apex per-file resource budget (NFR-003)', () =>
   });
 });
 
-// ── Provider statelessness / determinism (§4 concurrent) ────────────────────
-// The provider must hold no shared Apex mutable state — per-file isolation under
-// the host worker model. The observable proxy: repeated runs over the same repo
-// produce identical output (no state bleed between runs). No forceable red pre-impl
-// (zero nodes either way); strengthens once extractors emit nodes in 3b.
-describe.skipIf(!apexAvailable)('Apex provider statelessness / determinism (§4 concurrent)', () => {
-  it('produces identical node sets across repeated runs (no shared mutable provider state)', async () => {
-    const a = await runPipelineFromRepo(path.join(FIXTURES, 'apex-types'), () => {});
-    const b = await runPipelineFromRepo(path.join(FIXTURES, 'apex-types'), () => {});
-    expect(getNodesByLabel(a, 'Class')).toEqual(getNodesByLabel(b, 'Class'));
-    expect(getNodesByLabel(a, 'Method')).toEqual(getNodesByLabel(b, 'Method'));
-    expect(getNodesByLabel(a, 'Property')).toEqual(getNodesByLabel(b, 'Property'));
+// ── Provider per-file isolation (§4 concurrent) ─────────────────────────────
+// The provider must hold no shared Apex mutable state: each file is parsed in
+// isolation (host worker model), so every emitted node is attributed to its own
+// source file — no cross-file bleed or misattribution. This is the observable
+// behavioural consequence of statelessness (the code-level "no module mutable
+// state" is additionally a Gate-4 review property). Each type below lives in its
+// own fixture file; asserting filePath provenance catches shared-state bleed.
+describe.skipIf(!apexAvailable)('Apex per-file isolation (§4 concurrent)', () => {
+  let result: PipelineResult;
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-types'), () => {});
   }, 60000);
+
+  it('attributes each top-level type node to its own source file (no cross-file bleed)', () => {
+    const expectations: Record<string, string> = {
+      Shapes: 'Shapes.cls',
+      TopShape: 'TopShape.cls',
+      TopColor: 'TopColor.cls',
+      D1: 'Deep.cls',
+    };
+    const types = [
+      ...getNodesByLabelFull(result, 'Class'),
+      ...getNodesByLabelFull(result, 'Interface'),
+      ...getNodesByLabelFull(result, 'Enum'),
+    ];
+    for (const [name, file] of Object.entries(expectations)) {
+      const node = types.find((n) => n.name === name);
+      expect(node, name).toBeDefined();
+      expect(node!.properties.filePath as string).toContain(file);
+    }
+  });
+
+  it('emits each top-level type exactly once (no duplication from state bleed)', () => {
+    const shapes = getNodesByLabelFull(result, 'Class').filter((n) => n.name === 'Shapes');
+    expect(shapes.length).toBe(1);
+    const topShape = getNodesByLabelFull(result, 'Interface').filter((n) => n.name === 'TopShape');
+    expect(topShape.length).toBe(1);
+  });
+});
+
+// ── Encoding robustness (§4 encoding) ───────────────────────────────────────
+// Host buffer sizing handles byte-level encoding, but a UTF-8 BOM or CRLF can
+// leak into extracted identifier text if name extraction is naive — an
+// Apex-path concern. The class name must come through clean (no BOM char),
+// proving the extraction path is encoding-robust.
+describe.skipIf(!apexAvailable)('Apex encoding robustness (§4)', () => {
+  let result: PipelineResult;
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-encoding'), () => {});
+  }, 60000);
+
+  it('extracts a clean class name from a BOM-prefixed, CRLF file (no BOM in the name)', () => {
+    const classes = getNodesByLabel(result, 'Class');
+    expect(classes).toContain('BomClass');
+    const BOM = String.fromCharCode(0xfeff);
+    expect(classes.some((n) => n.includes(BOM))).toBe(false);
+  });
+
+  it('emits members from a CRLF file', () => {
+    expect(getNodesByLabel(result, 'Method')).toContain('bomMethod');
+  });
 });
 
 // Grammar-unavailable degradation (the §8 "recognised files skipped, run
