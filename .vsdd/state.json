@@ -1,0 +1,12 @@
+{
+  "project": "GitNexus-Apex",
+  "phase": 1,
+  "gates_passed": [],
+  "artifacts": {
+    "1": [".vsdd/Intent.md", ".vsdd/SRS.md", ".vsdd/Constitution.md"],
+    "2": [".vsdd/SDD.md"],
+    "3": ["gitnexus/test/integration/resolvers/apex.test.ts"],
+    "4": [".vsdd/pass-records/gate4.md"],
+    "5": [".vsdd/pass-records/gate5.md"]
+  }
+}

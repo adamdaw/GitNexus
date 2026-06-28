@@ -1,0 +1,242 @@
+# Software Requirements Specification — Apex Support for GitNexus
+
+*Epic-tier SRS (VSDD §A.14). Business-facing **what** and **why**; no design or implementation
+detail. Derived from INTENT-001; reviewed against it and the Constitution at Gate 1.*
+
+- **SRS-id:** SRS-001 · **Intent:** INTENT-001 · **Status:** draft (pre-Gate-1)
+- **Classification:** epic (fans out into multiple independently-deployable work items).
+
+## 1. Purpose and Scope
+
+GitNexus builds a queryable knowledge graph from source code across many languages. It has no Apex
+support, so Salesforce codebases cannot be graphed or analysed. This SRS specifies first-class Apex
+support **at resolution parity with GitNexus's Java/Kotlin-tier support, for user-defined Apex
+symbols.** Salesforce standard-library, sObject, and schema modelling are **out of scope** — peer
+languages model no standard library, and parity excludes it.
+
+## 2. Definitions
+
+- **Apex source file** — a file the system classifies as Apex (`.cls`, `.trigger`) or an anonymous
+  Apex block (`.apex`).
+- **User-defined Apex symbol** — a class, interface, enum, inner class, method, constructor, property,
+  field, or trigger declared within the **analysed repository**.
+- **External symbol** — a symbol not defined in the analysed repository: Salesforce standard library
+  (e.g. `System`, `Database`, `Schema`), sObject types (`Account`, `Foo__c`), or managed-package types.
+- **Resolved edge** — a graph relationship from a reference to the node of the symbol it denotes.
+- **Unresolved (unknown) symbol** — a reference for which no resolved edge is emitted.
+- **Benchmark** — GitNexus's Java/Kotlin support, the parity target for resolution behaviour.
+- **Analysed repository** — the codebase passed to a single GitNexus analysis run.
+
+## 3. Stakeholders
+
+| Role | Stakeholder | Goal | Priority |
+|---|---|---|---|
+| Architect / requester | Adam | Graph and analyse Salesforce/Apex codebases in GitNexus | Must |
+| GitNexus users | Apex/Salesforce developers | Call graphs, impact analysis, context over Apex | Must |
+| Host maintainer | upstream GitNexus | A change that honours the DoD and does not regress other languages | Must |
+
+## 4. Business Requirements
+
+- **BR-1 (Must):** GitNexus analyses an Apex codebase and produces a knowledge graph of its
+  user-defined symbols. *Success:* a repository of Apex files yields class/method/trigger nodes.
+- **BR-2 (Must):** References among user-defined Apex symbols resolve, so Apex no longer reports unknown
+  symbols for in-repository targets. *Success:* zero unresolved references to in-repository Apex
+  symbols on the acceptance corpus.
+- **BR-3 (Must):** Apex resolution quality matches the Java/Kotlin benchmark for applicable capabilities.
+- **BR-4 (Must):** Adding Apex does not regress any other language. *Success:* the existing suite stays
+  green.
+
+## 5. Functional Requirements (EARS)
+
+*Modal discipline: SHALL only. Each REQ is observable without reading the implementation.*
+
+**Recognition**
+- **REQ-001** — The system SHALL classify `.cls`, `.trigger`, and `.apex` files as Apex source.
+
+**Graph population**
+- **REQ-002** — WHEN the system analyses a repository containing Apex source, the system SHALL represent
+  each user-defined Apex class, interface, enum, and inner class as a node in the knowledge graph.
+- **REQ-003** — WHEN the system analyses Apex source, the system SHALL represent each method,
+  constructor, property, and field of a user-defined Apex type as a node associated with its declaring
+  type.
+- **REQ-004** — WHEN the system analyses a repository containing Apex triggers, the system SHALL
+  represent each trigger as a container node in the knowledge graph.
+
+**Reference resolution (user-defined)**
+- **REQ-005** — The system SHALL resolve a reference from one user-defined Apex symbol to another —
+  method invocation, constructor invocation, type usage, and field/property access — to the referenced
+  symbol's node as a resolved edge.
+- **REQ-006** — IF an Apex reference targets a user-defined symbol defined in the analysed repository,
+  THEN the system SHALL emit a resolved edge to that symbol and SHALL NOT record it as an unresolved
+  symbol.
+- **REQ-007** — The system SHALL resolve Apex class inheritance (`extends`) and interface implementation
+  (`implements`) between user-defined Apex types as edges in the knowledge graph.
+- **REQ-008** — The system SHALL resolve an overloaded user-defined Apex method at a call site by
+  parameter count and declared parameter types.
+- **REQ-009** — The system SHALL resolve field and property access chains across user-defined Apex types.
+- **REQ-010** — The system SHALL resolve references between user-defined Apex symbols declared in
+  different files of the analysed repository without requiring an explicit import statement.
+- **REQ-011** — WHEN a user-defined Apex trigger body references a user-defined Apex type, method, or
+  field, the system SHALL emit a resolved edge from the trigger to the referenced symbol.
+
+**Parity and external handling**
+- **REQ-012** — The system SHALL provide Apex resolution equal in kind to the Java/Kotlin benchmark
+  across the capabilities applicable to Apex: explicit-type binding, constructor-type inference,
+  inheritance/MRO-aware lookup, overload disambiguation, field/property-chain resolution, and cross-file
+  binding.
+- **REQ-013** — IF an Apex reference targets an external symbol, THEN the system SHALL treat it as an
+  external unresolved reference in the same manner as the benchmark treats its standard library, and
+  SHALL NOT report it as an Apex-specific defect.
+
+**Metadata**
+- **REQ-014** — The system SHALL capture annotations declared on Apex types and members as metadata on
+  the corresponding nodes.
+
+## 6. Non-Functional Requirements (ISO 25010, measurable)
+
+- **NFR-001 (Reliability)** — WHILE analysing malformed or syntactically incomplete Apex source, the
+  system SHALL complete the analysis run without crashing and SHALL skip the unparseable unit.
+- **NFR-002 (Compatibility)** — The system SHALL preserve existing resolution and graph behaviour for
+  every other supported language (measured: the pre-existing test suite stays green).
+- **NFR-003 (Performance efficiency)** — The system SHALL ingest Apex within the host pipeline's existing
+  per-file resource budgets, introducing no Apex-specific budget exception.
+- **NFR-004 (Maintainability)** — Apex resolution SHALL be covered by an automated resolution test
+  comparable in kind to those covering peer supported languages.
+
+## 7. Constraints
+
+- **C-1** — Delivered as a fork of GitNexus; MUST conform to its Definition of Done and CI gates.
+- **C-2** — The only new runtime dependency permitted is an OSI-permissive tree-sitter Apex grammar
+  (Constitution §4).
+- **C-3** — No standard-library, sObject, or schema modelling is in scope (the parity boundary).
+
+## 8. Assumptions and Dependencies (impact-if-wrong)
+
+- **A-1** — A usable tree-sitter Apex grammar exists and can be built and loaded in GitNexus's Node
+  runtime. *If wrong:* the parsing approach is infeasible and the epic stalls (cf. Swift's Node-22
+  block). **Mitigation: a mandatory Phase 2b §A.6 feasibility spike before the architecture commits.**
+- **A-2** — Apex's OOP semantics map onto the benchmark's resolution model. *If wrong:* resolver work
+  beyond parity is needed, expanding scope.
+- **A-3** — Apex's implicit namespace can be modelled with the host's existing cross-file / whole-module
+  import synthesis. *If wrong:* REQ-010 needs a new mechanism.
+
+## 9. Acceptance Criteria (Gherkin)
+
+```gherkin
+# REQ-001, REQ-002, REQ-003
+Scenario: Apex classes and members enter the graph
+  Given a repository containing an Apex class with a method and a field
+  When GitNexus analyses the repository
+  Then the graph contains a node for the class
+  And the graph contains nodes for its method and field associated with the class
+
+# REQ-004, REQ-011
+Scenario: A trigger resolves a call to a user-defined handler
+  Given an Apex trigger whose body calls a method on a user-defined Apex class
+  When GitNexus analyses the repository
+  Then the graph contains a container node for the trigger
+  And there is a resolved edge from the trigger to the user-defined method
+
+# REQ-005, REQ-006
+Scenario: An in-repository method call resolves with no unknown symbol
+  Given two user-defined Apex classes where one calls a method on the other
+  When GitNexus analyses the repository
+  Then there is a resolved edge from the call site to the called method
+  And no unresolved symbol is recorded for that call
+
+# REQ-007
+Scenario: Inheritance and interface implementation resolve
+  Given an Apex class that extends a user-defined class and implements a user-defined interface
+  When GitNexus analyses the repository
+  Then the graph contains an inheritance edge to the parent class
+  And the graph contains an implementation edge to the interface
+
+# REQ-008
+Scenario: Overloaded method resolves by argument shape
+  Given a user-defined Apex class with two methods of the same name and different parameter counts
+  And a call site that matches one overload
+  When GitNexus analyses the repository
+  Then the resolved edge targets the matching overload
+
+# REQ-009, REQ-010
+Scenario: Cross-file field/property chain resolves without an import
+  Given user-defined Apex types in different files where one accesses a property chain on the other
+  When GitNexus analyses the repository
+  Then the chain resolves to the declaring members across files
+  And resolution requires no explicit import statement
+
+# REQ-012
+Scenario: Apex resolution reaches Java/Kotlin parity
+  Given an Apex fixture and an equivalent Java fixture exercising the same OOP construct
+  When GitNexus analyses both
+  Then the Apex graph resolves the construct equivalently to the Java graph
+
+# REQ-013
+Scenario: A standard-library reference is external, not a defect
+  Given an Apex method that calls System.debug
+  When GitNexus analyses the repository
+  Then the call to System.debug is treated as an external unresolved reference
+  And it is not reported as an Apex-specific unknown-symbol defect
+
+# REQ-014
+Scenario: Annotations are captured as metadata
+  Given an Apex method annotated with @AuraEnabled
+  When GitNexus analyses the repository
+  Then the method node carries the annotation as metadata
+
+# NFR-001
+Scenario: Malformed Apex does not crash the run
+  Given a repository containing a syntactically broken Apex file alongside valid files
+  When GitNexus analyses the repository
+  Then the analysis completes
+  And the valid files are represented in the graph
+```
+
+## 10. Deferred requirements (minted, scheduled later)
+
+Each carries a REQ-NNN and a linked tracked item; out of this cycle by recorded decision, not omission.
+All four are schema/standard-library realm (excluded by parity) or moderate optional enhancements.
+
+- **REQ-101 (deferred)** — Semantic resolution of SOQL/SOSL field and object references.
+- **REQ-102 (deferred)** — Typing of trigger context variables (`Trigger.new`, `Trigger.old`, …).
+- **REQ-103 (deferred)** — Resolution of SOQL/SOSL bind-variable references (`:localVar`) to local
+  Apex variables.
+- **REQ-104 (deferred)** — Annotation framework / entry-point semantics (e.g. `@AuraEnabled`,
+  `@InvocableMethod` entry-point detection).
+
+## 11. Intended decomposition (epic → work items)
+
+Provisional; the formal cut and its **Gate 1 decomposition checkpoint** follow once this epic SRS
+clears Gate 1. Modelled on the host's Swift-ingestion tiers:
+
+1. **WI-1 — Parse & graph population:** grammar integration + recognition + class/member/trigger nodes
+   (REQ-001…004, REQ-014, NFR-001/003). Independently deployable (graph populates; resolution may lag).
+2. **WI-2 — Intra-file resolution:** calls, type usage, inheritance, overloads, field/property chains
+   within a file (REQ-005…009).
+3. **WI-3 — Cross-file & trigger resolution:** implicit-namespace cross-file binding + trigger-body
+   resolution (REQ-010, REQ-011).
+4. **WI-4 — Parity hardening & external handling:** Java/Kotlin parity fixtures + external-reference
+   handling (REQ-012, REQ-013, NFR-002, NFR-004).
+
+## 12. Requirements Traceability Matrix
+
+| REQ | Business req | Confirmation mode |
+|---|---|---|
+| REQ-001 | BR-1 | automated |
+| REQ-002 | BR-1 | automated |
+| REQ-003 | BR-1 | automated |
+| REQ-004 | BR-1 | automated |
+| REQ-005 | BR-2 | automated |
+| REQ-006 | BR-2 | automated |
+| REQ-007 | BR-2, BR-3 | automated |
+| REQ-008 | BR-3 | automated |
+| REQ-009 | BR-2, BR-3 | automated |
+| REQ-010 | BR-2, BR-3 | automated |
+| REQ-011 | BR-1, BR-2 | automated |
+| REQ-012 | BR-3 | automated |
+| REQ-013 | BR-2 | automated |
+| REQ-014 | BR-1 | automated |
+| NFR-001 | BR-1 | automated |
+| NFR-002 | BR-4 | automated |
+| NFR-003 | BR-1 | automated |
+| NFR-004 | BR-3 | automated |
