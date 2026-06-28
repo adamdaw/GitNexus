@@ -20,4 +20,8 @@ public class Overloads {
     public void MixedName(Account a) {}
 
     public Integer same, same;
+
+    public Integer
+        ml1,
+        ml2;
 }

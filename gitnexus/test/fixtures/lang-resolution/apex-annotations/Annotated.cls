@@ -9,4 +9,9 @@ public class Annotated {
 
     @TestVisible
     public Annotated() {}
+
+    @TestVisible
+    @AuraEnabled
+    @SomeUnknownAnno
+    public Integer multiAnno;
 }

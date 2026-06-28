@@ -99,6 +99,30 @@ describe.skipIf(!apexAvailable)('Apex type container nodes (REQ-002)', () => {
     expect(ownerIds.some((id) => id.includes('D1.D2.D3.D4.D5'))).toBe(true);
   });
 
+  it('qualifies nested interface and enum ids kind-agnostically, not just classes (REQ-002)', () => {
+    // Drawable (nested interface) owns draw(); Palette (nested enum) owns RED.
+    const drawOwner = getRelationships(result, 'HAS_METHOD').find((e) => e.target === 'draw')?.rel
+      .sourceId;
+    expect(drawOwner, 'nested interface owner id').toBeDefined();
+    expect(drawOwner!).toContain('Shapes.Drawable');
+    const redOwner = getRelationships(result, 'HAS_PROPERTY').find((e) => e.target === 'RED')?.rel
+      .sourceId;
+    expect(redOwner, 'nested enum owner id').toBeDefined();
+    expect(redOwner!).toContain('Shapes.Palette');
+  });
+
+  it('does not collide a nested enum with a same-named top-level enum (REQ-002)', () => {
+    // Shapes.Palette (nested) vs top-level Palette (Palette.cls) → two distinct Enum nodes.
+    expect(getNodesByLabel(result, 'Enum').filter((n) => n === 'Palette').length).toBe(2);
+    const hp = getRelationships(result, 'HAS_PROPERTY');
+    const nestedOwner = hp.find((e) => e.target === 'RED')?.rel.sourceId; // nested Shapes.Palette
+    const topOwner = hp.find((e) => e.target === 'TOPX')?.rel.sourceId; // top-level Palette
+    expect(nestedOwner).toBeDefined();
+    expect(topOwner).toBeDefined();
+    expect(nestedOwner).not.toBe(topOwner);
+    expect(topOwner!).not.toContain('Shapes.');
+  });
+
   it('emits a DEFINES edge from the File node to a top-level type (REQ-002)', () => {
     const defines = getRelationships(result, 'DEFINES');
     const edge = defines.find((e) => e.target === 'Shapes' && e.sourceLabel === 'File');
@@ -232,6 +256,17 @@ describe.skipIf(!apexAvailable)('Apex overloads and duplicates (REQ-003)', () =>
     // A line-only disambiguator would collide them; line+column keeps both.
     expect(getNodesByLabelFull(result, 'Property').filter((n) => n.name === 'same').length).toBe(2);
   });
+
+  it('gives each multi-declarator member its own distinct line range (REQ-003)', () => {
+    // `public Integer\n ml1,\n ml2;` — declarators on different source lines must
+    // carry their own startLine (from the variable_declarator), not the shared range.
+    const props = getNodesByLabelFull(result, 'Property');
+    const ml1 = props.find((n) => n.name === 'ml1');
+    const ml2 = props.find((n) => n.name === 'ml2');
+    expect(ml1).toBeDefined();
+    expect(ml2).toBeDefined();
+    expect(ml1!.properties.startLine).not.toBe(ml2!.properties.startLine);
+  });
 });
 
 // ── REQ-002 — isExported per declaration context ────────────────────────────
@@ -356,6 +391,14 @@ describe.skipIf(!apexAvailable)('Apex annotation metadata (REQ-014)', () => {
   it('captures a constructor annotation (REQ-014 — constructor path)', () => {
     expect(annotationsOf('Constructor', 'Annotated')).toContain('@TestVisible');
   });
+
+  it('captures multiple annotations on one member, including an unknown one verbatim (REQ-014/§4)', () => {
+    const anns = annotationsOf('Property', 'multiAnno');
+    expect(anns).toContain('@TestVisible');
+    expect(anns).toContain('@AuraEnabled');
+    // unknown annotation captured verbatim (no validation — framework semantics deferred)
+    expect(anns).toContain('@SomeUnknownAnno');
+  });
 });
 
 // ── NFR-001 (parse-path) — malformed input never crashes; conservative skip ─
@@ -444,6 +487,21 @@ describe.skipIf(!apexAvailable)('Apex per-file resource budget (NFR-003)', () =>
     expect(getNodesByLabel(result, 'Class')).toContain('Small');
     expect(getNodesByLabel(result, 'Class')).not.toContain('Huge');
   });
+});
+
+// ── Provider statelessness / determinism (§4 concurrent) ────────────────────
+// The provider must hold no shared Apex mutable state — per-file isolation under
+// the host worker model. The observable proxy: repeated runs over the same repo
+// produce identical output (no state bleed between runs). No forceable red pre-impl
+// (zero nodes either way); strengthens once extractors emit nodes in 3b.
+describe.skipIf(!apexAvailable)('Apex provider statelessness / determinism (§4 concurrent)', () => {
+  it('produces identical node sets across repeated runs (no shared mutable provider state)', async () => {
+    const a = await runPipelineFromRepo(path.join(FIXTURES, 'apex-types'), () => {});
+    const b = await runPipelineFromRepo(path.join(FIXTURES, 'apex-types'), () => {});
+    expect(getNodesByLabel(a, 'Class')).toEqual(getNodesByLabel(b, 'Class'));
+    expect(getNodesByLabel(a, 'Method')).toEqual(getNodesByLabel(b, 'Method'));
+    expect(getNodesByLabel(a, 'Property')).toEqual(getNodesByLabel(b, 'Property'));
+  }, 60000);
 });
 
 // ── Graceful degradation when the optional grammar is unavailable ───────────
