@@ -3,7 +3,8 @@
   "phase": 3,
   "gates_passed": [
     1,
-    2
+    2,
+    3
   ],
   "artifacts": {
     "1": [
