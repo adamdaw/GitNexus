@@ -144,6 +144,27 @@ describe('getLanguageFromFilename', () => {
     });
   });
 
+  // Apex (WI-1, REQ-001). SupportedLanguages.Apex does not exist pre-impl, so
+  // the expected value is the enum's string form ('apex') — keeps the suite
+  // typecheck-clean while these go red until the extension map is implemented.
+  describe('Apex', () => {
+    it('detects .cls files', () => {
+      expect(getLanguageFromFilename('Contact.cls')).toBe('apex');
+    });
+
+    it('detects .trigger files', () => {
+      expect(getLanguageFromFilename('AccountTrigger.trigger')).toBe('apex');
+    });
+
+    it('detects .cls files in paths', () => {
+      expect(getLanguageFromFilename('classes/MyService.cls')).toBe('apex');
+    });
+
+    it('does not change classification of a non-Apex extension (NFR-002)', () => {
+      expect(getLanguageFromFilename('Main.java')).toBe(SupportedLanguages.Java);
+    });
+  });
+
   describe('unsupported', () => {
     it.each(['.scala', '.r', '.lua', '.zig', '.txt', '.md', '.json', '.yaml'])(
       'returns null for %s files',
@@ -179,6 +200,12 @@ describe('getProviderForFile', () => {
   it('routes CUDA C++ source and header files to the C++ provider', () => {
     expect(getProviderForFile('src/kernels/integrate.cu')?.id).toBe(SupportedLanguages.CPlusPlus);
     expect(getProviderForFile('src/force/nep.cuh')?.id).toBe(SupportedLanguages.CPlusPlus);
+  });
+
+  // Apex (WI-1, REQ-001): .cls and .trigger route to the Apex provider.
+  it('routes Apex class and trigger files to the Apex provider', () => {
+    expect(getProviderForFile('classes/Contact.cls')?.id).toBe('apex');
+    expect(getProviderForFile('triggers/AccountTrigger.trigger')?.id).toBe('apex');
   });
 });
 
