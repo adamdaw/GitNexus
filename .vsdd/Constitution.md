@@ -1,11 +1,13 @@
 # Constitution — GitNexus Apex Support
 
 *Project-level governing document (VSDD §A.2). Owned by the Architect (Adam). Drafted by the
-Builder from the host project's existing conventions; **pending Architect ratification** at Gate 1.
-Changed only by the amendment process below.*
+Builder from the host project's existing conventions; **ratified by the Architect (Adam) on
+2026-06-28**. Changed only by the amendment process below.*
 
 - **Identifier:** CONST-gitnexus-apex
-- **Version:** 0.1.0 · **Date:** 2026-06-28 · **Status:** proposed · **Supersedes:** none
+- **Version:** 1.0.0 · **Date:** 2026-06-28 · **Status:** ratified · **Supersedes:** none
+- **Ratified:** Adam (Architect), 2026-06-28. §6 fuzz budget right-sized pre-ratification (saturation
+  exit + parity bar, replacing the 500k-execution count) — a draft revision, not a §7 amendment.
 
 This project is a fork of `abhigyanpatwari/GitNexus` adding Apex language support. Its prime
 directive: **honour the host project's standing conventions** (`DoD.md`, `CONTRIBUTING.md`,
@@ -85,10 +87,23 @@ No CWE-backed surface beyond SECT-001 exists for this work, so no other `SEC-NNN
   data-integrity, safety, or concurrency invariant — every property falls in the "test only" row.
   Gate 5's formal-proof leg is therefore N/A for this project (a legitimate §A.3 calibration), and
   Gate 5 reduces to fuzz + mutation + the safe-parse audit.
-- **Fuzz budget (§A.4):** the Apex parser is the fuzz target. Minimum effort ≥ 500,000 executions
-  **and** a coverage plateau of no new edge in the last 100,000 executions; sanitizers on; seed corpus
-  of representative + adversarial Apex; exit criterion = budget met and zero un-triaged crashes. A
-  malformed-input crash is fixed-only.
+- **Fuzz budget (§A.4):** the SECT-001 boundary (`parseSourceSafe()`-routed Apex ingestion) is the
+  target. The budget is calibrated to the actual risk surface — the vendored `parser.c` is generated,
+  ABI-frozen, has **no external scanner** (the memory-unsafe surface tree-sitter fuzzing exists to
+  catch), and is continuously fuzzed upstream (OSS-Fuzz); the owned surface is the TS ingestion path.
+  Exercised by:
+  1. **A malformed/adversarial-input no-crash test** (the host `c-coverage`/`csharp`/`cobol` pattern) —
+     a corpus of truncated, deeply-nested, huge-identifier, unterminated-string/comment, mixed-encoding,
+     and max-buffer-boundary Apex; asserts no throw escapes, conservative skip, bounded time/memory.
+     **This is the gating obligation.**
+  2. **A bounded smoke-fuzz** of the ingestion entry: exit on coverage plateau (no new edge in 5,000
+     executions) **or** a ≥ 10,000-execution floor, whichever comes first, under a ~5-minute CI
+     wall-clock cap; sanitizers on; seeded with the resolver fixtures + adversarial corpus. A
+     malformed-input crash is fixed-only; zero un-triaged crashes at exit.
+
+  This is the saturation-based exit (no new edges + zero un-triaged crashes), parity-consistent with how
+  Swift/Kotlin/Dart were admitted (integration tests + a malformed-input no-crash test; the host has no
+  heavier fuzz gate for any language).
 - **Mutation expectation:** mutation run (host tooling) over `languages/apex/**`; every surviving mutant
   killed or justified `verified-equivalent`. No fixed score threshold beyond the coverage floor.
 

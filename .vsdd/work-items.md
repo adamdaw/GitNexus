@@ -1,0 +1,207 @@
+# Work-Item Decomposition — Apex Support (SRS-001)
+
+*VSDD §A.9 (work items) + §A.14 (light-SRS slices). The formal cut of epic SRS-001 into atomic,
+independently-deployable work items, reviewed **as a set** at the Gate 1 decomposition checkpoint
+(Phase 1 decomposition bridge) before any item enters Phase 2: slice fidelity, coverage of every
+epic REQ-NNN, dependency acyclicity, criticality correctness (Core Principle 9).*
+
+- **Parent epic:** SRS-001 (INTENT-001) · **Constitution:** CONST-gitnexus-apex v1.0.0
+- **Status:** **Gate 1 decomposition checkpoint CLEARED (PASS_CLEAN, 2026-06-28)** — 3 fresh-context
+  adversary rounds (FAIL→FAIL→PASS_CLEAN); pass record `.vsdd/pass-records/gate1-decomposition.md`,
+  findings `.vsdd/findings/gate1-decomposition.md`. Work items valid for Phase 2 entry.
+  ITEM-001 → `active` (Phase 2 SDD authorship begins); ITEM-002…004 → `proposed`.
+
+## Coverage map (every epic REQ/NFR → exactly one owning work item)
+
+| REQ / NFR | Owning WI | | REQ / NFR | Owning WI |
+|---|---|---|---|---|
+| REQ-001 (recognition) | WI-1 | | REQ-009 (field/property chains) | WI-2 |
+| REQ-002 (type container nodes) | WI-1 | | REQ-010 (cross-file binding enabler) | WI-3 |
+| REQ-003 (member nodes) | WI-1 | | REQ-011 (trigger-body refs) | WI-3 |
+| REQ-004 (trigger container nodes) | WI-1 | | REQ-012 (Java/Kotlin parity) | WI-4 |
+| REQ-014 (annotation metadata) | WI-1 | | REQ-013 (external-ref handling) | WI-4 |
+| NFR-003 (per-file budget) | WI-1 | | REQ-005 (unambiguous ref resolution) | WI-2 |
+| REQ-015 (conservative skip) | WI-2 | | REQ-006 (no false unresolved) | WI-2 |
+| REQ-008 (overload resolution) | WI-2 | | REQ-007 (extends/implements edges) | WI-2 |
+| NFR-004 (resolution test) | WI-4 | | | |
+
+**REQ-009 is owned solely by WI-2** (the resolution *mechanic*). WI-3 owns **REQ-010**, the cross-file
+*binding enabler* — the implicit-namespace mechanism that lets every WI-2 mechanic (calls, types,
+chains, …) reach across files. WI-3 co-owns no WI-2 mechanic REQ; it owns the one enabler that
+completes their inherently-cross-file epic §9 scenarios end-to-end (see WI-2 / WI-3 below).
+
+**Cross-cutting (per epic SRS §11 — gates on *every* WI, not single-owned):** **NFR-001** (malformed/
+incomplete input → the *run* completes without crashing; the unparseable file is skipped) and
+**NFR-002** (no regression of other languages). NFR-001 is a *whole-run* property, not parse-only:
+tree-sitter does error recovery, so malformed source can yield a partial tree with `ERROR` nodes that
+flows past WI-1's parse into resolution — therefore each WI carries its own slice of NFR-001:
+- **WI-1** — the parse-path slice (SECT-001 trust boundary): safe-parse, buffer-size skip, and drop
+  of unparseable files so the run continues.
+- **WI-2/WI-3/WI-4** — the resolution-path slice: resolution completes without crashing on partial /
+  error-recovery trees and on references into skipped files (conservative skip, no throw).
+
+Every in-scope epic REQ-001…015 is covered by exactly one owning WI; NFR-003 → WI-1, NFR-004 → WI-4,
+and NFR-001 + NFR-002 cross-cut every WI (epic §11). Deferred REQ-101…105 are out of this cycle (epic
+SRS §10) and own no work item.
+
+---
+
+## ITEM-001 — WI-1: Parse & graph population
+
+- **Single responsibility:** Integrate the Apex grammar and populate the graph with user-defined
+  Apex container and member nodes (no reference resolution).
+- **Requirement links:** REQ-001, REQ-002, REQ-003, REQ-004, REQ-014, NFR-003. SEC-001 instance
+  (CWE-20 untrusted-source parsing, per Constitution SECT-001) to be authored in this item's SDD.
+- **Owner / assignee:** claude (Builder) — assigned.
+- **Criticality:** **security-critical = true.** WI-1 introduces the Apex parse path — the SECT-001
+  untrusted-input trust boundary (it is the only WI that parses raw repository source; WI-2…4
+  consume WI-1's safe-parsed output). *Architect approval: pending checkpoint sign-off (Adam);
+  rationale: introduces the untrusted-source tree-sitter parse path.*
+- **Dependencies:** none. Independently deployable — the graph populates (nodes, containment) before
+  any resolution exists; this is exactly the host's Swift-tier "parse first" slice.
+- **Status:** active (Phase 2 SDD authorship).
+- **Artifact pointers:** light-SRS slice = below; SDD = `.vsdd/SDD.md` (WI-1 section, Phase 2);
+  tests = `gitnexus/test/integration/resolvers/apex.test.ts` (+ malformed-input no-crash test).
+
+### Light SRS (WI-1)
+
+- **Inherited epic slice:** SRS-001 §5 Graph population + Recognition + Metadata; §6 NFR-003; §9
+  scenarios for REQ-001/002/003 and REQ-004 (node half), REQ-014, NFR-003, NFR-001.
+- **EARS requirements:** REQ-001, REQ-002, REQ-003, REQ-004 (container-node creation only — the
+  trigger→symbol *edge* is REQ-011/WI-3), REQ-014, NFR-003. Verbatim text in the epic SRS; carried
+  forward unchanged.
+- **Gherkin acceptance criteria** (epic SRS §9 scenarios, tagged by confirmation mode):
+  - "Apex classes and members enter the graph" (REQ-001/002/003) — **automated**.
+  - "A trigger resolves a call to a user-defined handler" — **partial: automated**, *only the
+    container-node half* ("the graph contains a container node for the trigger"). The resolved-edge
+    half is WI-3 (REQ-011) and is out of WI-1's acceptance.
+  - "Annotations are captured as metadata" (REQ-014) — **automated**.
+  - "An over-budget Apex file is skipped at the same threshold as peers" (NFR-003) — **automated**.
+  - "Malformed Apex does not crash the run" (NFR-001 — WI-1's **parse-path slice** of the cross-cutting
+    NFR-001: safe-parse + skip the unparseable file so the run continues) — **automated**.
+- **Dependencies & criticality:** dependencies none; security-critical = true (SECT-001, as above).
+  Cross-cutting acceptance: NFR-001 (parse-path slice) + NFR-002.
+
+---
+
+## ITEM-002 — WI-2: Resolution mechanics
+
+- **Single responsibility:** Implement the user-defined Apex reference-resolution *mechanics* — call,
+  constructor/type-usage, inheritance/implementation, overload, and field/property-chain resolution,
+  plus conservative skip of ambiguous references.
+- **Requirement links:** REQ-005, REQ-006, REQ-015, REQ-007, REQ-008, REQ-009. (REQ-009 in full —
+  WI-3 owns no resolution mechanic, only the cross-file *enabler* REQ-010.)
+- **Owner / assignee:** claude (Builder) — assigned.
+- **Criticality:** **security-critical = false.** Consumes WI-1's safe-parsed `ParsedFile`/AST; it
+  introduces no new untrusted-source parse path (the SECT-001 boundary is owned by WI-1). *Architect
+  approval: pending checkpoint sign-off (Adam); rationale: no new trust boundary, operates on parsed
+  artifacts.*
+- **Dependencies:** ITEM-001 (needs nodes + AST to resolve against).
+- **Status:** proposed.
+- **Artifact pointers:** SDD WI-2 section (later); tests in `apex.test.ts`.
+
+### Light SRS (WI-2)
+
+- **Inherited epic slice:** SRS-001 §5 Reference resolution (user-defined) — the resolution
+  algorithms — excluding the cross-file *binding enabler* (REQ-010) and trigger-body resolution
+  (REQ-011), both WI-3; §9 scenarios for REQ-005/006/015/007/008/009.
+- **EARS requirements:** REQ-005, REQ-006, REQ-015, REQ-007, REQ-008, REQ-009 (verbatim in the epic
+  SRS). WI-2 owns each *mechanic* in full; cross-file reach for all of them is supplied by WI-3's
+  REQ-010 enabler, not by co-ownership.
+- **Acceptance boundary (resolves the file-boundary ambiguity of the epic §9 scenarios):** WI-2's own
+  Gate-3 acceptance is verified on fixtures expressible within a **single compilation unit** — inner /
+  nested types in one `.cls` — which exercises every mechanic without the cross-file enabler. The epic
+  §9 scenarios that are *inherently cross-file* as written (REQ-005's "two classes" = two files;
+  REQ-009's "different files" chain) are **completed end-to-end at WI-3** once REQ-010 lands; they are
+  not claimed as same-unit acceptance here. WI-2 remains independently *deployable* (it emits resolved
+  edges for same-unit references immediately).
+- **Gherkin acceptance criteria** (epic SRS §9; **automated**; WI-2 form uses same-unit fixtures):
+  - "An in-repository method call resolves with no unknown symbol" (REQ-005/006) — same-unit fixture
+    (inner-class call); the two-file form completes at WI-3.
+  - "An ambiguous in-repository reference is left unresolved, not mis-bound" (REQ-015).
+  - "Inheritance and interface implementation resolve" (REQ-007) — same-unit fixture.
+  - "Overloaded method resolves by argument shape" + "Overload selection on an assignable argument
+    follows Apex rules" (REQ-008).
+  - Field/property-chain resolution (REQ-009) — same-unit fixture; the cross-file chain scenario
+    completes at WI-3.
+- **Dependencies & criticality:** depends on ITEM-001; security-critical = false. Cross-cutting
+  acceptance: NFR-002, and NFR-001's **resolution-path slice** — resolution completes without crashing
+  on partial / error-recovery trees and on references into skipped files (conservative skip, no throw).
+
+---
+
+## ITEM-003 — WI-3: Cross-file binding & trigger resolution
+
+- **Single responsibility:** Supply the implicit-namespace cross-file *binding enabler* that lets the
+  WI-2 mechanics reach across files without an explicit import, and resolve user-defined references
+  from trigger bodies.
+- **Requirement links:** REQ-010, REQ-011. (REQ-010 is the cross-file enabler; it completes — does
+  not co-own — the WI-2 mechanic REQs' inherently-cross-file epic §9 scenarios.)
+- **Owner / assignee:** claude (Builder) — assigned.
+- **Criticality:** **security-critical = false.** Consumes parsed artifacts; no new parse path.
+  *Architect approval: pending checkpoint sign-off (Adam); rationale: as WI-2.*
+- **Dependencies:** ITEM-002 (the cross-file enabler operates on the WI-2 mechanics; trigger-body
+  resolution reuses them).
+- **Status:** proposed.
+- **Artifact pointers:** SDD WI-3 section (later); tests in `apex.test.ts`.
+
+### Light SRS (WI-3)
+
+- **Inherited epic slice:** SRS-001 §5 REQ-010, REQ-011; §9 cross-file chain scenario + the
+  resolved-edge half of the trigger scenario.
+- **EARS requirements:** REQ-010, REQ-011 (verbatim in the epic SRS).
+- **Gherkin acceptance criteria** (epic SRS §9; **automated**):
+  - "Cross-file field/property chain resolves without an import" (REQ-010 enabler applied to the
+    REQ-009 mechanic) — the two-file form of the chain scenario WI-2 verified same-unit.
+  - The **two-file form** of "An in-repository method call resolves with no unknown symbol"
+    (REQ-005/006 via the REQ-010 enabler) — completing end-to-end the scenario WI-2 verified
+    same-unit. (No new REQ — this is REQ-010 making the WI-2 mechanic reach across files.)
+  - "A trigger resolves a call to a user-defined handler" — the **resolved-edge half** (REQ-011),
+    completing the scenario whose container-node half WI-1 delivered.
+- **Dependencies & criticality:** depends on ITEM-002; security-critical = false. Cross-cutting
+  acceptance: NFR-002, and NFR-001's **resolution-path slice** — cross-file/trigger resolution
+  completes without crashing on partial / error-recovery trees and references into skipped files.
+
+---
+
+## ITEM-004 — WI-4: Parity hardening & external handling
+
+- **Single responsibility:** Demonstrate Java/Kotlin-tier resolution parity on equivalent fixtures
+  and handle external (stdlib/sObject/managed-package) references as benign unresolved, not defects.
+- **Requirement links:** REQ-012, REQ-013, NFR-004.
+- **Owner / assignee:** claude (Builder) — assigned.
+- **Criticality:** **security-critical = false.** Test fixtures + external-reference classification;
+  no parse path or trust boundary. *Architect approval: pending checkpoint sign-off (Adam);
+  rationale: test/parity hardening, no trust boundary.*
+- **Dependencies:** ITEM-002 and ITEM-003 (parity is measured over the full resolution surface; the
+  benchmark fixtures exercise same-file *and* cross-file capabilities).
+- **Status:** proposed.
+- **Artifact pointers:** SDD WI-4 section (later); parity + external-ref tests in `apex.test.ts`.
+
+### Light SRS (WI-4)
+
+- **Inherited epic slice:** SRS-001 §5 Parity and external handling (REQ-012, REQ-013); §6 NFR-004;
+  §9 parity + external-reference scenarios.
+- **EARS requirements:** REQ-012, REQ-013, NFR-004. Verbatim in the epic SRS.
+- **Gherkin acceptance criteria** (epic SRS §9, **automated**):
+  - "Apex resolution reaches Java/Kotlin parity" (REQ-012).
+  - "A standard-library reference is external, not a defect" (REQ-013).
+  - NFR-004 — the existence of an automated resolution test comparable to peer languages
+    (satisfied by `apex.test.ts`; **automated**).
+- **Dependencies & criticality:** depends on ITEM-002, ITEM-003; security-critical = false.
+  Cross-cutting acceptance: NFR-002, and NFR-001's **resolution-path slice** — parity + external-ref
+  handling completes without crashing on partial / error-recovery trees.
+
+---
+
+## Dependency graph (acyclicity)
+
+```
+ITEM-001 ──▶ ITEM-002 ──▶ ITEM-003 ──▶ ITEM-004
+                   └──────────────────▶ ITEM-004
+```
+
+A linear chain with one extra forward edge (ITEM-002 → ITEM-004). No back edges → **acyclic**.
+Deployability order: 001, 002, 003, 004. Each is independently deployable in that order (001
+populates the graph and ships value before any resolution; 002 adds same-file resolution; 003 adds
+cross-file/trigger; 004 hardens parity + external handling).
