@@ -8,6 +8,8 @@ public class Overloads {
     public void h(Account a) {}
     public void h(Account[] a) {}
 
+    public void qual(Schema.SObjectType a) {}
+
     public Overloads(Integer a) {}
     public Overloads(String a) {}
 

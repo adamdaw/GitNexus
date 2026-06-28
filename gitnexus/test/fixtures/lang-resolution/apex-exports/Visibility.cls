@@ -14,6 +14,10 @@ global class Visibility {
         SAD
     }
 
+    private enum Secret {
+        HIDDEN
+    }
+
     public class Nested {
         public Integer x;
     }

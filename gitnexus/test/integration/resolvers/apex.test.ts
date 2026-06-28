@@ -253,6 +253,15 @@ describe.skipIf(!apexAvailable)('Apex overloads and duplicates (REQ-003)', () =>
     expect(gOwnerIds.some((id) => id.toLowerCase().includes('list<contact>'))).toBe(true);
   });
 
+  it('renders a qualified/inner parameter type in the canonical signature (lower-cased dotted form)', () => {
+    // qual(Schema.SObjectType a): the scoped_type_identifier renders as schema.sobjecttype
+    // in the id (whitespace-stripped, lower-cased) — covers the qualified type-text shape.
+    const qualId = getRelationships(result, 'HAS_METHOD').find((e) => e.target === 'qual')?.rel
+      .targetId;
+    expect(qualId).toBeDefined();
+    expect(qualId!.toLowerCase()).toContain('schema.sobjecttype');
+  });
+
   it('case-normalises the identity id but preserves declared casing in the name (REQ-003)', () => {
     // MixedName(Account a): the node.name preserves casing; the id segment is lower-cased
     // so a call MIXEDNAME() resolves to the declaration.
@@ -330,6 +339,11 @@ describe.skipIf(!apexAvailable)('Apex isExported by context (REQ-002)', () => {
   });
   it('enum constant -> true (own visibility, even inside its enum)', () => {
     expect(exportedOf('Property', 'HAPPY')).toBe(true);
+  });
+  it('enum constant -> true even inside a PRIVATE enum (own visibility, not transitive)', () => {
+    // Secret is a `private enum`; its constant HIDDEN is still own-visibility true —
+    // owner visibility is not combined in WI-1 (that is WI-2/3's job).
+    expect(exportedOf('Property', 'HIDDEN')).toBe(true);
   });
 });
 
