@@ -88,6 +88,14 @@ describe.skipIf(!apexAvailable)('Apex type container nodes (REQ-002)', () => {
     const inner = classes.find((n) => n.name === 'InnerBox');
     expect(inner).toBeDefined();
     expect(inner!.properties.startLine).toBeGreaterThan(0);
+    // Interface and Enum carry line ranges too (same definition-node mechanism).
+    const iface = getNodesByLabelFull(result, 'Interface').find((n) => n.name === 'TopShape');
+    expect(iface).toBeDefined();
+    expect(iface!.properties.startLine).toBe(0);
+    expect(iface!.properties.endLine).toBeGreaterThan(iface!.properties.startLine as number);
+    const en = getNodesByLabelFull(result, 'Enum').find((n) => n.name === 'TopColor');
+    expect(en).toBeDefined();
+    expect(en!.properties.endLine).toBeGreaterThan(en!.properties.startLine as number);
   });
 
   it('emits deeply nested types with a fully-qualified id and no stack overflow (REQ-002 / §4)', () => {
