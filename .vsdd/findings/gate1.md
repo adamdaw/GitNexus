@@ -17,3 +17,16 @@
 
 All raising evidence: the Round-1 adversary report (fresh-context review of the admitted bundle).
 Objective evidence per finding: the corresponding SRS commit diff.
+
+## Round 2 (adversary: fresh cold invocation on the revised bundle) — VERDICT: FAIL, 6 findings
+
+Mostly fix-induced drift from round 1 (consequential edits not fully propagated).
+
+| FIND | Sev | Topic | Status | Fix |
+|---|---|---|---|---|
+| FIND-009 | major | REQ-015 absent from §11 decomposition | fixed | REQ-015 added to WI-2 |
+| FIND-010 | major | REQ-005 unconditional, in tension with REQ-015 | fixed | REQ-005 qualified "unambiguously denotes" + cross-ref |
+| FIND-011 | major | REQ-012 introduced undefined term "node category" | fixed | restated observably ("node of the same kind, edge of the same kind") |
+| FIND-012 | minor | §10 stale "four" (five deferred REQs) | fixed | corrected to five + per-REQ characterisation |
+| FIND-013 | minor | §11 "resolution may lag" — non-SHALL modal leak | fixed | reworded non-normative |
+| FIND-014 | minor | NFR-001 double-assigned (WI-1 + cross-cutting); NFR-003 measurable only by reference | fixed | NFR-001 cross-cutting only; NFR-003 restated observably |

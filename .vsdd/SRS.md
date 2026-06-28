@@ -64,9 +64,9 @@ languages model no standard library, and parity excludes it.
   represent each trigger as a container node in the knowledge graph.
 
 **Reference resolution (user-defined)**
-- **REQ-005** — The system SHALL resolve a reference from one user-defined Apex symbol to another —
-  method invocation, constructor invocation, type usage, and field/property access — to the referenced
-  symbol's node as a resolved edge.
+- **REQ-005** — The system SHALL resolve a reference that unambiguously denotes another user-defined
+  Apex symbol — method invocation, constructor invocation, type usage, or field/property access — to
+  that symbol's node as a resolved edge. (The ambiguous case is governed by REQ-015.)
 - **REQ-006** — IF an Apex reference unambiguously targets a user-defined symbol defined in the analysed
   repository, THEN the system SHALL emit a resolved edge to that symbol and SHALL NOT record it as an
   unresolved symbol.
@@ -88,7 +88,8 @@ languages model no standard library, and parity excludes it.
 - **REQ-012** — For each capability applicable to Apex — explicit-type binding, constructor-type
   inference, inheritance and interface-implementation lookup, overload disambiguation,
   field/property-chain resolution, and cross-file binding — the system SHALL resolve an Apex construct to
-  the same node category the Java/Kotlin benchmark resolves on an equivalent fixture.
+  a node of the same kind, with an edge of the same kind, as the Java/Kotlin benchmark resolves on an
+  equivalent fixture.
 - **REQ-013** — IF an Apex reference targets an external symbol, THEN the system SHALL treat it as an
   external unresolved reference in the same manner as the benchmark treats its standard library, and
   SHALL NOT report it as an Apex-specific defect.
@@ -103,8 +104,9 @@ languages model no standard library, and parity excludes it.
   system SHALL complete the analysis run without crashing and SHALL skip the unparseable unit.
 - **NFR-002 (Compatibility)** — The system SHALL preserve existing resolution and graph behaviour for
   every other supported language (measured: the pre-existing test suite stays green).
-- **NFR-003 (Performance efficiency)** — The system SHALL ingest Apex within the host pipeline's existing
-  per-file resource budgets, introducing no Apex-specific budget exception.
+- **NFR-003 (Performance efficiency)** — The system SHALL ingest Apex using the same per-file
+  resource-budget mechanism as other supported languages, introducing no Apex-specific budget exception
+  or separate ingestion path.
 - **NFR-004 (Maintainability)** — Apex resolution SHALL be covered by an automated resolution test
   comparable in kind to those covering peer supported languages.
 
@@ -207,7 +209,8 @@ Scenario: Malformed Apex does not crash the run
 ## 10. Deferred requirements (minted, scheduled later)
 
 Each carries a REQ-NNN and a linked tracked item; out of this cycle by recorded decision, not omission.
-All four are schema/standard-library realm (excluded by parity) or moderate optional enhancements.
+All five are deferred by recorded decision: REQ-101…103 are schema/standard-library realm (excluded by
+parity), REQ-104 is a moderate optional enhancement, and REQ-105 is a file-type scope deferral.
 
 - **REQ-101 (deferred)** — Semantic resolution of SOQL/SOSL field and object references.
 - **REQ-102 (deferred)** — Typing of trigger context variables (`Trigger.new`, `Trigger.old`, …).
@@ -224,9 +227,10 @@ Provisional; the formal cut and its **Gate 1 decomposition checkpoint** follow o
 clears Gate 1. Modelled on the host's Swift-ingestion tiers:
 
 1. **WI-1 — Parse & graph population:** grammar integration + recognition + class/member/trigger nodes
-   (REQ-001…004, REQ-014, NFR-001/003). Independently deployable (graph populates; resolution may lag).
+   (REQ-001…004, REQ-014, NFR-003). Independently deployable — the graph populates before resolution is
+   required.
 2. **WI-2 — Intra-file resolution:** calls, type usage, inheritance, overloads, field/property chains
-   within a file (REQ-005…009).
+   within a file, including conservative skip of ambiguous references (REQ-005…009, REQ-015).
 3. **WI-3 — Cross-file & trigger resolution:** implicit-namespace cross-file binding + trigger-body
    resolution (REQ-010, REQ-011).
 4. **WI-4 — Parity hardening & external handling:** Java/Kotlin parity fixtures + external-reference
