@@ -81,8 +81,8 @@ export interface ClassExtractionConfig {
   extractScopeSegments?: (node: SyntaxNode) => string[] | null | undefined;
   extractTemplateArguments?: (node: SyntaxNode) => string[] | undefined;
   /** Optional: extra marker properties to merge onto the emitted node, derived
-   *  from the declaration node (e.g. an `apexConstruct` discriminant for a
-   *  trigger captured under the shared Class label). */
+   *  from the declaration node (e.g. a node-kind discriminant for a construct
+   *  captured under a shared label). */
   extractProperties?: (node: SyntaxNode) => Record<string, unknown> | undefined;
   shouldSkipClassCapture?(
     context: ClassCaptureContext & { nodeLabel: ClassLikeNodeLabel },

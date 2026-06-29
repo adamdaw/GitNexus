@@ -14,6 +14,7 @@
 
 import type { ExportChecker } from '../../export-detection.js';
 import type { SyntaxNode } from '../../utils/ast-helpers.js';
+import { apexHasModifier } from './modifiers.js';
 
 const DECLARATION_TYPES = new Set([
   'class_declaration',
@@ -41,14 +42,12 @@ function nearestDeclaration(node: SyntaxNode): SyntaxNode | null {
   return null;
 }
 
-/** The modifiers text directly on a declaration (a field's modifiers live on the
- *  field_declaration; a variable_declarator inherits them via its parent). */
-function modifiersText(decl: SyntaxNode): string {
-  for (let i = 0; i < decl.namedChildCount; i++) {
-    const child = decl.namedChild(i);
-    if (child?.type === 'modifiers') return child.text ?? '';
-  }
-  return '';
+/** Does the declaration carry any of the given visibility keywords as an actual
+ *  `modifier` token (case-insensitive, Apex-local)? An `annotation` child whose
+ *  argument text contains a keyword — e.g. `@RestResource(urlMapping='/public/v1')`
+ *  — never counts, and a mixed-case `webService`/`Public` keyword still matches. */
+function hasVisibility(decl: SyntaxNode, keywords: readonly string[]): boolean {
+  return keywords.some((kw) => apexHasModifier(decl, kw));
 }
 
 /** Is this declaration a member of an interface (implicitly public, no modifiers)? */
@@ -68,9 +67,8 @@ export const apexExportChecker: ExportChecker = (node, _name) => {
   // always exported, independent of the enclosing enum's visibility.
   if (decl.type === 'enum_constant') return true;
 
-  const modifiers = modifiersText(decl);
-  if (/\b(global|public|webservice)\b/.test(modifiers)) return true;
-  if (/\b(protected|private)\b/.test(modifiers)) return false;
+  if (hasVisibility(decl, ['global', 'public', 'webservice'])) return true;
+  if (hasVisibility(decl, ['protected', 'private'])) return false;
 
   // No explicit modifier: interface members are implicitly public; everything
   // else (class member, top-level/nested type, trigger) defaults to private.

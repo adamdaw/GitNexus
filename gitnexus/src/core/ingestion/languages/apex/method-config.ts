@@ -14,10 +14,10 @@ import type {
   ParameterInfo,
   MethodVisibility,
 } from '../../method-types.js';
-import { findVisibility, hasModifier } from '../../field-extractors/configs/helpers.js';
 import { extractSimpleTypeName } from '../../type-extractors/shared.js';
 import type { SyntaxNode } from '../../utils/ast-helpers.js';
 import { extractApexAnnotations } from './annotations.js';
+import { apexFindVisibility, apexHasModifier } from './modifiers.js';
 
 const APEX_VIS = new Set<MethodVisibility>(['public', 'private', 'protected']);
 const INTERFACE_OWNER_TYPES = new Set(['interface_declaration']);
@@ -65,15 +65,15 @@ export const apexMethodConfig: MethodExtractionConfig = {
   extractParameters: extractApexParameters,
 
   extractVisibility(node) {
-    return findVisibility(node, APEX_VIS, 'private', 'modifiers');
+    return apexFindVisibility(node, APEX_VIS, 'private');
   },
 
   isStatic(node) {
-    return hasModifier(node, 'modifiers', 'static');
+    return apexHasModifier(node, 'static');
   },
 
   isAbstract(node, ownerNode) {
-    if (hasModifier(node, 'modifiers', 'abstract')) return true;
+    if (apexHasModifier(node, 'abstract')) return true;
     // Interface methods are implicitly abstract (no body).
     if (INTERFACE_OWNER_TYPES.has(ownerNode.type)) {
       return !node.childForFieldName('body');
@@ -82,7 +82,7 @@ export const apexMethodConfig: MethodExtractionConfig = {
   },
 
   isFinal(node) {
-    return hasModifier(node, 'modifiers', 'final');
+    return apexHasModifier(node, 'final');
   },
 
   extractAnnotations: extractApexAnnotations,

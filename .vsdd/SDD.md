@@ -26,6 +26,15 @@ dependency order. **WI-1 (ITEM-001) first.***
   (5) a nameless owner's valid-named members/nested types re-parent to File scope, not dropped. The
   retained NFR-001 guarantee — no degenerate empty-named node, no empty owner-segment id — is enforced
   by a generic worker guard. A Gate-2 (SDD-only) amendment; Gate 1/SRS unchanged. Re-enters Gate 2.
+- **Amended v1.2.1 (2026-06-29)** — Gate-4 Pass-1 fidelity reconciliation (descriptive, no behaviour
+  change): §3 previously described the multi-declarator multiplicity as a worker-level
+  `.type === 'field_declaration'` discriminant, but the implemented `APEX_QUERIES` captures
+  `@definition.property` on each `variable_declarator` directly, so multiplicity is intrinsic to the
+  query. §3 reworded to match the as-built mechanism; REQ-003 behaviour (one Property per declarator,
+  own line range) is unchanged and tested. Also added (REQ-002/003): Apex keyword/modifier matching is
+  **case-insensitive** (Apex-local `modifiers.ts`) — the grammar preserves source case, so a
+  case-sensitive lowercase match mis-classified `webService`/`Public`/`GLOBAL`; identifier ids remain
+  case-preserving (case-insensitive *resolution* stays WI-2).
 
 ## 1. Design overview (the HOW, grounded in the host)
 
@@ -351,11 +360,13 @@ Each clause carries its REQ-NNN through the chain. "The system" = a single GitNe
   `getLabelFromCaptures`): `@definition.class` (class_declaration, inner classes, **and**
   trigger_declaration — see REQ-004 discriminant), `@definition.interface` (interface_declaration),
   `@definition.enum` (enum_declaration), `@definition.method` (method_declaration),
-  `@definition.constructor` (constructor_declaration), `@definition.property` (**field_declaration** —
-  which the grammar uses for *both* Apex fields and auto-properties; there is no separate
-  `property_declaration` node — **and enum_constant**; all → member `Property`). **Multiplicity
-  discriminant within this capture (pinned):** if the captured node's `.type === 'field_declaration'`,
-  emit **one node per `variable_declarator`**; if `.type === 'enum_constant'`, emit one node.
+  `@definition.constructor` (constructor_declaration), `@definition.property` (each
+  **`variable_declarator`** of a `field_declaration` — the grammar uses `field_declaration` for *both*
+  Apex fields and auto-properties, with no separate `property_declaration` node — **and enum_constant**;
+  all → member `Property`). **Multiplicity is intrinsic to the query (pinned):** the
+  `@definition.property` capture sits on each `variable_declarator`, so a multi-declarator field yields
+  **one match per declarator** (each with its own `variable_declarator` line range) with no worker-level
+  node-type discriminant; `enum_constant` is captured once via its uniform `name` field.
   **Name extraction has two paths (RESEARCH-001 probe5):** (1) the node's **`name` field** —
   `class`, `interface`, `enum`, `method`, `constructor`, `trigger`, **and `enum_constant`** all expose
   `childForFieldName('name')` uniformly; (2) the **declarator walk** — `field_declaration` only, whose
