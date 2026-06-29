@@ -5,9 +5,14 @@ Builder from the host project's existing conventions; **ratified by the Architec
 2026-06-28**. Changed only by the amendment process below.*
 
 - **Identifier:** CONST-gitnexus-apex
-- **Version:** 1.0.0 · **Date:** 2026-06-28 · **Status:** ratified · **Supersedes:** none
+- **Version:** 1.1.0 · **Date:** 2026-06-29 · **Status:** ratified · **Supersedes:** 1.0.0
 - **Ratified:** Adam (Architect), 2026-06-28. §6 fuzz budget right-sized pre-ratification (saturation
   exit + parity bar, replacing the 500k-execution count) — a draft revision, not a §7 amendment.
+- **Amendment v1.1.0 (2026-06-29, Architect Adam):** §2.2 refined — generic, language-agnostic
+  extension points / quality guards MAY be added to shared factories or phases where no host seam exists
+  (the original "phases not edited" assumed every seam pre-existed). Surfaced by WI-1 Gate-2 review: a
+  from-scratch language needs new generic seams (field-annotation hook, node-kind marker hook,
+  degenerate-node guard); §2.1's no-Apex-naming guarantee is unchanged and absolute.
 
 This project is a fork of `abhigyanpatwari/GitNexus` adding Apex language support. Its prime
 directive: **honour the host project's standing conventions** (`DoD.md`, `CONTRIBUTING.md`,
@@ -30,8 +35,16 @@ govern. Nothing here weakens a host-project gate.
 1. **Language isolation.** All Apex-specific logic lives under `gitnexus/src/core/ingestion/languages/apex/`
    and the per-language registries (provider index, `SCOPE_RESOLVERS`). Shared ingestion code MUST NOT
    name Apex (host RFC #909 / RING4-1).
-2. **Registration, not pipeline edits.** Apex is added by registering a `LanguageProvider` and a
-   `ScopeResolver`; the parse and scope-resolution phases are not edited.
+2. **Registration + generic seams, not Apex-specific pipeline edits.** Apex is added primarily by
+   registering a `LanguageProvider` and a `ScopeResolver`. The shared parse and scope-resolution phases
+   MUST NOT be edited to **name or branch on** Apex (§2.1 — the absolute isolation guarantee). Where a
+   needed behaviour has **no existing host seam**, a **generic, language-agnostic** extension point or
+   quality guard MAY be added to a shared factory or phase — provided it (a) names no language, (b) is
+   configured by the isolated provider *or* applies uniformly to every language, and (c) regresses no
+   other language (NFR-002, measured). *(Amended v1.1.0, 2026-06-29, Adam: the original "phases are not
+   edited" assumed every needed seam pre-existed; a from-scratch language sometimes requires a new
+   generic seam — member annotations on Property nodes, a node-kind marker, a degenerate-node guard.
+   Isolation is preserved — §2.1 still forbids all Apex naming in shared code.)*
 3. **Safe parsing.** All tree-sitter parsing routes through `parseSourceSafe()` (host `require-safe-parse`
    eslint rule) — never a direct `.parse()`.
 4. **Grammar vendoring.** The Apex grammar is vendored under `gitnexus/vendor/` and recorded in

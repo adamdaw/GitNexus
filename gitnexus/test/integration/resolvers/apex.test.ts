@@ -137,12 +137,14 @@ describe.skipIf(!apexAvailable)('Apex type container nodes (REQ-002)', () => {
     expect(edge).toBeDefined();
   });
 
-  it('does NOT emit a separate containment edge for a nested type (membership is via the qualified id)', () => {
-    // REQ-002: nested types carry no DEFINES/containment edge; their membership is
-    // expressed by id-qualification (Outer.Inner) only.
+  it('emits a File DEFINES edge for a nested type, like a top-level type (REQ-002, host default)', () => {
+    // SDD-001 v1.2: a nested type takes a File→type DEFINES edge identical to a top-level type
+    // and to the Java/Kotlin benchmark (owner-edge resolution does not run for class-like labels,
+    // so they resolve no enclosing-type owner → File edge). Membership is ALSO recoverable from the
+    // qualified id (Outer.Inner), built by the distinct buildQualifiedName name-path.
     const defines = getRelationships(result, 'DEFINES');
     for (const nested of ['InnerBox', 'Drawable', 'Palette']) {
-      expect(defines.find((e) => e.target === nested), nested).toBeUndefined();
+      expect(defines.find((e) => e.target === nested && e.sourceLabel === 'File'), nested).toBeDefined();
     }
   });
 });
@@ -228,8 +230,11 @@ describe.skipIf(!apexAvailable)('Apex overloads and duplicates (REQ-003)', () =>
     );
   });
 
-  it('retains both members of an identical-signature duplicate (start line+column disambiguator)', () => {
-    expect(methodsNamed('dup').length).toBe(2);
+  it('collapses an identical-signature duplicate to a single node (host default, REQ-003/§4)', () => {
+    // Two identical `dup(Integer a)` methods — only possible in illegal-to-compile Apex. They collide
+    // on id and collapse to one node (host last-write-wins/dedup), like every peer language. SDD-001
+    // v1.2 reverted the WI-1-specific line+column disambiguator.
+    expect(methodsNamed('dup').length).toBe(1);
   });
 
   it('emits one Property node per declarator of a multi-declarator field (REQ-003)', () => {
@@ -248,44 +253,44 @@ describe.skipIf(!apexAvailable)('Apex overloads and duplicates (REQ-003)', () =>
     }
   });
 
-  it('distinguishes overloads by the canonical parameter-type signature, not a positional fallback (REQ-003)', () => {
-    // The two g overloads must carry distinct ids built from the rendered
-    // parameter-type text (whitespace-stripped, lower-cased): list<account> vs
-    // list<contact>. Asserting the signature segment (not just count===2) is what
-    // lets WI-2 recompute the id; a positional disambiguator would pass count but
-    // fail this.
+  it('distinguishes overloads by the host collision-triggered parameter-type signature (REQ-003)', () => {
+    // The two g overloads collide (same name + arity), so the host appends its raw parameter-type
+    // text (formal_parameter.type source, exact case — NOT Apex-normalised per SDD-001 v1.2): the ids
+    // carry `List<Account>` vs `List<Contact>`. Asserting the exact-case segment (not just count===2)
+    // is what lets WI-2 recompute the id; a positional disambiguator would pass count but fail this,
+    // and a lower-cased comparison would mask the v1.2 raw-text rule.
     const gOwnerIds = getRelationships(result, 'HAS_METHOD')
       .filter((e) => e.target === 'g')
       .map((e) => e.rel.targetId);
-    expect(gOwnerIds.some((id) => id.toLowerCase().includes('list<account>'))).toBe(true);
-    expect(gOwnerIds.some((id) => id.toLowerCase().includes('list<contact>'))).toBe(true);
+    expect(gOwnerIds.some((id) => id.includes('List<Account>'))).toBe(true);
+    expect(gOwnerIds.some((id) => id.includes('List<Contact>'))).toBe(true);
   });
 
-  it('renders a qualified/inner parameter type in the canonical signature (lower-cased dotted form)', () => {
-    // qual(Schema.SObjectType a): the scoped_type_identifier renders as schema.sobjecttype
-    // in the id (whitespace-stripped, lower-cased) — covers the qualified type-text shape.
+  it('adds no parameter-type signature to a non-overloaded method id (host collision-only, REQ-003)', () => {
+    // qual(Schema.SObjectType a) is not overloaded, so the host appends no param-type segment
+    // (typeTagForId is collision-triggered, like every peer). One Method node; the id carries the
+    // arity but not the rendered type text. SDD-001 v1.2 reverted the always-on canonical signature.
+    expect(methodsNamed('qual').length).toBe(1);
     const qualId = getRelationships(result, 'HAS_METHOD').find((e) => e.target === 'qual')?.rel
       .targetId;
     expect(qualId).toBeDefined();
-    expect(qualId!.toLowerCase()).toContain('schema.sobjecttype');
+    expect(qualId!.toLowerCase()).not.toContain('schema.sobjecttype');
   });
 
-  it('case-normalises the identity id but preserves declared casing in the name (REQ-003)', () => {
-    // MixedName(Account a): the node.name preserves casing; the id segment is lower-cased
-    // so a call MIXEDNAME() resolves to the declaration.
+  it('keeps member ids and the name case-preserving; case-insensitivity is WI-2 resolution (REQ-003)', () => {
+    // Apex is case-insensitive, but per SDD-001 v1.2 that is resolved by WI-2's resolver (the host
+    // C# pattern), NOT by case-normalising WI-1 ids. Both the id and the name preserve declared casing.
     const node = getNodesByLabelFull(result, 'Method').find((n) => n.name === 'MixedName');
     expect(node).toBeDefined();
     const id = getRelationships(result, 'HAS_METHOD').find((e) => e.target === 'MixedName')?.rel
       .targetId;
     expect(id).toBeDefined();
-    expect(id!.toLowerCase().includes('mixedname')).toBe(true);
-    expect(id).not.toContain('MixedName'); // identity component is lower-cased
+    expect(id).toContain('MixedName'); // identity component preserves declared casing
   });
 
-  it('retains both members of a same-line identical-signature duplicate (column disambiguator, REQ-003/§4)', () => {
-    // `public Integer same, same;` — two declarators, same name, same line.
-    // A line-only disambiguator would collide them; line+column keeps both.
-    expect(getNodesByLabelFull(result, 'Property').filter((n) => n.name === 'same').length).toBe(2);
+  it('collapses a same-line identical-signature duplicate to a single node (host default, REQ-003/§4)', () => {
+    // `public Integer same, same;` — two declarators, same name → identical id → one node (host dedup).
+    expect(getNodesByLabelFull(result, 'Property').filter((n) => n.name === 'same').length).toBe(1);
   });
 
   it('gives each multi-declarator member its own distinct line range (REQ-003)', () => {
@@ -475,10 +480,13 @@ describe.skipIf(!apexAvailable)('Apex malformed-input crash-safety (NFR-001/SEC-
     }
   });
 
-  it('drops a member whose enclosing owner has no recoverable name (cascade, no orphan)', () => {
-    // BrokenName.cls: `public class { public void m() {} }` — owner name MISSING.
-    // The valid-named method m must NOT survive as an orphan node.
-    expect(getNodesByLabel(result, 'Method')).not.toContain('m');
+  it('re-parents a member of a nameless owner to File scope, not dropped (host default, NFR-001)', () => {
+    // BrokenName.cls: `public class { public void m() {} }` — owner name MISSING. The nameless owner
+    // emits no node (no degenerate node), but its valid-named method m re-parents to File scope (a
+    // File DEFINES edge), like every peer language. SDD-001 v1.2 reverted the WI-1-specific cascade-drop.
+    expect(getNodesByLabel(result, 'Method')).toContain('m');
+    const defines = getRelationships(result, 'DEFINES');
+    expect(defines.find((e) => e.target === 'm' && e.sourceLabel === 'File')).toBeDefined();
   });
 
   it('emits a well-formed sibling declarator while dropping the bad one (declarator path)', () => {
@@ -490,12 +498,12 @@ describe.skipIf(!apexAvailable)('Apex malformed-input crash-safety (NFR-001/SEC-
     expect(findDanglingEdges(result)).toEqual([]);
   });
 
-  it('cascades the drop to nested types of a nameless owner, with no empty owner-segment id', () => {
-    // BrokenName.cls: a name-MISSING class containing method m AND a nested class
-    // InnerOfBroken (with innerM). The whole subtree drops — no orphan nested type,
-    // no member re-parented, and no id with an empty owner segment (e.g. `.Inner`).
-    expect(getNodesByLabel(result, 'Class')).not.toContain('InnerOfBroken');
-    expect(getNodesByLabel(result, 'Method')).not.toContain('innerM');
+  it('re-parents nested types of a nameless owner to File scope, with no empty owner-segment id (NFR-001)', () => {
+    // BrokenName.cls: a name-MISSING class containing method m AND a nested class InnerOfBroken (with
+    // innerM). The nameless owner emits no node; its nested type and members re-parent (host default).
+    // The retained NFR-001 guarantee: no id carries an empty owner segment (e.g. `.InnerOfBroken`).
+    expect(getNodesByLabel(result, 'Class')).toContain('InnerOfBroken');
+    expect(getNodesByLabel(result, 'Method')).toContain('innerM');
     const allIds: string[] = [];
     for (const t of ['DEFINES', 'HAS_METHOD', 'HAS_PROPERTY']) {
       for (const e of getRelationships(result, t)) {

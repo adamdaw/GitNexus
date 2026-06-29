@@ -1,6 +1,39 @@
 # Pass Record — Gate 2 (Spec Fidelity)
 
-*VSDD §A.7. Committed evidence that Gate 2 was cleared for **WI-1 (ITEM-001)**.*
+> **⚠ SUPERSEDED — cascade-invalidated by SDD-001 v1.2 (2026-06-29).** This PASS_CLEAN cleared
+> SDD-001 **v1.1**. Gate-3 implementation evidence showed five §2/§4 design pins this very review
+> had introduced or affirmed — the canonical/always-on parameter-type id signature (this record's
+> "blocker" fix), the case-normalised id, the identical-signature positional disambiguator, the
+> owner cascade-drop, and the no-nested-`DEFINES` modelling — **diverged from the host's actual
+> behaviour with no SRS basis.** Root cause (methodology finding for fold-back): the Gate-2 adversary
+> is **evidence-isolated from the host codebase**, so it reasoned these host-API designs "on their own
+> merits" and could not see they contradicted the host; the divergence only surfaced at Gate 3 (tests
+> against the real host). Architect-approved revert (Adam, 2026-06-29). A **fresh context-free Gate-2
+> review of SDD-001 v1.2 is required** before this gate is cleared again.
+
+*VSDD §A.7. Committed evidence that Gate 2 was cleared for **WI-1 (ITEM-001)** — SDD-001 v1.1 (now superseded).*
+
+## v1.2 RE-CLEARANCE (2026-06-29)
+
+- **Artifacts:** SDD-001 **v1.2** (`.vsdd/SDD.md`), under Constitution **v1.1.0** (`.vsdd/Constitution.md`,
+  §2.2 generic-seams amendment). SRS-001 unchanged (the v1.2 reverts are SDD-only; the SRS pins none of them).
+- **Reviewer:** fresh, distinct, **context-free** read-only `reviewer` per round (admitted artefacts +
+  standing Gate-2 criteria + output format only — no round/fix/focus framing; pass-records & source withheld).
+- **Loop:** 5 cold rounds — R1 (3: REQ-003 owner-edge invariant contradicted the re-parent rule; generic-guard
+  provenance vs §2.2; nested-type owner-resolution ambiguity) → R2 (1 **major**: SDD header cited Constitution
+  v1.0.0 while §2 depends on v1.1.0) → R3 (3 minor) → R4 (2 minor) → **R5 PASS_CLEAN** (zero defects, all seven
+  categories; one transparency observation, not a finding). All findings fixed-only (spec fidelity).
+- **What the loop caught (would otherwise have shipped):** the reverts introduced a real internal
+  contradiction (re-parented members have a File edge, not a declaring-type owner edge, violating the
+  unscoped REQ-003 invariant) — fixed by scoping the invariant + reconciling the two host owner/name paths;
+  and forced the Constitution §2.2 amendment to be version-traced through the SDD header + work-items.
+- **Methodology finding (fold-back):** the *original* v1.1 Gate-2 adversary, **evidence-isolated from the
+  host**, introduced the five divergences it could not check against the host; they only surfaced at Gate 3
+  (tests vs real host). The verification split (grammar=Gate-2, host-API=Gate-3) has this blind spot — a
+  Gate-2 adversary can pin host-API *designs* that diverge from real host behaviour. Worth baking into the
+  methodology (the Gate-2 adversary cannot validate host-API design choices; flag them for Gate-3, don't pin).
+- **Architect approval:** Adam — explicit Gate-2 re-clearance sign-off, 2026-06-29, on the R5 PASS_CLEAN.
+- **Verdict:** **PASS_CLEAN** — SDD-001 v1.2 cleared. Gate 3 (tests) must re-validate the 7 revised tests next.
 
 - **Gate:** Gate 2 — Spec Fidelity (SRS → SDD) · Phase 2, for work item ITEM-001 (WI-1, parse & graph
   population).

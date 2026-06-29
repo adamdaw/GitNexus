@@ -4,8 +4,8 @@
 approved SRS-001 and the work-item decomposition. One SDD section per work item; authored in
 dependency order. **WI-1 (ITEM-001) first.***
 
-- **Constitution version:** CONST-gitnexus-apex **v1.0.0** (ratified 2026-06-28). This SDD is
-  authored under it and Gate 2 checks the SDD does not contradict it.
+- **Constitution version:** CONST-gitnexus-apex **v1.1.0** (amended 2026-06-29; §2.2 generic-seams
+  refinement). This SDD is authored under it and Gate 2 checks the SDD does not contradict it.
 - **Consumes:** RESEARCH-001 (§A.6 grammar feasibility, Architect-approved 2026-06-28).
 
 ---
@@ -16,6 +16,16 @@ dependency order. **WI-1 (ITEM-001) first.***
   Graph population, Metadata) + §6 NFR-003, and the parse-path slice of cross-cutting NFR-001.
 - **Requirements discharged:** REQ-001, REQ-002, REQ-003, REQ-004, REQ-014, NFR-003; NFR-001
   (parse-path slice); NFR-002 (cross-cutting non-regression). *No resolution* (REQ-005…013 are WI-2…4).
+- **Amended v1.2 (2026-06-29)** — Gate-3 implementation evidence (peer-handling investigation across
+  Java/Kotlin/C#) showed five §2/§4 design pins diverged from the host's established behaviour, with no
+  SRS basis (the SRS pins none of them). Architect-approved revert (Adam, 2026-06-29) to host defaults:
+  (1) nested types receive a File `DEFINES` edge like top-level types and the benchmark — triggering
+  this SDD's own REQ-002 contingency early; (2) member ids are case-preserving (case-insensitivity moves
+  to WI-2's resolver, the host pattern for C#); (3) the param-type id segment is collision-triggered,
+  not always-on; (4) identical-signature duplicates (illegal-to-compile Apex) collapse to one node;
+  (5) a nameless owner's valid-named members/nested types re-parent to File scope, not dropped. The
+  retained NFR-001 guarantee — no degenerate empty-named node, no empty owner-segment id — is enforced
+  by a generic worker guard. A Gate-2 (SDD-only) amendment; Gate 1/SRS unchanged. Re-enters Gate 2.
 
 ## 1. Design overview (the HOW, grounded in the host)
 
@@ -43,6 +53,21 @@ directory (vs Swift's `languages/swift.ts` + scattered `*-extractors/configs/swi
 mandates "all Apex logic under `languages/apex/`", which the consolidated directory satisfies while
 the scattered-config pattern would not.
 
+**Generic shared seams (Constitution §2.2 v1.1.0; Architect-approved 2026-06-29).** Three needed WI-1
+behaviours have **no existing host seam**, so WI-1 adds a **generic, language-agnostic** extension point
+for each — naming no language, configured by the isolated Apex provider (or applied uniformly), and
+NFR-002-verified (Java/Kotlin/C# resolver suites stay green). None is an Apex-specific pipeline branch
+(§2.1 intact); the Apex behaviour lives entirely in `languages/apex/` configs:
+1. **`ClassExtractionConfig.extractProperties`** (+ `ExtractedClassSymbol.properties`, spread by the
+   worker) — lets a provider stamp marker properties on a class-like node by AST node type. Apex uses it
+   for `apexConstruct='trigger'` (REQ-004). Mirrors the method-level `isPartial` marker pattern.
+2. **`FieldExtractionConfig.extractAnnotations`** (+ `FieldInfo.annotations`, spread by the worker's
+   Property branch) — field/property annotations, mirroring the existing method `extractAnnotations`
+   path. Apex uses it for REQ-014 member annotations.
+3. **Empty-name conservative-skip guard** in the parse worker — `if the extracted node name is empty,
+   emit no node`. Generic (every language); enforces the NFR-001 no-degenerate-node guarantee the host
+   previously lacked (it emitted an empty-named node for a nameless declaration on any language).
+
 **Grammar (from RESEARCH-001):** `tree-sitter-apex` vendored under `gitnexus/vendor/tree-sitter-apex/`
 as an **ABI-14 regeneration** of `aheber/tree-sitter-sfapex`'s apex grammar (the upstream ABI-15
 `parser.c` will not load on the pinned `tree-sitter@0.21.1`). Registered in
@@ -51,7 +76,7 @@ as an **ABI-14 regeneration** of `aheber/tree-sitter-sfapex`'s apex grammar (the
 loaded in the worker via a guarded `requireVendoredGrammar('tree-sitter-apex')`; recorded in
 `.github/vendored-grammars.json` with a **regeneration `hold`** so the weekly auto-update bot does not
 revert to ABI-15; **and the manifest/vendor-dir consistency-guard test is updated to include Apex**
-(RESEARCH-001 §3 constraint #3's second MUST — without it the guard either fails host CI or under-covers,
+(RESEARCH-001 Structural-constraint #3's second MUST — without it the guard either fails host CI or under-covers,
 letting the silent ABI-15 breakage path through). (All four vendoring steps + both maintenance MUSTs
 detailed in RESEARCH-001 "Structural constraints".)
 
@@ -114,17 +139,23 @@ Each clause carries its REQ-NNN through the chain. "The system" = a single GitNe
 - **Containment edge:** each **top-level** type (and the trigger, REQ-004) is connected to its `File`
   node by a `DEFINES` edge — the host's file→top-level-symbol containment, emitted by the worker when a
   definition has no enclosing type. This pins the `DEFINES` member of the output relationship set.
-- **Nested-type membership (deliberate, parity-anchored):** a nested type carries **no separate
-  containment edge**; its membership is expressed by id-qualification (`Outer.Inner`, next clause),
-  matching how the host models nested types. *Consequence (stated, not hidden):* nesting structure is
-  recoverable from the qualified id, not by traversing a containment edge — asymmetric with members
-  (which get `HAS_*` edges). This follows the host's nested-type handling; if the Java/Kotlin benchmark
-  emits a containment edge for nested types, **WI-4 parity reconciles it** (REQ-012). For WI-1 the
-  id-only modelling is the accepted choice.
+- **Nested-type membership (v1.2 — host default, parity-anchored):** a nested type receives a
+  File→type **`DEFINES` edge, identical to a top-level type**. This rests on the host's **owner-*edge*
+  resolution** (`findEnclosingClassInfo`), which the worker runs only for members (method/constructor/
+  property/function) to attach a `HAS_*` edge, and **not** for class-like labels (Class/Interface/Enum) —
+  so a nested type resolves **no enclosing-type owner edge** and the worker emits the File→symbol
+  `DEFINES` for it, exactly as for a top-level type and as the Java/Kotlin benchmark do. Nesting structure
+  is **separately** recoverable from the qualified id (`Outer.Inner`, next clause), built by a *distinct*
+  host path. *Rationale for the v1.2 revert:* the original WI-1 pin (no containment edge; id-only) diverged
+  from the host and from the benchmark; Gate-3 evidence confirmed Java/Kotlin/C# all emit File→nested
+  `DEFINES`. Reverting pre-satisfies REQ-012 parity (this clause's own prior contingency, now triggered)
+  rather than deferring an asymmetry to WI-4.
 - **Invariant:** a nested type (class, **interface, or enum**) is emitted with a qualified id
-  (`Outer.Inner`) via the host's qualified-node-id path, which is type-kind-agnostic — the same
-  enclosing-owner resolution qualifies nested interfaces and enums as it does nested classes (exactly
-  as the host resolves nested Swift/Kotlin types) — so containment is unambiguous and no two distinct
+  (`Outer.Inner`) via the host's **qualified-*name* path** (`buildQualifiedName`, gated on
+  `qualifiedNodeId`) — a scope walk over enclosing type declarations that **keys the node id**, distinct
+  from the owner-*edge* resolution above (which governs containment edges and resolves none for a
+  class-like node). The name path is type-kind-agnostic — it qualifies nested interfaces and enums as it
+  does nested classes (exactly as the host resolves nested Swift/Kotlin types) — so id is unambiguous and no two distinct
   types (including a nested enum vs a same-named top-level enum) collide on id. Grammar support for the
   nesting this relies on is verified: `class_body` directly contains nested `class_declaration` and
   `interface_declaration` (RESEARCH-001 probe4) and nested `enum_declaration` (the main spike), all
@@ -146,7 +177,9 @@ Each clause carries its REQ-NNN through the chain. "The system" = a single GitNe
     at WI-4** (if the benchmark differs, WI-4 reconciles).
   - **Multi-declarator fields (`Integer a, b, c;`):** one `field_declaration` carries **N
     `variable_declarator` children** (RESEARCH-001 probe4). Emitting **one `Property` node per
-    `variable_declarator`** (so no field is dropped), each with its own name **and its own
+    `variable_declarator`** (so no *distinct-named* declarator is dropped at extraction — the
+    pathological same-name `Integer x, x;` collapses to one node by id-dedup per §4, the host default),
+    each with its own name **and its own
     `startLine`/`endLine` taken from its `variable_declarator`** (distinct ranges, not the shared
     `field_declaration` range), with the declaration's shared `modifiers` annotations **propagated to
     every** resulting node (REQ-014), is a **WI-1 design obligation on its field extraction** — supplied by Apex's `field-config` if the host factory does
@@ -155,41 +188,39 @@ Each clause carries its REQ-NNN through the chain. "The system" = a single GitNe
     `enum_constant` nodes under `enum_body`, verified in RESEARCH-001 addendum). Its name is read from
     the `enum_constant`'s **`name` field** (uniform with the other type/member kinds — RESEARCH-001
     probe5; not the `field_declaration` declarator walk).
-  - Association is realised by enclosing-owner resolution as: a `HAS_METHOD` edge for methods and
+  - Association is realised by owner-edge resolution as: a `HAS_METHOD` edge for methods and
     constructors; a `HAS_PROPERTY` edge for fields, properties, **and enum constants** (all
-    `label=Property`), from the declaring type's node. A member with no enclosing type is impossible in
-    Apex (no top-level functions).
+    `label=Property`), from the declaring type's node. **In well-formed source** a member always has an
+    enclosing type (Apex has no top-level functions); the sole exception is the malformed-input
+    re-parent case (NFR-001 below), where a member of a *nameless* owner re-parents to File scope.
   - Each member node also carries the standard `ParsedNode` properties — `name`, `filePath`,
     `startLine`/`endLine`, `language='apex'`, and **`isExported` per the REQ-002 export rule** (interface
     members / enum constants → true; class members per modifier). The `annotations` property is carried
     by the **four REQ-014 member kinds only** (method, constructor, field, property); enum constants
     take no `annotations` (Apex forbids annotations on enum constants).
-- **Invariant:** every emitted member node has exactly one declaring-type owner edge; member ids are
-  qualified by **owner + name + arity + the declared parameter-type signature**, so that
-  **type-only overloads** (same name, same arity, different parameter types — e.g. `f(Integer)` vs
-  `f(String)`, valid Apex and in REQ-008's scope) receive **distinct ids and both nodes are emitted**.
-  Arity alone is insufficient (it would collide same-arity overloads and drop a node, breaking REQ-003
-  and leaving REQ-008/WI-2 nothing to resolve against). The parameter types are a **verified grammar
-  fact** (`formal_parameter` exposes a `type` field — RESEARCH-001 probe6); building them into the id is
-  WI-1's obligation, and WI-1 additionally relies on the host's same-arity-collision parameter-type tag
-  (Gate-3-confirmed per the verification split).
-- **Canonical parameter-type rendering (pinned, so WI-2 can recompute the id):** each parameter-type
-  segment is the `formal_parameter.type` node's **source text**, normalised by (1) stripping all
-  whitespace and (2) lower-casing (per case-insensitivity, below). This is uniform across every type
-  shape the grammar produces — verified by RESEARCH-001 probe7, whose `type`-field text spans the full
-  expression for each: simple (`Integer`→`integer`), **generic** incl. multi-arg/nested
-  (`List<Account>`→`list<account>`, `Map<Id, Account>`→`map<id,account>`, `List<List<Account>>`→
-  `list<list<account>>`), **array** (`array_type "Account[]"`→`account[]`), and **qualified/inner**
-  (`scoped_type_identifier "Outer.Inner"`→`outer.inner`). So `f(List<Account>)` and `f(List<Contact>)`
-  (and `f(Account)` vs `f(Account[])`) get genuinely distinct ids
-  (`…list<account>` vs `…list<contact>`) via the signature itself — not the positional fallback — and a
-  WI-2 call site reconstructs the identical segment by the same normalisation.
-- **Case-insensitivity (Apex identifiers/type names are case-insensitive):** the **identity** component
-  of ids (owner/name/parameter-type-name segments) is **case-normalised** (lower-cased) so that
-  `f(Integer)` and `f(integer)` resolve to the **same** id — they are the *same* member in Apex (an
-  identical-signature duplicate, not a type-only overload), handled by the collision fallback above. The
-  node's `name` **property preserves the declared casing** for display. This pins the identity contract
-  WI-2 resolution consumes (a call `F()` must match a declaration `f()`).
+- **Invariant (v1.2 — host default):** every emitted member node of a **well-formed type** has exactly
+  one declaring-type owner edge (`HAS_METHOD`/`HAS_PROPERTY`); the one exception is a member of a
+  *nameless* owner under error recovery, which re-parents to a File `DEFINES` edge (NFR-001) — it has a
+  File owner edge, not a declaring-type one, but is never orphaned. Member ids follow the **host id
+  scheme unchanged**: `owner + name + #arity`, with the host
+  appending a parameter-type segment **only to disambiguate a same-name-same-arity collision** (the
+  host's `typeTagForId` mechanism, identical to every peer language). **Type-only overloads** (same name,
+  same arity, different parameter types — `f(Integer)` vs `f(String)`, valid Apex, REQ-008 scope) thus
+  still receive **distinct ids and both nodes are emitted** via the collision-triggered signature (the
+  `formal_parameter.type` field, RESEARCH-001 probe6). WI-1 adds **no** Apex-specific id construction:
+  no always-on signature, no positional disambiguator.
+- **Parameter-type id segment (v1.2 — collision-triggered, host default):** when a same-arity collision
+  exists, the host builds the segment from the `formal_parameter.type` source text (`List<Account>`,
+  `Schema.SObjectType`, `Account[]`). It is **not** Apex-normalised and **not** always-on. A WI-2 call
+  site recomputes the segment the same way the host does for every language. *(v1.1 pinned an always-on,
+  whitespace-stripped, lower-cased canonical rendering; reverted in v1.2 — it diverged from the host and
+  has no SRS basis.)*
+- **Case-insensitivity (v1.2 — a WI-2 resolution concern, not a WI-1 id concern):** Apex identifiers are
+  case-insensitive, so a call `F()` must match a declaration `f()`. This is resolved the way every
+  case-insensitive host language (e.g. C#) resolves it — **case-insensitive lookup in the WI-2
+  resolver** — **not** by case-normalising WI-1 ids. WI-1 ids and the node `name` are both
+  case-preserving, identical to every peer. The case-insensitive-identity obligation moves to WI-2's SDD
+  section (REQ-005/REQ-008). *(v1.1 case-normalised WI-1 ids; reverted in v1.2.)*
 
 ### REQ-004 — Trigger container node
 - **Precondition:** a parsed `.trigger` file declaring a user-defined trigger.
@@ -200,8 +231,8 @@ Each clause carries its REQ-NNN through the chain. "The system" = a single GitNe
   fact Gate-3-confirmed; the extension key then needs no shared-type edit — Constitution §2.1
   preserved); `filePath`, line range, `language='apex'`; and **`isExported=false`** — an Apex trigger
   has no visibility modifier and is not a referenceable type (it is an event handler), so the export
-  rule yields `false` (the no-modifier default), pinned explicitly here since a modifier-less trigger
-  has no input to the REQ-002 export rule.
+  rule yields `false` — the trigger is REQ-002 export bucket 3 (the no-modifier default; that bucket
+  explicitly enumerates the trigger), restated here for the REQ-004 postcondition's completeness.
 - **Discriminant (pinned):** `trigger_declaration` and `class_declaration` share the
   `@definition.class` capture, but are distinct node *types*. The provider sets
   `apexConstruct='trigger'` (and reads no enclosing owner) iff the captured definition node's `.type ===
@@ -266,25 +297,26 @@ Each clause carries its REQ-NNN through the chain. "The system" = a single GitNe
 - **Postcondition:** parsing routes through `parseSourceSafe()`; a parse that throws or a file over
   buffer is skipped; the run completes and the valid files are represented. (The resolution-path
   slice of NFR-001 is WI-2…4.)
-- **Partial-tree rule (pinned):** tree-sitter error recovery can yield a definition node whose name is
-  `MISSING` or unrecoverable — via the uniform `name` field (every kind except `field_declaration`,
-  incl. `enum_constant` — RESEARCH-001 probe5) or via the declarator walk (`field_declaration` only,
-  whose name is nested in each `variable_declarator`). The rule is phrased on the **extracted name**,
-  whatever path supplies it: a
-  node is emitted **only when the extractor yields a non-empty name**; otherwise the capture match is
-  **dropped — no node emitted** (conservative skip, Constitution §1.2: prefer no node over a misleading
-  one). Error-recovery sub-trees never produce empty-named or placeholder nodes.
-- **Cascade rule (enclosing owner dropped) — with discharge obligation:** if an enclosing type's own
-  name is unrecoverable, the type node is dropped **and so are its members and nested types**. The
-  own-name drop rule alone does not achieve this (a valid-named child passes its own check), so the
-  cascade is a **concrete WI-1 obligation** (parallel to the multi-declarator obligation): member and
-  nested-type extraction MUST resolve the enclosing owner to a non-empty name and **drop the child when
-  the owner has none** — a surviving valid-named child of a dropped owner is itself dropped
-  (conservative skip), never emitted with a `HAS_*`/owner edge to a non-existent owner and never with an
-  empty owner segment in its qualified id (`.Inner`). A child is **not** re-parented to `File`. This
-  preserves the REQ-003 invariant ("every member has exactly one declaring-type owner edge") and the
-  NFR-001 "no degenerate node" invariant under error recovery; verified by the §8 owner-cascade
-  Gate-3 fixture.
+- **Partial-tree rule (retained — generic conservative skip):** tree-sitter error recovery can yield a
+  definition node whose name is `MISSING` or unrecoverable — via the uniform `name` field (every kind
+  except `field_declaration`, incl. `enum_constant` — RESEARCH-001 probe5) or via the declarator walk
+  (`field_declaration` only). The rule is phrased on the **extracted name**: a node is emitted **only
+  when the extracted name is non-empty**; otherwise the capture match is **dropped — no node emitted**
+  (conservative skip, Constitution §1.2). This is enforced by a **generic worker guard** (`if the
+  extracted node name is empty/whitespace, emit no node`) — generic, not Apex-specific, so no language
+  emits a degenerate empty-named node on any label.
+- **Owner handling (v1.2 — host default, re-parent not cascade-drop):** if an enclosing type's own name
+  is unrecoverable, the **type node is dropped** (partial-tree rule above), but its **valid-named members
+  and nested types re-parent to File scope** — they take a File→symbol `DEFINES` edge, exactly as the
+  host does for every language (a member resolves no enclosing-*type* owner → File edge). They are **not**
+  themselves dropped. **No id carries an empty owner segment** on either id path: a re-parented
+  **method/property** keys its id off the host's `owner.name` qualifier, which the worker reduces to just
+  `name` (+`#arity`) when no enclosing type resolves — so the owner segment is absent, not empty; a
+  re-parented **nested type** keys off `buildQualifiedName`, which strips empty scope segments — so it is
+  keyed by its own simple/qualified tail (`InnerOfBroken`, not `.InnerOfBroken`). *(v1.1 pinned an
+  Apex-specific cascade that dropped valid-named children of a nameless owner and forbade re-parenting;
+  reverted in v1.2 — it diverged from the host with no SRS basis. The retained guarantees — no degenerate
+  node, no empty-segment id — hold via the generic guard + the host owner/qualified-name paths.)*
 - **Contained extraction (closes the extractor-throw path):** the no-crash guarantee rests on three
   guards, not two: (1) `parseSourceSafe()` contains *parse* throws; (2) the drop rule contains *empty*
   names; (3) **WI-1's extractors must be defensive on error-recovery trees** — a traversal over a
@@ -345,15 +377,15 @@ Each clause carries its REQ-NNN through the chain. "The system" = a single GitNe
 |---|---|---|
 | null / empty | empty `.cls`; whitespace-only file | parses to empty tree; emits no nodes; no crash. |
 | boundary / maximum | file at/over `TREE_SITTER_MAX_BUFFER` | skipped at the host threshold (NFR-003); run continues. |
-| grammar unavailable | Apex binding absent / `GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1` | `.cls`/`.trigger` still recognised as Apex but the file is skipped; run completes, no crash (RESEARCH-001 §2 guarded load). |
+| grammar unavailable | Apex binding absent / `GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1` | `.cls`/`.trigger` still recognised as Apex but the file is skipped; run completes, no crash (RESEARCH-001 Structural-constraint #2, guarded load). |
 | malformed / incomplete | unterminated class/string/comment; stray tokens | `parseSourceSafe` → partial/throw → file skipped or partial tree with no crash (NFR-001). |
 | malformed — partial node, **name-field path** | any of class/interface/enum/method/constructor/trigger/enum_constant with a `MISSING` `name` field | capture match dropped, no node, no crash (partial-tree rule). |
 | malformed — partial node, **declarator path** | `field_declaration` with an unrecoverable `variable_declarator` | the bad declarator yields no node; well-formed sibling declarators still emit; no throw. |
-| malformed — **owner dropped, children valid** | `class` with a `MISSING` name but valid-named methods/fields/nested types | cascade-drop: owner and all its members/nested types dropped; no orphan node, no dangling owner edge, no empty owner-segment id (cascade rule). |
+| malformed — **owner nameless, children valid** (v1.2) | `class` with a `MISSING` name but valid-named methods/fields/nested types | nameless owner emits no node (partial-tree rule); its valid-named members/nested types **re-parent to File scope** (File `DEFINES`), host default; no degenerate node, no empty owner-segment id. |
 | encoding | non-UTF-8 / BOM / mixed line endings | host buffer sizing handles; no Apex-specific path. |
 | structural — deep nesting | deeply nested inner classes | container nodes + qualified ids emitted; no stack overflow within host limits. |
-| structural — type-only overloads | two **methods or constructors** same name **and** arity, different parameter types — incl. **generic/array/qualified** (`f(Integer)`/`f(String)`; `f(List<Account>)`/`f(List<Contact>)`; `Foo(Integer)`/`Foo(String)`) | distinct ids via the canonical parameter-type signature (whitespace-stripped, lower-cased type text); **both** nodes emitted (so WI-2/REQ-008 can resolve them). |
-| structural — identical-signature duplicate | two members with the **same** owner+name+arity+param-types, incl. same-line `Integer x, x;` (valid syntax, illegal-to-compile Apex; GitNexus graphs uncompiled source) | exact id collision → WI-1 appends a positional disambiguator that is **unique per declaration site — start line *and column*** (so even two declarators on one line differ) — so **both are retained**, never silently overwritten (REQ-003 "represent each"). |
+| structural — type-only overloads (v1.2) | two **methods or constructors** same name **and** arity, different parameter types — incl. **generic/array/qualified** (`f(Integer)`/`f(String)`; `f(List<Account>)`/`f(List<Contact>)`; `Foo(Integer)`/`Foo(String)`) | distinct ids via the host's **collision-triggered** parameter-type signature (host `typeTagForId`, raw type text); **both** nodes emitted (so WI-2/REQ-008 can resolve them). |
+| structural — identical-signature duplicate (v1.2) | two members with the **same** owner+name+arity+param-types, incl. same-line `Integer x, x;` (illegal-to-compile Apex; GitNexus graphs uncompiled source) | exact id collision → **collapses to a single node**, host default (last-write-wins / graph-layer dedup) for every language. No Apex-specific positional disambiguator. |
 | trigger with no body / multiple events | `trigger T on A (before insert,after update){}` | one container node emitted; trigger events are not emitted as nodes or node properties in WI-1 (consistent with the REQ-004 postcondition's property list). |
 | id collision — trigger vs class same name | `trigger Foo` in `Foo.trigger` + `class Foo` in `Foo.cls` | distinct ids (filePath-qualified + `apexConstruct`); no collision (REQ-004 id disambiguation). |
 | annotated members — all kinds | `@TestVisible` field, `@AuraEnabled` property, annotated constructor | each carries normalised `@Name` in `annotations` (REQ-014; grammar-uniform, RESEARCH-001 probe3). |
@@ -369,9 +401,17 @@ SRS-001 as a versioned addendum (new REQ-NNN) re-entering Gate 1 — none requir
 
 - **Performance/memory:** Apex adds no per-file work beyond the host parse+query path; reuses the
   host buffer budget (NFR-003) and the worker's per-file cache-clear. No new global state.
-- **Compatibility (NFR-002):** all changes are additive — a new enum value, a new provider-table
-  entry, a new vendored grammar, a new query string. No shared code branches on Apex. The pre-existing
-  suite must stay green (Gate-5/CI).
+- **Compatibility (NFR-002):** the Apex-onboarding changes are additive — a new enum value, a new
+  provider-table entry, a new vendored grammar, a new query string. No shared code branches on Apex. The
+  three generic shared seams (§1) are language-agnostic: two are inert until a provider configures them
+  (no peer configures `extractProperties`/`extractAnnotations`, so peer output is byte-identical); the
+  **empty-name guard is the one cross-language behavioural delta** — for a nameless declaration under
+  error recovery, every language now emits *no* node where it previously emitted a degenerate empty-named
+  one. This is a strict quality improvement (removal of malformed-only junk output), not a regression: no
+  well-formed source reaches it. Per the §1 verification split, the no-regression claim is a **Gate-3/CI
+  obligation** — **NFR-002 is measured by suite-green** (Constitution §1.3 / §2.2(c)): the gate confirms
+  the pre-existing suite (incl. Java/Kotlin/C# resolver suites) stays green; the SDD does not assert it as
+  proven. The §2.2 v1.1.0 amendment explicitly sanctions this degenerate-node guard.
 - **Security:** see §6.
 
 ## 6. Security-critical tag & clauses
@@ -414,12 +454,10 @@ No other CWE-backed surface exists for WI-1 (no auth/secrets/PII/financial) → 
   - **Pure core** — the extractors (`method-config`/`field-config`/`class-config` logic, annotation
     normalisation, query capture → node mapping): given an AST node, deterministic data out, no I/O,
     no shared mutable state. This is where WI-1's logic lives and where unit-level tests bind.
-  - **Pure per-file fold** — the exact-id-collision dedup (the degenerate identical-signature /
-    `Integer x, x;` fallback) needs to compare a node's id against siblings, so it is a **per-file fold**
-    over the file's emitted nodes, not a per-node op. It stays **pure** (a deterministic function of the
-    file's node list → disambiguated node list, no I/O, no cross-file state) and lives in WI-1's Apex
-    emission layer — **not** an edit to the shared parse phase (Constitution §2.2 preserved). It runs
-    only on exact collision, so legal Apex (resolvable signature-ids) is untouched.
+  - **(v1.2 — removed) Pure per-file fold.** v1.1 specified a per-file fold to append a positional
+    disambiguator on exact id collision (the identical-signature / `Integer x, x;` case). The v1.2 revert
+    collapses identical-signature duplicates to a single node (host default), so **no per-file fold
+    exists** — WI-1 adds no node-id post-processing. Member-id construction is entirely the host's.
   - **Effectful shell** — grammar load (`requireVendoredGrammar`), `parser.parse`, the worker's
     file iteration / `postMessage` / disk shard writes. Owned by the host; Apex adds only the grammar
     load and a `languageMap` entry. Dependency direction: shell → core (the worker calls the pure
@@ -469,12 +507,15 @@ exist).
 - **REQ-003 — every member kind:** **method**→`Method`, **constructor**→`Constructor`, **field**→`Property`,
   **auto-property**→`Property`, **enum constant**→`Property` member of its `Enum`; with the correct
   containment edge (`HAS_METHOD` for method/constructor; `HAS_PROPERTY` for field/property/enum-constant).
-- **REQ-002 — `DEFINES` containment:** a top-level type **and** a trigger each produce a `DEFINES` edge
-  from their `File` node (asserted explicitly, parallel to the `HAS_*` assertions).
-- **REQ-003 — type-only overloads:** `f(Integer)`/`f(String)`, `f(List<Account>)`/`f(List<Contact>)`
+- **REQ-002 — `DEFINES` containment (v1.2):** a top-level type, a trigger, **and a nested type** each
+  produce a `DEFINES` edge from their `File` node (host default; nested types take the File edge like
+  top-level types and the Java/Kotlin benchmark).
+- **REQ-003 — type-only overloads (v1.2):** `f(Integer)`/`f(String)`, `f(List<Account>)`/`f(List<Contact>)`
   (generic), and **`f(Account)`/`f(Account[])`** (array) each → two distinct `Method` nodes;
-  `Foo(Integer)`/`Foo(String)` → two distinct `Constructor` nodes (distinct ids via the canonical
-  parameter-type signature) — none dropped.
+  `Foo(Integer)`/`Foo(String)` → two distinct `Constructor` nodes (distinct ids via the host's
+  collision-triggered parameter-type signature) — none dropped. An **identical-signature duplicate**
+  (illegal Apex) collapses to one node (host default); ids are case-preserving (case-insensitive
+  matching is WI-2's resolver concern).
 - **REQ-002 — `isExported` per context:** `global`→true, `public`→true, **`webservice`→true**,
   `protected`→false, `private`→false, class-member/top-level-type/**nested-type** no-modifier→false,
   **interface method (no modifier)→true**, **enum constant→true**, trigger→false. One assertion per case.
@@ -485,21 +526,22 @@ exist).
 - **Build/maintenance (RESEARCH-001 §3):** the manifest/vendor-dir consistency-guard test passes with
   Apex included; and a grammar-unavailable run (binding absent / `GITNEXUS_SKIP_OPTIONAL_GRAMMARS`) →
   recognised `.cls`/`.trigger` files are skipped and the run completes (no crash).
-- **NFR-003 / NFR-001 (parse-slice) / SEC-001:** over-budget skip; the partial-tree drop rule;
-  **malformed-input no-crash asserted on both name-extraction paths** (the uniform `name` field; the
-  `field_declaration` declarator walk) plus the owner-cascade case — one fixture each.
+- **NFR-003 / NFR-001 (parse-slice) / SEC-001 (v1.2):** over-budget skip; the partial-tree drop rule
+  (no degenerate empty-named node on any label, via the generic guard); **malformed-input no-crash
+  asserted on both name-extraction paths** (the uniform `name` field; the `field_declaration` declarator
+  walk); and the **nameless-owner case** — its valid-named members/nested types re-parent to File (host
+  default), no degenerate node, no empty owner-segment id.
 
 ---
 
-**Known forward dependency (rework risk, disclosed):** WI-1 commits concrete, testable outputs now —
-the `Property` member label, the id-only nested-type modelling, and the `global`/`public`→`isExported`
-rule. **Only the first two** are subject to WI-4's REQ-012 parity confirmation (REQ-012 covers node
-*kind* and edge *kind*): if the Java/Kotlin benchmark labels a field differently or emits a nested-type
-containment edge, **WI-4 may amend WI-1's output set** (label remap and/or an added containment edge) —
-a mechanical, additive migration that does not invalidate WI-1's structure. The **`isExported` rule is
-WI-1's own design**, outside REQ-012's scope (a property value, not a kind), and is not subject to that
-amendment. WI-1 remains independently deployable on its committed values; this records the rework risk
-rather than leaving the coupling implicit.
+**Known forward dependency (rework risk, disclosed; v1.2):** WI-1 commits concrete, testable outputs
+now — the `Property` member label and the `global`/`public`→`isExported` rule. **Only the `Property`
+label** is subject to WI-4's REQ-012 parity confirmation (REQ-012 covers node *kind* and edge *kind*):
+if the Java/Kotlin benchmark labels a field differently, **WI-4 may remap the label** — a mechanical,
+additive migration. *(The nested-type containment edge is no longer a forward risk: v1.2 reverted WI-1
+to the host/benchmark default — File→nested `DEFINES` — so it already matches REQ-012 parity.)* The
+**`isExported` rule is WI-1's own design**, outside REQ-012's scope (a property value, not a kind), and
+is not subject to that amendment. WI-1 remains independently deployable on its committed values.
 
 *WI-2…4 SDD sections follow after WI-1 clears Gate 2 and (per the host's per-item flow) WI-1's own
 downstream gates, authored in dependency order ITEM-002 → ITEM-003 → ITEM-004.*

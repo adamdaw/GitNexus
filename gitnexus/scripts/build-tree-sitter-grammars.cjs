@@ -44,6 +44,7 @@ const GRAMMARS = {
   proto: { required: false, display: 'Proto', ext: '.proto' },
   swift: { required: false, display: 'Swift', ext: '.swift' },
   kotlin: { required: false, display: 'Kotlin', ext: '.kt/.kts' },
+  apex: { required: false, display: 'Apex', ext: '.cls/.trigger' },
 };
 
 const skipOptional = process.env.GITNEXUS_SKIP_OPTIONAL_GRAMMARS === '1';

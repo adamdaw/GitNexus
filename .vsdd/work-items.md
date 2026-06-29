@@ -5,7 +5,7 @@ independently-deployable work items, reviewed **as a set** at the Gate 1 decompo
 (Phase 1 decomposition bridge) before any item enters Phase 2: slice fidelity, coverage of every
 epic REQ-NNN, dependency acyclicity, criticality correctness (Core Principle 9).*
 
-- **Parent epic:** SRS-001 (INTENT-001) · **Constitution:** CONST-gitnexus-apex v1.0.0
+- **Parent epic:** SRS-001 (INTENT-001) · **Constitution:** CONST-gitnexus-apex v1.1.0
 - **Status:** **Gate 1 decomposition checkpoint CLEARED (PASS_CLEAN, 2026-06-28)** — 3 fresh-context
   adversary rounds (FAIL→FAIL→PASS_CLEAN); pass record `.vsdd/pass-records/gate1-decomposition.md`,
   findings `.vsdd/findings/gate1-decomposition.md`. Work items valid for Phase 2 entry.

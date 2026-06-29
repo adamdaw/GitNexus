@@ -25,6 +25,7 @@ import { swiftProvider } from './swift.js';
 import { dartProvider } from './dart.js';
 import { vueProvider } from './vue.js';
 import { cobolProvider } from './cobol.js';
+import { apexProvider } from './apex/index.js';
 
 export const providers = {
   [SupportedLanguages.JavaScript]: javascriptProvider,
@@ -43,6 +44,7 @@ export const providers = {
   [SupportedLanguages.Dart]: dartProvider,
   [SupportedLanguages.Vue]: vueProvider,
   [SupportedLanguages.Cobol]: cobolProvider,
+  [SupportedLanguages.Apex]: apexProvider,
 } satisfies Record<SupportedLanguages, LanguageProvider>;
 
 /** Get provider by language enum (always succeeds for SupportedLanguages). */

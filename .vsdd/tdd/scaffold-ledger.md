@@ -42,3 +42,20 @@ a grammar legitimately updates them. None is a behavioural target.
 - **No new regressions:** full `test/unit` = **23 failed = 19 pre-existing environment failures** (git/CLI/incremental/pdg/sibling — unrelated, this change touches none) **+ 4 recognition anchors**. The manifest-hold tests are green (infra-presence), the transient vendoring regressions fixed.
 
 **Conclusion:** the scaffold made the behavioural suite executable-red and greened only infrastructure-presence tests. The discriminator held: **behaviour stays red until real implementation (Step 3b).**
+
+## Step-3b closure — scaffold promoted to load-bearing implementation (2026-06-29)
+
+The two `// vsdd:scaffold`-tagged registrations are now **load-bearing production code** and the tags
+were removed (de-scaffolded):
+- `src/core/tree-sitter/parser-loader.ts` — `SOURCES.apex` rekeyed from the literal `apex:` to
+  `[SupportedLanguages.Apex]:` (the enum member now exists); scaffold rationale comment replaced.
+- `src/core/tree-sitter/vendored-grammars.ts` — `tree-sitter-apex` in `VENDORED_GRAMMAR_PACKAGES`;
+  scaffold comment replaced.
+- Completed the deferred build-wiring: `scripts/build-tree-sitter-grammars.cjs` `GRAMMARS` gained the
+  `apex` entry (`required:false`, honours `GITNEXUS_SKIP_OPTIONAL_GRAMMARS`).
+- Worker fix (separate): `parse-worker.ts` keeps its OWN module-local vendored-grammar table; the
+  scaffold registered Apex in `parser-loader` but not there, so the worker skipped all `.cls`/`.trigger`.
+  Added the guarded require + `languageMap` entry (§2.2 vendored-grammar onboarding).
+
+No `// vsdd:scaffold` tags remain in `src/`, `scripts/`, or `.github/`. The behavioural suite is GREEN
+(65/65) on the real implementation.

@@ -22,4 +22,6 @@ export enum SupportedLanguages {
   Vue = 'vue',
   /** Standalone regex processor — no tree-sitter, no LanguageProvider. */
   Cobol = 'cobol',
+  /** Salesforce Apex — `.cls`/`.trigger`; Java-derived tree-sitter grammar. */
+  Apex = 'apex',
 }

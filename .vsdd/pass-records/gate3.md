@@ -1,5 +1,36 @@
 # Gate 3 pass record — Tests vs Spec (ITEM-001 / SDD-001)
 
+> **⚠ PARTIALLY SUPERSEDED — cascade-invalidated by SDD-001 v1.2 (2026-06-29).** This PASS_CLEAN
+> validated the tests against SDD-001 **v1.1**. The v1.2 revert changes the expected behaviour for
+> **7 tests** that encoded the now-reverted divergences (rounds R1/R5 above wrote them in: the
+> canonical/always-on param-type signature, case-normalised ids, the same-line/identical-signature
+> column disambiguator, the owner cascade-drop, and the no-nested-`DEFINES` modelling). Those 7 tests
+> are re-derived to host expectations and **require a fresh context-free Gate-3 re-validation** against
+> SDD-001 v1.2. The other 58 assertions are unaffected and remain valid. Re-clear order: Gate 2 (v1.2
+> SDD) → revise the 7 tests → Gate 3 re-validation.
+
+## v1.2 RE-CLEARANCE (2026-06-29)
+
+- **Spec under test:** SDD-001 **v1.2** (`.vsdd/SDD.md`), Constitution v1.1.0. The 7 divergence-encoding
+  tests were re-derived to host expectations: nested type → File `DEFINES`; identical-signature
+  duplicates collapse to one (×2); non-overloaded method id carries no param segment; member id/name
+  case-preserving; nameless-owner members/nested types re-parent to File (×2).
+- **Reviewer:** fresh, distinct, **context-free** `vsdd-test-validator` per round — admitted = SDD-001 +
+  the test files + fixtures + helpers; **implementation withheld** (tests judged against spec alone).
+- **Loop:** R1 **FAIL** (1 incorrect test — the overload test still used `.toLowerCase()` + a stale v1.1
+  comment, so it would pass even if the impl emitted the reverted lower-cased form; tautology) → fixed to
+  assert exact-case `List<Account>`/`List<Contact>` → R2 **PASS** (faithful, non-tautological, un-mocked;
+  every §2 clause + §8 assertion covered; all five v1.2 host-default pins covered by discriminating
+  assertions that fail if violated). Sibling suites confirmed green: `apex-vendored-grammar` (2),
+  `apex-skip-grammar` (4).
+- **Execution note:** implementation already exists (Step 3b host-conforming), so the behavioural suite
+  RUNS green (65/65) rather than skip — the v1.2 reverts required no new implementation; the host already
+  behaved this way, which was the whole point of the revert.
+- **Architect sign-off:** Adam, 2026-06-29, on the R2 PASS.
+- **Verdict:** **PASS** — revised test suite cleared against SDD-001 v1.2. WI-1 green; ready for Phase 4.
+
+---
+
 *VSDD §A.7. Gate 3 reviews the test suite against the spec **before** implementation.
 Verdict authority: Architect (Adam). Reviewer: `vsdd-test-validator`, fresh +
 context-free each round (admitted artefacts + standing criteria only — no round/

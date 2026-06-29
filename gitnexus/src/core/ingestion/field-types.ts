@@ -43,6 +43,9 @@ export interface FieldInfo {
   sourceFile: string;
   /** Line number */
   line: number;
+  /** Normalised member annotations (`@Name`), when the language extracts them.
+   *  Mirrors `MethodInfo.annotations`; spread onto the Property node by the worker. */
+  annotations?: string[];
 }
 
 /**
