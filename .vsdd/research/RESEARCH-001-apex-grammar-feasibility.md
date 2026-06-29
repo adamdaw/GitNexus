@@ -158,3 +158,25 @@ Second probe (`probe2.cjs`, Gate 2 H01/H02), all 0 ERROR/MISSING:
   `field_declaration`**. The grammar does not distinguish Apex fields from auto-properties at the node
   level (the accessor block is interior). `field_declaration` carries no direct `name` field — the name
   is nested in its declarator (the field extractor's `extractName` walk handles it).
+
+### Addendum (2026-06-29) — reference/invocation node-shape probe for WI-2 SDD (Gate 2)
+
+*WI-2 resolution mechanics require the **reference** grammar (the original addendum verified **definition**
+nodes only). Reference-grammar probe over a representative unit (`extends`/`implements`, constructor
+delegation, `new`, member call, field access, `super` call) — 0 ERROR/MISSING nodes:*
+
+- **`method_invocation`** — both `a.doWork()` and **`super.base()`** (so a `super` method call is a
+  `method_invocation` with a `super` receiver, not a distinct node).
+- **`object_creation_expression`** — `new Account()` (constructor/type usage).
+- **`field_access`** — `a.name` (the member/property access node; there is no separate `property_access`).
+- **`explicit_constructor_invocation`** — both `this(1)` and `super()` (constructor delegation; carries a
+  `this`/`super` child + `argument_list`). **Apex therefore HAS `this()`/`super()`/`super.method()`
+  delegation** — single *class* inheritance does not mean `super`/`this` are absent.
+- **Inheritance is captured by `superclass` and `interfaces` children of `class_declaration`** (the header
+  shape is `modifiers, identifier, superclass, interfaces, class_body`); `interfaces` wraps a `type_list`.
+  (There is no `@reference.inherits`-style node — that was a Java-map assumption; Apex uses
+  `superclass`/`interfaces`.)
+
+*Binding on SDD-002: the call/scope captures target these node types; inheritance edges (REQ-007) derive
+from `superclass`/`interfaces`; constructor/`super` delegation (REQ-005/008) targets
+`explicit_constructor_invocation` + the `super`-receiver `method_invocation`.*

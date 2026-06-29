@@ -556,3 +556,316 @@ is not subject to that amendment. WI-1 remains independently deployable on its c
 
 *WI-2…4 SDD sections follow after WI-1 clears Gate 2 and (per the host's per-item flow) WI-1's own
 downstream gates, authored in dependency order ITEM-002 → ITEM-003 → ITEM-004.*
+
+---
+
+# SDD-002 — WI-2: Resolution mechanics
+
+- **Consumes:** SRS-001 REQ-005, REQ-006, REQ-015, REQ-007, REQ-008, REQ-009 (the user-defined
+  resolution *mechanics*, verified within a single declaration unit — cross-file reach is WI-3/REQ-010);
+  the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-002** (§A.6 host-API spike,
+  Architect-approved 2026-06-29) — the case-insensitive-resolution seam.
+- **Constitution:** CONST-gitnexus-apex v1.1.0. **Security-critical = false** (operates on WI-1's
+  safe-parsed output; introduces no new untrusted-source parse path — the SECT-001 boundary stays WI-1's).
+  No new SEC clause.
+- **Builds on:** WI-1's graph (container + member nodes, case-preserving ids, collision-triggered
+  param-type id segments). WI-2 fills the WI-1 resolution stubs (`type-config.ts`, `import-resolver.ts`)
+  and adds the call/scope hooks — all under `languages/apex/` (Constitution §2.1).
+
+## 1. Design overview (the HOW, grounded in the host)
+
+WI-2 reuses GitNexus's class-based resolution machinery (the same stack Java/Kotlin use) and supplies the
+Apex-specific configs/hooks. **No resolution algorithm is reimplemented**; WI-2 provides the language
+adapters the host's generic passes consume. All Apex logic lives under `languages/apex/`.
+
+**Provider surface WI-2 fills (mirroring the JVM configs):**
+- `typeConfig.extractDeclaration` / `extractParameter` — explicit-type bindings (`Account a;`) and
+  parameter types for the **type-binding / receiver-typing** path, mirroring `type-extractors/jvm.ts`
+  (simple-name extraction, generics stripped to the base name — `List<Account>` → `List` — because member
+  lookup keys on the base type). **This representation does NOT drive REQ-008 overload disambiguation:**
+  overload selection uses WI-1's raw `formal_parameter.type` **source-text** id segment (generics
+  preserved, so `f(List<Account>)` and `f(List<Contact>)` stay the two distinct nodes WI-1 already emits —
+  SDD-001 §3). The base-name-stripped type binding is only the receiver-typing input for member lookup.
+- `callExtractor = createCallExtractor(apexCallConfig)` — extract call sites (method invocation,
+  constructor `new`, property access), receiver, and argument shape.
+- Ring-3 `ScopeResolver` hooks: `interpretApexTypeBinding`, `apexReceiverBinding` (instance methods bind
+  `this`→enclosing type), `apexArityCompatibility` (**strict equal-arity**, on **explicit assumption
+  A-WI2-1**: user-defined Apex methods take no optional/default-valued parameters and no user varargs, so
+  arity is exact — a Gate-3-checkable language premise REQ-008's parameter-count narrowing depends on, not a
+  silent pin; if false, an arity fixture catches it), `apexMergeBindings`
+  (local-first precedence), and `emitApexScopeCaptures` — **authored** as Apex-specific scope captures
+  (consistent with WI-1's own `APEX_QUERIES`; the JVM scope queries are NOT reused verbatim, because Apex's
+  reference nodes — `method_invocation`/`super.x()`, `object_creation_expression`, `field_access`,
+  `explicit_constructor_invocation`, `superclass`/`interfaces` — must be queried explicitly, per the
+  RESEARCH-001 reference-grammar addendum, 2026-06-29).
+- Edge labels are host-existing — `graph-bridge/edges.ts:42` returns `CALLS` (invocations/constructors),
+  `ACCESSES` (field/property reads), `USES` (type usage), `EXTENDS` (class inheritance); `IMPLEMENTS` is a
+  host relationship label (`gitnexus-shared/src/lbug/schema-constants.ts:57`; `edges.ts:91` selects
+  EXTENDS-vs-IMPLEMENTS by target type). WI-2 emits no new label. *That the host
+  resolution passes consume WI-2's captures/configs and emit these edges is a host **behaviour** —
+  [Gate-3 reliance], not pinned here; what WI-2 pins is the capture/config it supplies.*
+
+**Case-insensitivity mechanism (the WI-2-defining design — RESEARCH-002, option a).** Apex identifiers
+and type names are case-insensitive, but the host resolves via **exact-string keys** at three name-key
+surfaces — the member registries (`${ownerNodeId}\0${memberName}`), scope bindings, and type bindings —
+none of which has a provider normalization hook, and the member-index *register* side is populated in
+shared code from extracted names (so it cannot be folded Apex-locally without naming Apex in shared code).
+WI-2 therefore adds a **generic §2.2 seam**: a provider-supplied
+`normalizeIdentifier?: (s: string) => string` (identity default for case-sensitive peers; `toLowerCase`
+for Apex), applied **symmetrically** when computing the name-key at every boundary — registry
+insert+lookup, scope-binding insert+lookup, type-binding insert+lookup, and the O(|defs|) compatibility
+-scan fallback. **Node ids stay case-preserving** (lookup-key ≠ display-id; the two are already decoupled
+in the host). The seam names no language and is identity-transparent for every peer (NFR-002, measured).
+This is the same class of generic seam §2.2 v1.1.0 sanctioned for WI-1, and is architecturally consistent
+with the host's existing per-language *type* normalizer.
+
+**Acceptance boundary.** WI-2's mechanics are verified within a **single declaration unit** (one
+top-level type + its nested types) — the scope that exercises every mechanic without the cross-file
+enabler (WI-3/REQ-010). Inherently cross-file epic §9 scenarios complete at WI-3; WI-2 stays independently
+deployable (it resolves intra-unit references immediately).
+
+## 2. Behavioural contract (each REQ → clause; host-structural vs Gate-3 reliance marked)
+
+> **Verification split (finding #13).** Clauses tagged **[structural]** are pinned here (provider/seam
+> wiring, edge labels, conservative-skip default — read-verifiable against the host API). Clauses tagged
+> **[Gate-3 reliance]** are host-API *behaviours* that only the real host can confirm — they are
+> **design obligations to validate at Gate 3 (tests vs host)**, not Gate-2 pins. The Gate-2 adversary
+> reviews the wiring and the split's correctness, NOT the truth of the host-API behaviours.
+
+- **REQ-005 (resolve unambiguous user-defined reference → resolved edge).**
+  - *Precondition:* a reference (method invocation, constructor invocation, type usage, field/property
+    access) whose target is a single user-defined Apex symbol reachable within the declaration unit.
+  - *Postcondition:* a resolved edge of the host's kind (`CALLS` for invocations/constructors, `ACCESSES`
+    for field/property reads, `USES` for type usage) from the referencing node to the target node.
+    (Inheritance edges are REQ-007's, not duplicated here.) **[structural]** that WI-2 supplies the call
+    capture/`apexCallConfig` for these reference nodes (the WI-2-code fact); **[Gate-3 reliance]** that the
+    host pass consumes them and selects the correct target given Apex input + the `normalizeIdentifier` seam.
+  - *Invariant:* matching is case-insensitive (the seam); the emitted target id is the case-preserving id.
+- **REQ-006 (no false unresolved for a REQ-005-resolved reference).** *Postcondition:* a reference that
+  REQ-005 resolves emits no "unresolved" record. **[structural]** (WI-2-code fact, the only thing pinnable
+  here) the `normalizeIdentifier` seam only transforms name-keys; WI-2 adds no resolution branch and no
+  second unresolved-emission path. **[Gate-3 reliance]** the host's own emit-edge-XOR-record-unresolved
+  behaviour — that a reference the host resolves under the seam emits no unresolved record — including the
+  existence and single-pointedness of that decision in host code, validated against the real host.
+- **REQ-015 (ambiguous → no binding, record unresolved; conservative).** *Postcondition:* when a reference
+  does not resolve to a single target (no match, multiple matches, or unresolved receiver type), the system
+  (i) emits **no binding edge** AND (ii) **records the reference as unresolved** (it appears in the host's
+  unresolved/skipped-reference set — the same set REQ-006 forbids a *resolved* reference from entering, and
+  that the epic acceptance metric `{ skipped: 0 for in-scope refs }` reads) — never a mis-binding, never a
+  throw. **[structural]** WI-2's design decision: add no override to the host's conservative-skip default.
+  **[Gate-3 reliance]** that the host at runtime both (i) skips-on-ambiguity (ambiguous-or-miss → no edge)
+  AND (ii) produces the unresolved record, for Apex input — the concrete host mechanism left to Gate-3
+  discovery — including case-only collisions (two symbols differing only in case → ambiguous → unresolved).
+- **REQ-007 (resolve `extends`/`implements` between user-defined types → edges).** *Postcondition:*
+  `EXTENDS` (class→class) and `IMPLEMENTS` (class→interface) edges between user-defined Apex types.
+  **Acceptance scope (single declaration unit):** in Apex every *top-level* type is its own file (filename
+  = type name), so top-level `extends`/`implements` is **inherently cross-file** — its end-to-end
+  resolution completes at WI-3 via the REQ-010 enabler, exactly like REQ-005/009's cross-file forms. WI-2's
+  REQ-007 acceptance is therefore the **nested-type-within-one-unit** form
+  (`class Outer { virtual class Base {} class Derived extends Base {} }`), the only inheritance reachable
+  inside a single declaration unit. **[structural]** that WI-2 supplies the Apex captures over the
+  `superclass`/`interfaces` children of `class_declaration` (RESEARCH-001 reference-grammar addendum — Apex
+  uses `superclass`/`interfaces`, not a `@reference.inherits` node). **[Gate-3 reliance]** that the host
+  inheritance-edge pass emits the EXTENDS/IMPLEMENTS edge and the base-type name resolves under the seam.
+  Apex has single *class* inheritance (one `superclass`), so no multiple-parent MRO walk.
+- **REQ-005 delegation sub-clause (`this()`/`super()`/`super.method()` — RESEARCH-001 addendum).** Apex
+  constructor delegation (`this(...)`, `super(...)`) parses as `explicit_constructor_invocation`; a
+  `super` method call parses as a `method_invocation` with a `super` receiver. *Postcondition:* `this(...)`
+  resolves to the sibling constructor (same type, by arity+param-type) — **always intra-type, so squarely
+  single-unit**; `super(...)`/`super.method()` resolve to the parent type's member — **in-unit only when
+  the parent is a nested sibling type** (top-level-parent `super` is cross-file, completing at WI-3 with
+  REQ-007's top-level form). **[structural]** `apexReceiverBinding` binds a `super` receiver to the
+  resolved parent type (in addition to `this`→enclosing type); **[Gate-3 reliance]** that the host resolves
+  the delegated target correctly under the seam.
+- **REQ-008 (overload resolution by arity + exact declared param types; SRS v1.2 head).** *Postcondition:*
+  an overloaded call resolves to the overload the host's arity + exact-type narrowing uniquely selects —
+  exact-type narrowing requiring **every** parameter position identical to the corresponding argument's
+  static type (multi-parameter overloads) — with param-type tokens compared case-insensitively; a
+  genuinely-undisambiguable assignable case (no equal-arity overload matches every position exactly) is
+  recorded unresolved (REQ-015). *Comparison-symmetry invariant (like `normalizeIdentifier`'s insert/lookup
+  symmetry): the argument-side type token MUST be rendered in the **same** raw `formal_parameter.type`
+  source-text form as WI-1's declared param-type id segment (generics preserved, same whitespace/
+  qualification), with the case-fold applied to **both** sides. A rendering asymmetry degrades to a false
+  non-match → conservative REQ-015 unresolved (never a mis-binding).* **[Gate-3 reliance]** (c) that the
+  argument-token and declared-segment renderings actually match under the host. **[structural]** the *wiring*: WI-2 supplies `apexArityCompatibility`,
+  reuses the collision-triggered `~Type` id segments WI-1 already emits, **and applies the Apex-local
+  param-type case-fold** (the C++ `arity-metadata` pattern — §3) so case-varied param types compare equal.
+  **[Gate-3 reliance]** (a) that the shared overload-narrowing consumes the folded strings **without
+  over-collapsing distinct types** (RESEARCH-002 residual reliance #3); and (b)
+  the *selection outcome* — that the host's arity+exact-type narrowing picks the fixture's expected
+  overload. *Derivation: the selection rule is bound by **REQ-008's own SRS v1.2 amended text** (reuse the
+  Java/Kotlin benchmark's arity+exact-type narrowing), NOT by REQ-012 — REQ-012 governs node/edge **kind**
+  parity only (and is WI-4's). The acceptance fixture (§8) pins a host-resolvable case.* **(See the
+  Architect-decision note at the end of §2.)**
+- **REQ-009 (field/property-access chains across user-defined types).** *Postcondition:* `a.b.c` resolves
+  each segment's type through the host's field-access fixpoint and emits a resolved `ACCESSES` edge for
+  **each** access segment of the chain (`a.b` and `(a.b).c`, to each declaring member — SRS §9's
+  "declaring members", plural — consistent with REQ-005's per-access edge), not only the terminal.
+  **[structural]** that WI-2 supplies the field-access capture + the `normalizeIdentifier` seam the
+  fixpoint's member lookup keys on; **[Gate-3 reliance]** that the host type-env fixpoint + member lookup
+  resolves the chain end-to-end under the seam within the declaration unit (cross-file chains are WI-3).
+
+> **Architect-decision note (REQ-008 — Gate-2 R1/R3/R4; RESOLVED via SRS v1.2 amendment).** The adversary
+> flagged that routing a genuinely-undisambiguable assignable-argument overload to REQ-015 (unresolved)
+> weakens REQ-008's original SHALL-select. **Architect disposition (Adam, 2026-06-29): a deliberate scope
+> reduction of REQ-008's selection algorithm**, formalised as **SRS amendment v1.2** (REQ-008 head + the §9
+> assignable scenario, re-entering Gate 1). The operative rule is the Java/Kotlin benchmark's arity +
+> exact-type narrowing — the host implements no assignability ranking for *any* language, so this is parity
+> in *capability*, but it is **NOT entailed by REQ-012** (which scopes parity to node/edge kind only); it is
+> an explicit narrowing under Conservatism (Constitution §1.2), documented — not a silent exception (§7).
+> The acceptance fixture (§8) uses a host-resolvable case; a genuinely-undisambiguable case is REQ-015
+> -unresolved, matching the benchmark. (Rejected: (c) build a conversion-rank engine — host-wide, out of
+> WI-2's parity scope.)
+
+## 3. Interface definition (what WI-2 adds)
+
+- **`languages/apex/type-config.ts`** — fill `extractDeclaration(node)`, `extractParameter(node)`:
+  return the declared simple type name (mirror `type-extractors/jvm.ts`; reuse `extractSimpleTypeName`).
+- **`languages/apex/call-config.ts`** (new) + `callExtractor` in `index.ts` — `apexCallConfig` for
+  `createCallExtractor`, over the RESEARCH-001 reference-grammar node types: `method_invocation` (incl. a
+  `super` receiver), `object_creation_expression` (constructor), `field_access` (member/property access),
+  and `explicit_constructor_invocation` (`this(...)`/`super(...)` delegation); supply receiver + arg-count
+  (+ arg-type tokens where statically present). **REQ-005 "type usage"** (a standalone reference to a
+  user-defined type — a declared type `Account a;`, a cast, a static-type qualifier) is captured as a
+  type-reference and **[Gate-3 reliance]** the host reference pass emits the `USES` edge to the type node;
+  WI-2 pins only that the Apex capture surfaces the type reference.
+- **`languages/apex/scope-resolver.ts`** (new) — the Ring-3 hooks (`interpretApexTypeBinding`,
+  `apexReceiverBinding`, `apexArityCompatibility`, `apexMergeBindings`, scope-capture emission), wired in
+  `index.ts`. Mirrors `java/*` hook shapes.
+- **Generic §2.2 seam** — `normalizeIdentifier?: (s: string) => string` on the provider (or the
+  resolver-config), threaded through the shared name-key sites enumerated in RESEARCH-002. **Names no
+  language**; Apex supplies `toLowerCase`; default identity. Insert/lookup symmetry is the correctness
+  invariant. Regression-measured against peers (NFR-002).
+- **Apex-local param-type case-fold (for REQ-008 overload comparison)** — Apex normalizes its **own**
+  param-type comparison strings (`toLowerCase`) so case-varied param types compare equal, the same
+  **language-local** pattern C++ uses (`languages/cpp/arity-metadata.ts:normalizeCppParamType`); the shared
+  overload-narrowing (`scope-resolution/passes/overload-narrowing.ts`) consumes the already-normalized
+  strings. **[structural]** the Apex-local fold (the C++ precedent — a language normalizes its own
+  param-type strings; no shared seam, names no language). Distinct from `normalizeIdentifier` (which keys
+  member/type/binding names) and from WI-1's raw case+generics-preserving `~Type` *id* segment (node
+  identity, untouched). **[Gate-3 reliance]** that overload-narrowing consumes the folded strings and
+  selects correctly **without over-collapsing distinct types** (RESEARCH-002 residual reliance #3).
+- **`index.ts`** — register `callExtractor`, the scope-resolver hooks, `arityCompatibility`, and
+  `normalizeIdentifier`. `importResolver` stays the no-op stub (cross-file is WI-3).
+
+## 4. Edge-case catalog (per-input checklist → each traces to a Gate-3 test)
+
+- **Case-varied reference** — `ACCOUNT a = new account(); a.NAME` against `class Account { String name; }`
+  resolves (the seam). The defining WI-2 fixture.
+- **Ambiguous / case-only collision** — two members differing only in case → unresolved, not mis-bound
+  (REQ-015).
+- **Unresolved receiver type** — a call on a variable with no inferable user-defined type → no edge.
+- **Overload resolves by exact type** — two equal-arity overloads of different declared types; the
+  argument's static type is identical to exactly one → resolves to it (stage-2 exact-type narrowing).
+- **Assignable arg, arity-disambiguated** — overloads of *different* arity; the argument is assignable-but
+  -not-identical to the matching-arity overload → resolves by arity (assignability does not block arity
+  selection). *Note: an assignable-not-identical argument can resolve ONLY by arity — stage-2 exact-type
+  narrowing requires identity, so it never singles out an assignable-not-identical argument.*
+- **Genuinely-undisambiguable assignable arg** — same-arity overloads of different declared types, argument
+  assignable-not-identical to all → no exact match → unresolved (REQ-015), not a guess.
+- **Overload disambiguable only by an external/unresolvable arg type** — overloads differing by a param
+  type the argument resolves to only as an external/unresolvable symbol (sObject/stdlib) → no unique
+  exact-type match → REQ-015 unresolved, no throw.
+- **Param-type rendering asymmetry** — the argument-side type token rendered differently from WI-1's raw
+  `formal_parameter.type` declared segment (whitespace, generic-arg spelling, qualification) → false
+  non-match → conservative REQ-015 unresolved, never a mis-binding. (The comparison-symmetry invariant,
+  REQ-008 §2; a Gate-3 reliance that the renderings match.)
+- **Self / recursive reference** — a method calling another method on `this` resolves to the enclosing
+  type's member.
+- **Forward / out-of-source-order reference** — Apex resolution is declaration-order-independent: a method
+  may reference a member (or nested sibling type) declared *later* in the same unit. The design relies on
+  the host being **populate-then-resolve** (registries materialised before the reference pass — the host's
+  two-phase finalize→emit). **[Gate-3 reliance]** that the host's pass ordering is in fact populate-then
+  -resolve (a host-API behaviour, not pinned here); asserted by a fixture whose call precedes the callee's
+  declaration.
+- **Resolved receiver, absent member** — the receiver type resolves to a user-defined type but the named
+  member does not exist on it (typo/wrong member) → no edge, recorded unresolved (REQ-015, "no match"), no
+  throw. (Distinct from the unresolved-receiver-type case above.)
+- **Cyclic / self-referential type chain** — a self-type (`class A { A self; }`, access `a.self.self.self`)
+  cycles the receiver-type graph **within one declaration unit** (the in-unit form; the two-class mutual
+  form `class A { B b; } class B { A a; }` is two top-level files = cross-file, deferred to WI-3).
+  **Termination is the host field-access fixpoint's bounded convergence** (it iterates to a fixed cap, not
+  the chain length) — WI-2 adds no unbounded walk of its own; **[Gate-3 reliance]** that the host fixpoint
+  terminates and yields a conservative outcome (no hang, no throw) on a genuinely cyclic graph. Traced to a
+  Gate-3 test whose chain exceeds the fixpoint's iteration bound.
+- **External reference** — a reference to a non-user-defined symbol (sObject/stdlib) → unresolved, no
+  Apex-specific defect (REQ-013 is WI-4, but the resolution slice must not throw on it).
+- **Reference into a skipped/malformed file** — NFR-001 resolution slice: resolution completes, the
+  reference is left unresolved, no throw.
+- **Partial / error-recovery tree** — a reference inside a malformed unit → conservative skip, no throw.
+- **Null/empty** — empty unit, no references → no edges, no crash.
+
+## 5. Non-functional requirements (baked in)
+
+- **NFR-001 (resolution-stage slice).** Resolution completes without crashing on partial/error-recovery
+  trees and on references into skipped files; an unresolvable reference is left unresolved, never a throw.
+  (WI-1 owns the parse-stage slice; this is the resolution-stage slice the work-items doc assigns WI-2.)
+- **NFR-002.** No regression of peer-language resolution — the `normalizeIdentifier` seam is identity for
+  every case-sensitive language; measured by the peer resolver suites staying green.
+- **Performance:** WI-2 adds no new per-file pass; it populates configs the existing passes consume. The
+  seam is an O(1) string transform at each key computation.
+
+## 6. Security-critical tag & clauses
+
+**security-critical = false.** WI-2 consumes WI-1's safe-parsed model; it opens no new trust boundary and
+authors no SEC clause (SECT-001 remains WI-1's). The conservative-skip default (REQ-015) means a
+resolution failure degrades to an unresolved reference, never an unsafe binding.
+
+## 7. Verification architecture (Step 2b — Builder proposal, Architect approval pending)
+
+- **Provable properties (§A.3): none.** Resolution guards no security/financial/data-integrity/safety/
+  concurrency invariant — every property is test-only (same calibration as WI-1, ADR-001). Gate 5 for WI-2
+  reduces to the resolution-slice no-crash fuzz + mutation over the new `languages/apex/` resolution code.
+- **Purity boundary.** Pure core = the Apex resolution configs/hooks and the `normalizeIdentifier`
+  transform — pure functions over the parsed model; no I/O, no mutable module state (carried from WI-1's
+  audited pattern). Effectful shell = host-owned: the registry/scope-binding *insert* the normalizer feeds
+  (`MethodRegistry.register` et al., per RESEARCH-002 finding 1) is the host's mutation, not WI-2's.
+  Dependency direction is shell→core (the host shell calls the pure Apex transform), matching SDD-001 §7.
+- **Tooling.** Host test framework (vitest) — integration resolution tests (single-declaration-unit
+  fixtures) + main-thread unit anchors for the new pure functions (so the resolution logic is
+  coverage-attributable, per dogfood #16 — the configs run in the parse worker_thread otherwise).
+- **Gate-3 reliances (finding #13 — the explicit list to FLAG, not pin):** every host-API resolution
+  *behaviour* in §2 tagged [Gate-3 reliance] — (1) target selection under the seam; (2) the runtime
+  emit-edge-XOR-record-unresolved (REQ-006) and host conservative-skip-on-ambiguity (REQ-015); (3)
+  MRO/receiver binding; (4) overload-selection outcome on assignable args; (5) **param-type folding
+  composes with the host's overload-narrowing without over-collapsing distinct types, and the
+  argument-token vs declared-segment param-type renderings actually match under the host (comparison
+  symmetry, REQ-008 §2)**
+  (RESEARCH-002 residual reliance #3); (6) end-to-end chain resolution incl. bounded termination on a
+  cyclic type chain. Gate 3 (tests vs the real host) validates these; the Gate-2 adversary validates the
+  *wiring* and the *split*, not the behaviours.
+
+## 8. Tracker integration & Gate-3 acceptance
+
+Each REQ clause, edge case, and the seam map to sub-items. **Gate-3 acceptance assertions** (single
+declaration unit, automated): **one explicit assertion per REQ-005 reference kind, each case-varied + via
+the seam** — method invocation → `CALLS`, constructor `new UserType()` → `CALLS`, type usage `UserType v;`
+→ `USES`, field/property access → `ACCESSES`; **AND each emits no unresolved record** (REQ-006's negative
+— SRS §9 "no unresolved symbol is recorded"). *(The illustrative `ACCOUNT a = new account(); a.NAME` fixture
+exercises type-usage + constructor + field-access; a separate fixture supplies the method-invocation case.)*
+Ambiguous/case-only reference unresolved **AND recorded in the unresolved set** (REQ-015's two obligations);
+resolved-receiver-but-absent-member → unresolved
+(REQ-015); **nested-type** `extends`/`implements` edges + `this()` / nested-parent `super()`/`super.method()`
+delegation resolve (REQ-007/005 — the in-unit form; the top-level two-class/two-file form completes at
+WI-3); overload resolution (REQ-008), with all three SRS v1.2 cases pinned to intrinsic outcomes (the named
+overload, by arity/exact-type — NOT "as the benchmark does"; benchmark equivalence is REQ-012/WI-4):
+(i) two equal-arity overloads `f(Integer)`/`f(String)`, an `Integer`-typed argument → resolves to
+`f(Integer)` by exact type; (i-fold) two **competing same-arity** overloads `f(Account)`/`f(Contact)`, an
+argument statically typed `ACCOUNT` → resolves to `f(Account)` via the **param-type case-fold** (the
+competing overload forces exact-type narrowing, so the fold is genuinely on the resolution path — a single
+overload would bind by name+arity without entering narrowing);
+(ii) different-arity overloads, an assignable-not-identical argument → resolves to the matching-arity
+overload by arity; (iii) same-arity overloads, assignable-not-identical to all → REQ-015-unresolved;
+(iv) multi-parameter — two equal-arity 2-param overloads, an argument tuple identical to exactly one at
+**every** position → resolves; identical at some positions only → REQ-015-unresolved; the plain
+count-disambiguation case (identical-typed arg, different counts → resolves) is case (ii) without the
+assignable wrinkle; forward (out-of-source-order) reference resolves;
+field/property chain resolves incl. bounded termination on a cyclic type graph (REQ-009); resolution-slice
+no-crash on partial tree + reference into a skipped file (NFR-001); peer resolver suites green (NFR-002).
+**REQ-006's negative assertion (no false "unresolved" record) is checked on *every* resolved reference
+above — not only the case-varied call: the resolving overload cases (i)/(ii), the nested-inheritance and
+delegation edges, the chain, and the forward reference each also assert zero unresolved record for the
+reference they resolve.** The cross-file forms of REQ-005/007/009 are **not** claimed here — they complete
+at WI-3.
+
+*WI-3…4 SDD sections follow after WI-2 clears its gates, in dependency order.*

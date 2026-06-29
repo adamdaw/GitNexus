@@ -7,6 +7,12 @@ detail. Derived from INTENT-001; reviewed against it and the Constitution at Gat
   (2026-06-28)** — REQ-014 descoped to member-level; REQ-106 minted (deferred). Driven by Gate 2
   finding G02; Architect-approved (Adam, 2026-06-28). A scope-reduction + deferral amendment; re-enters
   Gate 1 fidelity (verified by the fresh Gate 2 adversary reading SRS+SDD together).
+  **Amended v1.2 (2026-06-29)** — REQ-008's head + its §9 assignable-overload scenario narrowed to the
+  benchmark's arity + exact-type narrowing (the host implements no assignability ranking for any language).
+  Driven by WI-2 Gate-2 findings (SDD-002 R3/R4); Architect-approved (Adam, 2026-06-29). A **deliberate
+  scope reduction** of REQ-008's selection algorithm under Conservatism (Constitution §1.2) — NOT a pure
+  clarification and NOT entailed by REQ-012 (which scopes parity to node/edge kind only). Re-enters Gate 1
+  fidelity (verified by the fresh Gate 2 adversary reading SRS+SDD together).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope
@@ -80,11 +86,20 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   resolution, per the governing principle of preferring no binding over a misleading one).
 - **REQ-007** — The system SHALL resolve Apex class inheritance (`extends`) and interface implementation
   (`implements`) between user-defined Apex types as edges in the knowledge graph.
-- **REQ-008** — The system SHALL resolve an overloaded user-defined Apex method at a call site by
-  parameter count and declared parameter types; WHERE an argument type is assignable but not identical to
-  a declared parameter type, the system SHALL select the overload that Apex's own documented
-  overload-resolution rules select. (Benchmark parity, REQ-012, concerns node and edge kind, not the
-  selection algorithm; the acceptance fixture pins the expected overload for its case.)
+- **REQ-008** *(head reworded v1.2)* — The system SHALL resolve an overloaded user-defined Apex method at
+  a call site to the unique overload remaining after narrowing by parameter count, then — among any
+  equal-arity overloads — by exact declared parameter types: the unique equal-arity overload **every** one
+  of whose declared parameter types is identical to the corresponding argument's static type. WHERE no
+  single overload remains — parameter count isolates none AND no equal-arity overload matches every
+  parameter position exactly — the system SHALL record the reference unresolved per REQ-015. (**Amended v1.2 —
+  a deliberate scope reduction under Conservatism, Constitution §1.2, re-entering Gate 1:** the prior head
+  invoked "Apex's own documented overload-resolution rules", which rank implicit conversions. The operative
+  rule is instead arity + exact-type narrowing. (This is consistent with the premise — Gate-3-verifiable,
+  not asserted as a pinned fact — that GitNexus ranks no implicit conversions for any language; but the
+  narrowing stands as a deliberate Conservatism reduction *regardless* of that premise's truth: WI-2 elects
+  the conservative exact-type rule even if the host could do more.) It narrows REQ-008's selection
+  algorithm; it is NOT entailed by REQ-012 parity, which concerns node/edge *kind* only. The acceptance
+  fixture pins a host-resolvable case.)
 - **REQ-009** — The system SHALL resolve field and property access chains across user-defined Apex types.
 - **REQ-010** — The system SHALL resolve references between user-defined Apex symbols declared in
   different files of the analysed repository without requiring an explicit import statement.
@@ -181,11 +196,37 @@ Scenario: Overloaded method resolves by argument shape
   When GitNexus analyses the repository
   Then the resolved edge targets the matching overload
 
-Scenario: Overload selection on an assignable argument follows Apex rules
-  Given a user-defined Apex class with overloads whose parameter types differ
-  And a call site whose argument type is assignable but not identical to one parameter type
+# Amended v1.2: the single assignable-overload scenario was under-determined (its Given admitted cases
+# with no unique match while its Then demanded an edge). Split into the two deterministic sub-cases:
+Scenario: Overload selection by exact parameter type
+  Given a user-defined Apex class with two equal-arity overloads of different declared parameter types
+  And a call site whose argument's static type is identical to exactly one overload's parameter type
   When GitNexus analyses the repository
-  Then the resolved edge targets the overload Apex's overload-resolution rules select
+  Then the resolved edge targets that overload
+
+Scenario: Overload selection on an assignable argument, disambiguated by arity
+  Given a user-defined Apex class with overloads of different parameter counts
+  And a call site whose argument is assignable but not identical to the matching-arity overload's parameter
+  When GitNexus analyses the repository
+  Then the resolved edge targets the matching-arity overload (assignability does not block arity selection)
+
+Scenario: Overload selection on a genuinely-undisambiguable assignable argument
+  Given a user-defined Apex class with same-arity overloads of different declared parameter types
+  And a call site whose argument is assignable but not identical to any of them
+  When GitNexus analyses the repository
+  Then no resolved edge is emitted and the reference is recorded unresolved (REQ-015)
+
+Scenario: Multi-parameter overload selection, all positions identical to one overload
+  Given a user-defined Apex class with two equal-arity multi-parameter overloads of different signatures
+  And a call site whose argument static types are identical to exactly one overload at every position
+  When GitNexus analyses the repository
+  Then the resolved edge targets that overload
+
+Scenario: Multi-parameter overload, no overload identical at every position
+  Given a user-defined Apex class with two equal-arity multi-parameter overloads of different signatures
+  And a call site whose argument static types match no overload at every position (some positions only)
+  When GitNexus analyses the repository
+  Then no resolved edge is emitted and the reference is recorded unresolved (REQ-015)
 
 # REQ-009, REQ-010
 Scenario: Cross-file field/property chain resolves without an import

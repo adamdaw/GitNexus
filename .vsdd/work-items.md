@@ -20,8 +20,8 @@ per-item state machine. Keep it current as each item advances.*
 
 | Item | WI | Status | Phase | Gates cleared | Artifacts |
 |---|---|---|---|---|---|
-| ITEM-001 | WI-1 parse & graph | **active** | **3** (tests→impl) | 1, 1-decomp, **2** | light-SRS ✓, SDD-001 ✓, pass-records gate1/gate1-decomposition/gate2 ✓ |
-| ITEM-002 | WI-2 resolution mechanics | proposed | — | (epic 1+decomp) | light-SRS ✓; **SDD pending** |
+| ITEM-001 | WI-1 parse & graph | **DONE** (Gates 1–5) | 6→done | 1, 1-decomp, 2, 3, 4, 5 | light-SRS ✓, SDD-001 v1.2.1 ✓, pass-records gate1/decomp/2/3/4/5 ✓; impl green |
+| ITEM-002 | WI-2 resolution mechanics | **active** | **3** (Step 3a: author tests → Gate 3) | 1, 1-decomp, **2** | light-SRS ✓, **SDD-002 ✓** (SRS v1.2 + RESEARCH-002), pass-record gate2-wi2 ✓ |
 | ITEM-003 | WI-3 cross-file & trigger | proposed | — | (epic 1+decomp) | light-SRS ✓; SDD pending |
 | ITEM-004 | WI-4 parity & external | proposed | — | (epic 1+decomp) | light-SRS ✓; SDD pending |
 
@@ -132,9 +132,11 @@ annotation capture is the deferred REQ-106.)
 - **Acceptance boundary (resolves the file-boundary ambiguity of the epic §9 scenarios):** WI-2's own
   acceptance is verified within a **single declaration unit** (one top-level type and its nested types)
   — the scope that exercises every mechanic without the cross-file enabler. The epic §9 scenarios that
-  are *inherently cross-file* as written (REQ-005's "two classes"; REQ-009's "different files" chain)
-  are **completed end-to-end at WI-3** once REQ-010 lands; they are not claimed as single-unit
-  acceptance here. WI-2 remains independently *deployable* (it resolves references within a declaration
+  are *inherently cross-file* as written (REQ-005's "two classes"; REQ-009's "different files" chain; **and
+  REQ-007's top-level `extends`/`implements`** — in Apex every top-level type is its own file, so top-level
+  inheritance between user-defined types is inherently cross-file) are **completed end-to-end at WI-3** once
+  REQ-010 lands; they are not claimed as single-unit acceptance here. WI-2 verifies only the **nested-type**
+  inheritance analog in-unit. WI-2 remains independently *deployable* (it resolves references within a declaration
   unit immediately).
 - **Gherkin acceptance criteria** (epic SRS §9; **automated**; WI-2 form verified within a single
   declaration unit):
@@ -142,8 +144,10 @@ annotation capture is the deferred REQ-106.)
     unit case; the two-file form completes at WI-3.
   - "An ambiguous in-repository reference is left unresolved, not mis-bound" (REQ-015).
   - "Inheritance and interface implementation resolve" (REQ-007) — single-declaration-unit case.
-  - "Overloaded method resolves by argument shape" + "Overload selection on an assignable argument
-    follows Apex rules" (REQ-008).
+  - "Overloaded method resolves by argument shape" (REQ-008), in the three SRS v1.2 §9 forms: "Overload
+    selection by exact parameter type" → resolves; "Overload selection on an assignable argument,
+    disambiguated by arity" → resolves; "Overload selection on a genuinely-undisambiguable assignable
+    argument" → REQ-015 unresolved. (Arity-then-exact-type narrowing; no assignability ranking.)
   - Field/property-chain resolution (REQ-009) — single-declaration-unit case; the cross-file chain
     scenario completes at WI-3.
 - **Dependencies & criticality:** depends on ITEM-001; security-critical = false. Cross-cutting
@@ -178,6 +182,10 @@ annotation capture is the deferred REQ-106.)
   - The **two-file form** of "An in-repository method call resolves with no unknown symbol"
     (REQ-005/006 via the REQ-010 enabler) — completing end-to-end the scenario WI-2 verified
     same-unit. (No new REQ — this is REQ-010 making the WI-2 mechanic reach across files.)
+  - The **top-level form** of "Inheritance and interface implementation resolve" (REQ-007 via the REQ-010
+    enabler) — a top-level class `extends`/`implements` a user-defined type in another file; completing
+    end-to-end the inheritance scenario WI-2 verified only in its nested-type analog. (No new REQ — REQ-010
+    making the WI-2 REQ-007 mechanic reach across files, exactly as for REQ-005/009.)
   - "A trigger resolves a call to a user-defined handler" — the **resolved-edge half** (REQ-011),
     completing the scenario whose container-node half WI-1 delivered.
 - **Dependencies & criticality:** depends on ITEM-002; security-critical = false. Cross-cutting
