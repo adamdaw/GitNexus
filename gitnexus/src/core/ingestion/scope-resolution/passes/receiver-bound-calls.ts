@@ -81,6 +81,7 @@ import type {
 type ReceiverBoundProviderSubset = Pick<
   ScopeResolver,
   | 'languageProvider'
+  | 'conservativeOverloadResolution'
   | 'isSuperReceiver'
   | 'isSuperReceiverInContext'
   | 'fieldFallbackOnMethodLookup'
@@ -1339,7 +1340,10 @@ function pickOverload(
   // suppress rather than picking arbitrarily — C++ would call this
   // ambiguous. Mirrors ADL merged-candidate suppression behavior.
   if (candidates.length > 1) return OVERLOAD_AMBIGUOUS;
-  return candidates[0] ?? overloads[0];
+  // Conservative languages (Apex, REQ-015) leave an undisambiguable overloaded
+  // call unresolved rather than guessing the first overload when narrowing
+  // yields no exact match. Peers keep the host best-guess fallback.
+  return candidates[0] ?? (provider.conservativeOverloadResolution ? undefined : overloads[0]);
 }
 
 /**
@@ -1442,7 +1446,10 @@ function pickFirstNonStaticOnly(
   // with no tie-breaker, suppress for the same reason.
   if (isOverloadAmbiguousAfterNormalization(candidates, site.arity)) return OVERLOAD_AMBIGUOUS;
   if (candidates.length > 1) return OVERLOAD_AMBIGUOUS;
-  return candidates[0] ?? overloads[0];
+  // Conservative languages (Apex, REQ-015) leave an undisambiguable overloaded
+  // call unresolved rather than guessing the first overload when narrowing
+  // yields no exact match. Peers keep the host best-guess fallback.
+  return candidates[0] ?? (provider.conservativeOverloadResolution ? undefined : overloads[0]);
 }
 
 function suppressDeletedCallTarget(

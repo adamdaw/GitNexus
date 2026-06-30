@@ -645,6 +645,16 @@ export interface ScopeResolver {
   readonly fieldFallbackOnMethodLookup?: boolean;
 
   /**
+   * Conservative overload resolution. Default `false` (the host best-guess:
+   * when exact-type narrowing leaves NO candidate, fall back to the first
+   * overload). Set `true` for languages whose semantics require leaving an
+   * undisambiguable overloaded call UNRESOLVED rather than guessing (Apex,
+   * REQ-015): when narrowing yields zero candidates, `pickOverload` returns
+   * `undefined` (no edge) instead of the first overload.
+   */
+  readonly conservativeOverloadResolution?: boolean;
+
+  /**
    * Unwrap a property-style collection accessor on a typed receiver
    * to its element type. Called by `resolveCompoundReceiverClass`
    * when walking dotted member-access chains of the form

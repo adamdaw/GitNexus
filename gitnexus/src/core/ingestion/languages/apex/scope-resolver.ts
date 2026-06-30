@@ -38,6 +38,9 @@ const apexScopeResolver: ScopeResolver = {
 
   fieldFallbackOnMethodLookup: false,
   propagatesReturnTypesAcrossImports: false,
+  // REQ-015: an undisambiguable overloaded call is left UNRESOLVED, never
+  // guessed (no exact-type match → no edge), rather than the host best-guess.
+  conservativeOverloadResolution: true,
 };
 
 export { apexScopeResolver };
