@@ -99,10 +99,13 @@ function stripQualifier(text: string): string {
 
 // ─── mergeBindings (provider shape) ────────────────────────────────────────
 
-/** Apex has no imports — bindings are local-only, so the merge is a plain
- *  concat (no shadowing-tier precedence to apply). The provider passes
- *  `(scope, bindings)`; the scope-resolver does its own concat for `(existing,
- *  incoming)`. */
+/** Apex has no imports, so bindings are local-only and the merge is a plain
+ *  copy — no shadowing-tier precedence to apply. This deliberately does NOT
+ *  dedup by DefId (unlike the provider's local-first-then-imports default):
+ *  with no import tier there is nothing to dedup against, and the scope-resolver
+ *  already concatenates `(existing, incoming)` itself. The hook is supplied (not
+ *  omitted) to make the locals-only, no-dedup contract explicit rather than
+ *  inheriting the import-aware default. */
 export const apexMergeBindings = (
   _scope: Scope,
   bindings: readonly BindingRef[],

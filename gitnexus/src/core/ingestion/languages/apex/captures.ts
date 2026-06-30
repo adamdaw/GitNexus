@@ -79,13 +79,15 @@ export function emitApexScopeCaptures(
     }
     if (Object.keys(grouped).length === 0) continue;
 
-    // Skip free-call matches that are actually member calls (the query matches
-    // ALL method_invocations as @reference.call.free without negation). If the
-    // match also has @reference.receiver, the separate member match covers it.
-    if (
-      grouped['@reference.call.free'] !== undefined &&
-      grouped['@reference.receiver'] !== undefined
-    ) {
+    // Skip free-call matches that are actually member calls. The query matches
+    // ALL method_invocations as @reference.call.free (tree-sitter drops the
+    // negation-based `!object` pattern), so a member call `obj.method()` also
+    // fires the free pattern. The free match carries no @reference.receiver
+    // (that capture lives only in the @reference.call.member pattern), so the
+    // member case is detected from the node shape: a method_invocation with an
+    // `object` child is a member call, already covered by the member match.
+    const freeCallNode = nodeMap['@reference.call.free'];
+    if (freeCallNode !== undefined && freeCallNode.childForFieldName('object') !== null) {
       continue;
     }
 
@@ -411,36 +413,35 @@ function resolveVarTypeBindings(matches: CaptureMatch[]): CaptureMatch[] {
   const resolved: CaptureMatch[] = [];
   for (const m of matches) {
     if (m['@reference.arg-names'] !== undefined && m['@reference.parameter-types'] !== undefined) {
-      try {
-        const types: string[] = JSON.parse(m['@reference.parameter-types'].text);
-        const names: string[] = JSON.parse(m['@reference.arg-names'].text);
-        // The call site's enclosing function (param-types is captured on the call node).
-        const callFnKey = enclosingFnKey(m['@reference.parameter-types'].range);
-        let patched = false;
-        for (let i = 0; i < types.length; i++) {
-          if (types[i] === '' && names[i] !== undefined && names[i] !== '') {
-            // Same-function local first; fall back to class-level/global (fields).
-            const rt = varTypes.get(`${callFnKey}\0${names[i]!}`) ?? varTypes.get(`\0${names[i]!}`);
-            if (rt !== undefined) {
-              // Fold the resolved var type (Apex case-insensitivity) to match the
-              // folded declared param types in overload narrowing.
-              types[i] = normalizeApexParamType(rt);
-              patched = true;
-            }
+      // Both captures are this module's own JSON (synthesized via JSON.stringify
+      // above), so JSON.parse cannot throw — no defensive catch: a parse error
+      // would signal an encoding bug worth surfacing, not swallowing.
+      const types: string[] = JSON.parse(m['@reference.parameter-types'].text);
+      const names: string[] = JSON.parse(m['@reference.arg-names'].text);
+      // The call site's enclosing function (param-types is captured on the call node).
+      const callFnKey = enclosingFnKey(m['@reference.parameter-types'].range);
+      let patched = false;
+      for (let i = 0; i < types.length; i++) {
+        if (types[i] === '' && names[i] !== undefined && names[i] !== '') {
+          // Same-function local first; fall back to class-level/global (fields).
+          const rt = varTypes.get(`${callFnKey}\0${names[i]!}`) ?? varTypes.get(`\0${names[i]!}`);
+          if (rt !== undefined) {
+            // Fold the resolved var type (Apex case-insensitivity) to match the
+            // folded declared param types in overload narrowing.
+            types[i] = normalizeApexParamType(rt);
+            patched = true;
           }
         }
-        if (patched) {
-          const patchedMatch: Record<string, Capture> = { ...m };
-          patchedMatch['@reference.parameter-types'] = {
-            ...m['@reference.parameter-types']!,
-            text: JSON.stringify(types),
-          };
-          delete patchedMatch['@reference.arg-names'];
-          resolved.push(patchedMatch);
-          continue;
-        }
-      } catch {
-        // pass through
+      }
+      if (patched) {
+        const patchedMatch: Record<string, Capture> = { ...m };
+        patchedMatch['@reference.parameter-types'] = {
+          ...m['@reference.parameter-types']!,
+          text: JSON.stringify(types),
+        };
+        delete patchedMatch['@reference.arg-names'];
+        resolved.push(patchedMatch);
+        continue;
       }
     }
     resolved.push(m);
