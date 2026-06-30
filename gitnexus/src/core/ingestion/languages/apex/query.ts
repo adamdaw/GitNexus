@@ -126,6 +126,20 @@ const APEX_SCOPE_QUERY = `
   type: (generic_type) @type-binding.type
   name: (identifier) @type-binding.name) @type-binding.annotation
 
+;; Type usage references: \`Account a;\` / \`void f(Account a)\` / \`private Account x;\`
+;; The declared type is a reference TO the type -> USES edge (REQ-005 "type usage";
+;; SDD-002 §3). Captured separately from the @type-binding above (a distinct match);
+;; the resolver binds it to the user-defined type node (folded), or leaves it
+;; unresolved for primitives/externals (conservative, no edge).
+(local_variable_declaration
+  type: (type_identifier) @reference.name) @reference.type
+
+(formal_parameter
+  type: (type_identifier) @reference.name) @reference.type
+
+(field_declaration
+  type: (type_identifier) @reference.name) @reference.type
+
 ;; References — all method calls: foo() and obj.method()
 ;; tree-sitter's query engine drops negation-based \`!object\` patterns when a
 ;; positive \`object:\` pattern exists for the same node type, so we match all

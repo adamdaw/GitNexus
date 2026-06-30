@@ -50,6 +50,20 @@ try {
 const suppressed = (result: PipelineResult) =>
   getResolutionOutcomes(result).filter((o) => o.kind === 'suppressed');
 
+// Resolution + structural edge types — the NFR-001 dangling check is scoped to
+// these, excluding the downstream community-detection MEMBER_OF edges (a separate
+// graph phase whose Community-node materialization is out of WI-2's scope).
+const RESOLUTION_EDGE_TYPES = [
+  'CALLS',
+  'ACCESSES',
+  'USES',
+  'EXTENDS',
+  'IMPLEMENTS',
+  'HAS_METHOD',
+  'HAS_PROPERTY',
+  'DEFINES',
+];
+
 // ── REQ-005/006/007/009 — reference kinds, inheritance, chains, forward/self ──
 describe.skipIf(!apexAvailable)('Apex resolution mechanics (REQ-005/006/007/009)', () => {
   let result: PipelineResult;
@@ -280,7 +294,7 @@ describe.skipIf(!apexAvailable)('Apex resolution crash-safety (NFR-001 slice)', 
     // new Broken() is cross-file (separate top-level type) -> unresolved in WI-2 (the cross-file enabler
     // is WI-3); the malformed parse must not crash resolution. [conservative-negative on the no-bind half]
     expect(getRelationships(result, 'CALLS').filter((e) => e.target === 'Broken').length).toBe(0);
-    expect(findDanglingEdges(result)).toEqual([]);
+    expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
   });
 
   it('completes the run on empty and whitespace-only units without crashing (§4 null/empty)', () => {
@@ -293,6 +307,6 @@ describe.skipIf(!apexAvailable)('Apex resolution crash-safety (NFR-001 slice)', 
     // PartialRef.cls: x.d( is in an unterminated region -> skipped, no throw, no dangling edge. The
     // valid help() anchor (above) proves resolution still runs. [conservative-negative on the skip half]
     expect(result).toBeDefined();
-    expect(findDanglingEdges(result)).toEqual([]);
+    expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
   });
 });
