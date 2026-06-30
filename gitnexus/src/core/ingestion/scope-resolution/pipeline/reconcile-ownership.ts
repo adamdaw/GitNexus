@@ -86,6 +86,12 @@ export function reconcileOwnership(
       const ownerId = (def as { ownerId?: string }).ownerId;
       const simple = simpleQualifiedName(def);
       if (simple === undefined) continue;
+      // §2.2 fold: register/look up the owner-scoped registries under the
+      // language's normalized key (Apex → lower-case), matching the parse-time
+      // registration-table fold so a case-only member collision lands under ONE
+      // key (REQ-015). Identity for case-sensitive peers. The raw `simple` is
+      // kept for the symbol-table (name-keyed) operations below.
+      const ownerKey = model.resolveNormalizer?.(def.filePath)(simple) ?? simple;
 
       if (def.type === 'Method' || def.type === 'Function' || def.type === 'Constructor') {
         if (ownerId === undefined) {
@@ -109,7 +115,7 @@ export function reconcileOwnership(
           });
           continue;
         }
-        const existing = model.methods.lookupAllByOwner(ownerId, simple);
+        const existing = model.methods.lookupAllByOwner(ownerId, ownerKey);
         const existingDef = existing.find(
           (candidate) =>
             candidate.nodeId === def.nodeId ||
@@ -122,7 +128,7 @@ export function reconcileOwnership(
           skippedAlreadyPresent++;
           continue;
         }
-        model.methods.register(ownerId, simple, def);
+        model.methods.register(ownerId, ownerKey, def);
         methodsRegistered++;
       } else if (
         def.type === 'Property' ||
@@ -130,20 +136,20 @@ export function reconcileOwnership(
         def.type === 'Const' ||
         def.type === 'Static'
       ) {
-        const existing = model.fields.lookupAllByOwner(ownerId, simple);
+        const existing = model.fields.lookupAllByOwner(ownerId, ownerKey);
         if (existing.some((e) => e.nodeId === def.nodeId)) {
           skippedAlreadyPresent++;
           continue;
         }
-        model.fields.register(ownerId, simple, def);
+        model.fields.register(ownerId, ownerKey, def);
         fieldsRegistered++;
       } else if (NESTED_TYPE_KINDS.has(def.type)) {
-        const existing = model.types.lookupAllByOwner(ownerId, simple);
+        const existing = model.types.lookupAllByOwner(ownerId, ownerKey);
         if (existing.some((e) => e.nodeId === def.nodeId)) {
           skippedAlreadyPresent++;
           continue;
         }
-        model.types.registerByOwner(ownerId, simple, def);
+        model.types.registerByOwner(ownerId, ownerKey, def);
         nestedTypesRegistered++;
       }
     }

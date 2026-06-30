@@ -16,7 +16,7 @@ import { buildMro, defaultLinearize } from '../../scope-resolution/passes/mro.js
 import { populateClassOwnedMembers } from '../../scope-resolution/scope/walkers.js';
 import type { ScopeResolver } from '../../scope-resolution/contract/scope-resolver.js';
 import { apexProvider } from './index.js';
-import { apexArityCompatibility } from './resolution.js';
+import { apexArityCompatibility, apexResolveReceiverMember } from './resolution.js';
 
 const apexScopeResolver: ScopeResolver = {
   language: SupportedLanguages.Apex,
@@ -28,6 +28,10 @@ const apexScopeResolver: ScopeResolver = {
   mergeBindings: (existing, incoming) => [...existing, ...incoming],
 
   arityCompatibility: (callsite, def) => apexArityCompatibility(def, callsite),
+
+  // REQ-015: a case-only member collision (two members folding to one key) is
+  // ambiguous → recorded unresolved, never first-matched.
+  resolveReceiverMember: apexResolveReceiverMember,
 
   buildMro: (graph, parsedFiles, nodeLookup) =>
     buildMro(graph, parsedFiles, nodeLookup, defaultLinearize),

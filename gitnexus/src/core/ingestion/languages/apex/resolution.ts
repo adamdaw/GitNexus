@@ -24,6 +24,31 @@ import type {
   SymbolDefinition,
   TypeRef,
 } from 'gitnexus-shared';
+import type { SemanticModel } from '../../model/semantic-model.js';
+import type { ScopeResolutionIndexes } from '../../model/scope-resolution-indexes.js';
+import type { ReceiverMemberResolution } from '../../scope-resolution/contract/scope-resolver.js';
+
+/**
+ * REQ-015: case-only member collision. Two members differing only in case fold
+ * to one registry key (the §2.2 seam), so a case-varied access (`b.Value` against
+ * `value` and `VALUE`) finds MORE THAN ONE field under the folded key — genuinely
+ * ambiguous. Return `ambiguous` so the receiver-bound pass records it unresolved
+ * (no edge, no mis-binding) rather than first-matching. A single field (the common
+ * case) returns `undefined` to let the default resolution proceed unchanged.
+ */
+export function apexResolveReceiverMember(
+  ownerDef: SymbolDefinition,
+  memberName: string,
+  _callsite: Callsite,
+  _scopes: ScopeResolutionIndexes,
+  model: SemanticModel,
+): ReceiverMemberResolution | undefined {
+  const fields = model.fields.lookupAllByOwner(ownerDef.nodeId, memberName);
+  if (fields.length > 1) {
+    return { kind: 'ambiguous', candidateIds: fields.map((f) => f.nodeId) };
+  }
+  return undefined;
+}
 
 // ─── interpretTypeBinding ─────────────────────────────────────────────────
 

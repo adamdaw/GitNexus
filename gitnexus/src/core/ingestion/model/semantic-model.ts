@@ -134,6 +134,14 @@ export interface SemanticModel {
    * the final frozen bundle — never a half-populated view.
    */
   readonly scopes?: ScopeResolutionIndexes;
+  /**
+   * The §2.2 identifier-key normalizer resolver this model was created with
+   * (per file → fold fn; Apex → toLowerCase, identity for peers). Exposed so
+   * the scope-resolution `reconcileOwnership` re-registration folds member keys
+   * the same way the parse-time `registration-table` did — keeping the folded
+   * key consistent across both registration paths (case-insensitive resolution).
+   */
+  readonly resolveNormalizer?: (filePath: string) => (s: string) => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +275,7 @@ export const createSemanticModel = (
     methods,
     fields,
     symbols,
+    resolveNormalizer,
     get scopes() {
       return attachedScopes;
     },
