@@ -14,11 +14,13 @@ import type { Capture, CaptureMatch } from 'gitnexus-shared';
 import { nodeToCapture, syntheticCapture, type SyntaxNode } from '../../utils/ast-helpers.js';
 import { apexHasModifier } from './modifiers.js';
 
+// Triggers (`trigger_declaration`) are intentionally excluded — they declare no
+// methods, so they bind no `this`/`super` receiver in WI-2; trigger-body
+// resolution is WI-3 (REQ-011), which adds its own handling.
 const TYPE_DECL_NODE_TYPES = new Set([
   'class_declaration',
   'interface_declaration',
   'enum_declaration',
-  'trigger_declaration',
 ]);
 
 const FUNCTION_NODE_TYPES = new Set(['method_declaration', 'constructor_declaration']);

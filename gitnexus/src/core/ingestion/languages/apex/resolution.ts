@@ -19,8 +19,6 @@ import type {
   CaptureMatch,
   ParsedTypeBinding,
   Scope,
-  ScopeId,
-  ScopeTree,
   SymbolDefinition,
   TypeRef,
 } from 'gitnexus-shared';
@@ -57,10 +55,11 @@ export function interpretApexTypeBinding(captures: CaptureMatch): ParsedTypeBind
   const typeCap = captures['@type-binding.type'];
   if (nameCap === undefined || typeCap === undefined) return null;
 
-  // Strip generics before the qualifier (mirrors interpretJavaTypeBinding), then
-  // fold to lower case — Apex type-name case-insensitivity (the WI-2-defining
-  // change). The fold aligns with the registration-table classLikeHook fold so
-  // the binding key matches the registered class key.
+  // Strip generics to the base name (SDD-002 §3: member lookup keys on the base
+  // type, as `type-config.ts` does), strip the qualifier, then fold to lower case
+  // — Apex type-name case-insensitivity (the WI-2-defining change). The fold aligns
+  // with the registration-table classLikeHook fold so the binding key matches the
+  // registered class key.
   const rawType = stripQualifier(stripGeneric(typeCap.text.trim())).toLowerCase();
 
   let source: TypeRef['source'] = 'parameter-annotation';
@@ -73,27 +72,16 @@ export function interpretApexTypeBinding(captures: CaptureMatch): ParsedTypeBind
 }
 
 /**
- * Unwrap generic type parameters. Tier 1: known single-arg collection wrappers →
- * element type. Tier 2: known map/two-arg containers → value type. Tier 3
- * (erasure fallback): any other generic → strip the parameters, keep the raw
- * base name. Mirrors the Java implementation; the JVM collection names also
- * cover the Apex collection types (`List`, `Set`, `Map`).
+ * Strip generic type parameters to the base type name (`List<Account>` → `List`),
+ * keying member lookup on the base type — matching SDD-002 §3 and the
+ * `type-config.ts` declared-type extractor. Apex's only generics are the stdlib
+ * collections (`List`/`Set`/`Map`), which are external (unresolved), so base-name
+ * keying is conservative-correct: a stdlib member access stays unresolved rather
+ * than mis-binding to an element type.
  */
 function stripGeneric(text: string): string {
-  const single = text.match(
-    /^(?:[A-Za-z_][A-Za-z0-9_.]*\.)?(?:List|ArrayList|LinkedList|Set|HashSet|TreeSet|SortedSet|LinkedHashSet|Collection|Iterable|Iterator|Optional|Stream|Queue|Deque)<([^,<>]+)>$/,
-  );
-  if (single !== null) return single[1].trim();
-
-  const twoArg = text.match(
-    /^(?:[A-Za-z_][A-Za-z0-9_.]*\.)?(?:Map|HashMap|TreeMap|LinkedHashMap|SortedMap)<[^,<>]+,\s*([^,<>]+)>$/,
-  );
-  if (twoArg !== null) return twoArg[1].trim();
-
-  const fallback = text.match(/^((?:[A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Za-z_$][A-Za-z0-9_$]*)<.+>$/s);
-  if (fallback !== null) return fallback[1].trim();
-
-  return text;
+  const m = text.match(/^((?:[A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Za-z_$][A-Za-z0-9_$]*)<.+>$/s);
+  return m !== null ? m[1].trim() : text;
 }
 
 /** `System.Account` → `Account`. */
@@ -103,26 +91,11 @@ function stripQualifier(text: string): string {
   return text.slice(lastDot + 1);
 }
 
-// ─── bindingScopeFor ──────────────────────────────────────────────────────
-
-/** Method return-type bindings hoist to Module scope so chain-follow can find
- *  them (mirrors `javaBindingScopeFor`). */
-export function apexBindingScopeFor(
-  decl: CaptureMatch,
-  innermost: Scope,
-  tree: ScopeTree,
-): ScopeId | null {
-  if (decl['@type-binding.return'] !== undefined) {
-    let cur: Scope | undefined = innermost;
-    while (cur !== undefined && cur.kind !== 'Module') {
-      const parentId: ScopeId | null = cur.parent ?? null;
-      if (parentId === null) break;
-      cur = tree.getScope(parentId);
-    }
-    if (cur !== undefined && cur.kind === 'Module') return cur.id;
-  }
-  return null;
-}
+// Apex provides no `bindingScopeFor` hook: it does not hoist method return-type
+// bindings to Module scope (the Java mechanism, gated by `hoistTypeBindingsToModule`,
+// which Apex does not set). WI-2 REQ-009 resolves field/property chains via the
+// field-access fixpoint, not return-type chains — so the hoist would be inert.
+// Method-return-chain resolution, if ever wanted, is a WI-4 parity item.
 
 // ─── mergeBindings (provider shape) ────────────────────────────────────────
 

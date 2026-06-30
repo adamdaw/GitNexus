@@ -5,7 +5,7 @@ Builder from the host project's existing conventions; **ratified by the Architec
 2026-06-28**. Changed only by the amendment process below.*
 
 - **Identifier:** CONST-gitnexus-apex
-- **Version:** 1.1.0 · **Date:** 2026-06-29 · **Status:** ratified · **Supersedes:** 1.0.0
+- **Version:** 1.1.1 · **Date:** 2026-06-30 · **Status:** ratified · **Supersedes:** 1.1.0
 - **Ratified:** Adam (Architect), 2026-06-28. §6 fuzz budget right-sized pre-ratification (saturation
   exit + parity bar, replacing the 500k-execution count) — a draft revision, not a §7 amendment.
 - **Amendment v1.1.0 (2026-06-29, Architect Adam):** §2.2 refined — generic, language-agnostic
@@ -13,6 +13,15 @@ Builder from the host project's existing conventions; **ratified by the Architec
   (the original "phases not edited" assumed every seam pre-existed). Surfaced by WI-1 Gate-2 review: a
   from-scratch language needs new generic seams (field-annotation hook, node-kind marker hook,
   degenerate-node guard); §2.1's no-Apex-naming guarantee is unchanged and absolute.
+- **Amendment v1.1.1 (2026-06-30, Architect Adam):** §2.1/§2.2 isolation guarantee scoped to **logic and
+  branching**, not comment prose. The v1.1.0 "absolute, all Apex naming forbidden" wording was too literal:
+  the host's own shared ingestion files pervasively name example consumer languages (C++, Python, Java,
+  Kotlin, PHP, Ruby) in **explanatory comments** to record why a generic seam exists, and the WI-2 §2.2
+  seams do the same for Apex while carrying **no** Apex-specific executable path (no `language === Apex`
+  branch anywhere). The rule's RFC #909 / RING4-1 target is per-language *coupling in shared logic*, which
+  stays absolutely forbidden; naming Apex in a comment is permitted (and consistent with host convention).
+  Surfaced by a WI-2 Gate-4 Pass-1 reviewer split (one reviewer read the literal ban as violated by the
+  seam comments, one read it as conformant) — the ambiguity was in the Constitution text, not the code.
 
 This project is a fork of `abhigyanpatwari/GitNexus` adding Apex language support. Its prime
 directive: **honour the host project's standing conventions** (`DoD.md`, `CONTRIBUTING.md`,
@@ -34,17 +43,24 @@ govern. Nothing here weakens a host-project gate.
 
 1. **Language isolation.** All Apex-specific logic lives under `gitnexus/src/core/ingestion/languages/apex/`
    and the per-language registries (provider index, `SCOPE_RESOLVERS`). Shared ingestion code MUST NOT
-   name Apex (host RFC #909 / RING4-1).
+   contain Apex-specific **logic or branching** — no executable path keyed on Apex (no `language === Apex`,
+   no Apex-only behaviour), and Apex MUST NOT appear as a branch condition or identifier in shared code
+   (host RFC #909 / RING4-1). **Naming Apex in an explanatory comment is permitted** and matches the host's
+   pervasive convention (the shared files name C++, Python, Java, Kotlin, PHP, Ruby in comments to record
+   why a generic seam exists); the rule forbids Apex-specific *coupling in logic*, not comment traceability.
+   *(Scoped to logic/branching v1.1.1, 2026-06-30, Adam — see header.)*
 2. **Registration + generic seams, not Apex-specific pipeline edits.** Apex is added primarily by
    registering a `LanguageProvider` and a `ScopeResolver`. The shared parse and scope-resolution phases
-   MUST NOT be edited to **name or branch on** Apex (§2.1 — the absolute isolation guarantee). Where a
+   MUST NOT be edited to **branch on** Apex or carry Apex-specific logic (§2.1 — the isolation guarantee;
+   an explanatory comment naming Apex is permitted per §2.1 v1.1.1). Where a
    needed behaviour has **no existing host seam**, a **generic, language-agnostic** extension point or
    quality guard MAY be added to a shared factory or phase — provided it (a) names no language, (b) is
    configured by the isolated provider *or* applies uniformly to every language, and (c) regresses no
    other language (NFR-002, measured). *(Amended v1.1.0, 2026-06-29, Adam: the original "phases are not
    edited" assumed every needed seam pre-existed; a from-scratch language sometimes requires a new
    generic seam — member annotations on Property nodes, a node-kind marker, a degenerate-node guard.
-   Isolation is preserved — §2.1 still forbids all Apex naming in shared code.)*
+   Isolation is preserved — §2.1 still forbids Apex-specific *logic/branching* in shared code (comment-level
+   naming excepted, v1.1.1).)*
 3. **Safe parsing.** All tree-sitter parsing routes through `parseSourceSafe()` (host `require-safe-parse`
    eslint rule) — never a direct `.parse()`.
 4. **Grammar vendoring.** The Apex grammar is vendored under `gitnexus/vendor/` and recorded in

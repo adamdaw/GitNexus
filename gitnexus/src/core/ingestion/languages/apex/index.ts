@@ -30,7 +30,6 @@ import { apexImportConfig } from './import-resolver.js';
 import { emitApexScopeCaptures } from './captures.js';
 import {
   interpretApexTypeBinding,
-  apexBindingScopeFor,
   apexMergeBindings,
   apexReceiverBinding,
   apexArityCompatibility,
@@ -57,7 +56,6 @@ export const apexProvider = defineLanguage({
   // omitted on the provider (cross-file reach is WI-3). ──
   emitScopeCaptures: emitApexScopeCaptures,
   interpretTypeBinding: interpretApexTypeBinding,
-  bindingScopeFor: apexBindingScopeFor,
   mergeBindings: apexMergeBindings,
   receiverBinding: apexReceiverBinding,
   arityCompatibility: apexArityCompatibility,

@@ -8,7 +8,7 @@ public class Refs {
     }
 
     public void use() {
-        ACCOUNT a = new account();   // type usage (USES Account) + constructor (CALLS Account ctor); case-varied
+        ACCOUNT a = new account();   // type usage (binds a's type, drives ACCESSES — no USES edge) + constructor (CALLS Account ctor); case-varied
         String n = a.NAME;           // field/property access (ACCESSES name); case-varied
     }
 }

@@ -205,9 +205,13 @@ export function validateOwnershipParity(
       if (ownerId === undefined) continue;
       const simple = simpleQualifiedName(def);
       if (simple === undefined) continue;
+      // §2.2 fold: look up under the same normalized key the reconcile pass
+      // registered with above, so this validator does not report false
+      // mismatches for a folding language (Apex → lower-case). Identity for peers.
+      const ownerKey = model.resolveNormalizer?.(def.filePath)(simple) ?? simple;
 
       if (def.type === 'Method' || def.type === 'Function' || def.type === 'Constructor') {
-        const found = model.methods.lookupAllByOwner(ownerId, simple);
+        const found = model.methods.lookupAllByOwner(ownerId, ownerKey);
         if (!found.some((d) => d.nodeId === def.nodeId)) {
           onWarn(
             `semantic-model parity: ${def.type} ${def.nodeId} (${parsed.filePath}) ` +
@@ -221,7 +225,7 @@ export function validateOwnershipParity(
         def.type === 'Const' ||
         def.type === 'Static'
       ) {
-        const found = model.fields.lookupAllByOwner(ownerId, simple);
+        const found = model.fields.lookupAllByOwner(ownerId, ownerKey);
         if (!found.some((d) => d.nodeId === def.nodeId)) {
           onWarn(
             `semantic-model parity: ${def.type} ${def.nodeId} (${parsed.filePath}) ` +
@@ -230,7 +234,7 @@ export function validateOwnershipParity(
           mismatches++;
         }
       } else if (NESTED_TYPE_KINDS.has(def.type)) {
-        const found = model.types.lookupAllByOwner(ownerId, simple);
+        const found = model.types.lookupAllByOwner(ownerId, ownerKey);
         if (!found.some((d) => d.nodeId === def.nodeId)) {
           onWarn(
             `semantic-model parity: ${def.type} ${def.nodeId} (${parsed.filePath}) ` +

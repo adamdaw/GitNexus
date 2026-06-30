@@ -50,6 +50,12 @@ foundation, then WI-2…4 follow in order.
 chains, …) reach across files. WI-3 co-owns no WI-2 mechanic REQ; it owns the one enabler that
 completes their inherently-cross-file epic §9 scenarios end-to-end (see WI-2 / WI-3 below).
 
+**REQ-008 stays owned by WI-2** (the overload-resolution mechanic), verified within its single-
+declaration-unit acceptance for local/field/literal/constructor argument types. Its **parameter-typed
+argument** narrowing completes at **WI-4** (it needs WI-4's REQ-013 external-type detection to tell a
+user-defined parameter type from an external one), exactly as WI-3/REQ-010 completes WI-2's cross-file
+forms — a deferred *completion*, not co-ownership (see WI-2 / WI-4 below).
+
 **Cross-cutting (per epic SRS §11 — gates on *every* WI, not single-owned):** **NFR-001** (malformed/
 incomplete input → the *run* completes without crashing; the unparseable file is skipped) and
 **NFR-002** (no regression of other languages). NFR-001 is a *whole-run* property: a malformed or
@@ -148,6 +154,11 @@ annotation capture is the deferred REQ-106.)
     selection by exact parameter type" → resolves; "Overload selection on an assignable argument,
     disambiguated by arity" → resolves; "Overload selection on a genuinely-undisambiguable assignable
     argument" → REQ-015 unresolved. (Arity-then-exact-type narrowing; no assignability ranking.)
+    *WI-2's exact-type narrowing infers argument static types for local-variable, field, literal, and
+    constructor-expression arguments; a method-**parameter** used as the disambiguating argument is left
+    untyped (conservative → arity-only, never mis-bound). **Parameter-typed argument narrowing completes
+    at WI-4** — it requires WI-4's REQ-013 external-type detection to avoid mis-resolving an external-typed
+    parameter argument (the §4 external-arg case), exactly as WI-3's REQ-010 completes the cross-file forms.*
   - Field/property-chain resolution (REQ-009) — single-declaration-unit case; the cross-file chain
     scenario completes at WI-3.
 - **Dependencies & criticality:** depends on ITEM-001; security-critical = false. Cross-cutting
@@ -198,7 +209,13 @@ annotation capture is the deferred REQ-106.)
 
 - **Single responsibility:** Demonstrate Java/Kotlin-tier resolution parity on equivalent fixtures
   and handle external (stdlib/sObject/managed-package) references as benign unresolved, not defects.
-- **Requirement links:** REQ-012, REQ-013, NFR-004.
+  WI-4 also **completes REQ-008's parameter-typed-argument narrowing**, deferred by WI-2: typing a
+  method-parameter used as an overload argument requires distinguishing a user-defined parameter type
+  from an external one — the same REQ-013 external-type detection WI-4 introduces — without which the §4
+  external-arg overload case would mis-resolve. (WI-4 *completes* this REQ-008 sub-case; it does not
+  co-own the REQ-008 mechanic, which stays WI-2 — exactly as WI-3/REQ-010 completes WI-2's cross-file forms.)
+- **Requirement links:** REQ-012, REQ-013, NFR-004. (Completes the REQ-008 parameter-arg-narrowing
+  sub-case WI-2 deferred — see WI-2 acceptance criteria above; not a new REQ, a deferred completion.)
 - **Owner / assignee:** claude (Builder) — assigned.
 - **Criticality:** **security-critical = false.** Test fixtures + external-reference classification;
   no parse path or trust boundary. *Architect approval: pending checkpoint sign-off (Adam);

@@ -385,27 +385,10 @@ function resolveVarTypeBindings(matches: CaptureMatch[]): CaptureMatch[] {
       : `${best.startLine}:${best.startCol}:${best.endLine}:${best.endCol}`;
   };
 
-  const returnTypes = new Map<string, string>();
   const varTypes = new Map<string, string>();
-  const ambiguousReturns = new Set<string>();
   const ambiguousVars = new Set<string>();
 
   for (const m of matches) {
-    if (
-      m['@type-binding.return'] !== undefined &&
-      m['@type-binding.type'] !== undefined &&
-      m['@type-binding.name'] !== undefined
-    ) {
-      const name = m['@type-binding.name'].text;
-      const type = m['@type-binding.type'].text;
-      const existing = returnTypes.get(name);
-      if (existing !== undefined && existing !== type) {
-        ambiguousReturns.add(name);
-        returnTypes.delete(name);
-      } else if (!ambiguousReturns.has(name)) {
-        returnTypes.set(name, type);
-      }
-    }
     if (
       m['@type-binding.annotation'] !== undefined &&
       m['@type-binding.type'] !== undefined &&
@@ -465,24 +448,35 @@ function resolveVarTypeBindings(matches: CaptureMatch[]): CaptureMatch[] {
   return resolved;
 }
 
-/** Infer an Apex argument's static type from literal patterns. */
+/**
+ * Infer an Apex argument's static type from literal patterns.
+ *
+ * Returns Apex primitive type NAMES (not the Java-derived grammar's: the
+ * tree-sitter-sfapex grammar is forked from Java, but Apex's primitives differ).
+ * The names must match declared `formal_parameter.type` text under the §2.2 fold
+ * (`normalizeApexParamType`, lower-case) for overload narrowing (REQ-008) to find
+ * an exact match. Where the literal type is genuinely ambiguous in Apex (a
+ * numeric literal could be Integer/Long or Decimal/Double), the conservative
+ * single choice degrades to "no exact match -> REQ-015 unresolved", never a
+ * mis-bind. Single-quoted literals are Strings in Apex (Apex has no char type).
+ */
 function inferArgType(argNode: SyntaxNode): string {
   switch (argNode.type) {
     case 'decimal_integer_literal':
     case 'hex_integer_literal':
     case 'octal_integer_literal':
     case 'binary_integer_literal':
-      return 'int';
+      return 'Integer';
     case 'decimal_floating_point_literal':
     case 'hex_floating_point_literal':
-      return 'double';
+      // ponytail: Apex decimal literals are Decimal; a Double param degrades to REQ-015 unresolved.
+      return 'Decimal';
     case 'string_literal':
-      return 'String';
     case 'character_literal':
-      return 'char';
+      return 'String';
     case 'true':
     case 'false':
-      return 'boolean';
+      return 'Boolean';
     case 'null_literal':
       return 'null';
     case 'object_creation_expression': {

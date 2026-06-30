@@ -20,5 +20,7 @@ public class Inh {
         void greet();
     }
 
+    public interface SubGreeter extends Greeter {}  // interface-extends-interface (nested) -> IMPLEMENTS Greeter
+
     public class Impl implements Greeter {}     // IMPLEMENTS Greeter (nested)
 }

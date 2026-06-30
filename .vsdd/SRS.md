@@ -13,6 +13,14 @@ detail. Derived from INTENT-001; reviewed against it and the Constitution at Gat
   scope reduction** of REQ-008's selection algorithm under Conservatism (Constitution §1.2) — NOT a pure
   clarification and NOT entailed by REQ-012 (which scopes parity to node/edge kind only). Re-enters Gate 1
   fidelity (verified by the fresh Gate 2 adversary reading SRS+SDD together).
+  **Amended v1.3 (2026-06-30)** — REQ-005's **type-usage** sub-clause clarified: a type usage (`Account a;`)
+  resolves as the declared-type **binding** that drives the variable's static type — observable via the
+  member access it enables — NOT as a standalone resolved edge, because the Java/Kotlin benchmark emits no
+  edge for a bare type declaration (REQ-012 parity). Driven by WI-2 Step-3b (dogfood #20 — a Gate-3 reliance,
+  the assumed type-usage edge, found false against the real host) and already recorded as the SDD-002
+  2026-06-30 clarification; Architect-approved (Adam, 2026-06-30). A **clarification** aligning the text to
+  the parity-mandated behaviour (NOT a scope change). Re-enters Gate 1 fidelity (verified by the fresh Gate 2
+  adversary reading SRS+SDD together).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope
@@ -75,9 +83,18 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   represent each trigger as a container node in the knowledge graph.
 
 **Reference resolution (user-defined)**
-- **REQ-005** — The system SHALL resolve a reference that unambiguously denotes another user-defined
-  Apex symbol — method invocation, constructor invocation, type usage, or field/property access — to
-  that symbol's node as a resolved edge. (The ambiguous case is governed by REQ-015.)
+- **REQ-005** *(type-usage sub-clause clarified v1.3)* — The system SHALL resolve a reference that
+  unambiguously denotes another user-defined Apex symbol to that symbol. For a **method invocation,
+  constructor invocation, or field/property access**, resolution is a resolved edge to the symbol's node
+  (CALLS / ACCESSES). For a **type usage** (a declared type, e.g. `Account a;`), resolution is the binding
+  of the declared type to the variable's static type — observable as the resolution it enables (a member
+  access on that variable resolving to the type's members) — consistent with the Java/Kotlin benchmark,
+  which emits no standalone edge for a bare type declaration (REQ-012). (The ambiguous case is governed by
+  REQ-015.) (**Amended v1.3 — clarification, re-entering Gate 1:** the prior head demanded "a resolved edge"
+  for *all four* reference kinds including type usage; no benchmark language emits a standalone edge for a
+  bare declared type, so this aligns the text to the parity-mandated behaviour rather than changing scope.
+  Driven by WI-2 Step-3b dogfood #20; Architect-approved 2026-06-30; recorded as the SDD-002 2026-06-30
+  clarification.)
 - **REQ-006** — The system SHALL NOT report a reference that REQ-005 resolves as an unknown or unresolved
   symbol. (This is INTENT-001's literal acceptance condition; REQ-005 emits the edge, REQ-006 forbids the
   false unresolved record for the same reference.)

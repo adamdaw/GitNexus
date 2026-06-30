@@ -21,6 +21,10 @@ Every positive-resolution assertion is red until Step 3b: each `expect(... edge 
 outcome is emitted yet. These anchor every describe block:
 
 - REQ-005 — USES (type usage), CALLS (constructor, method invocation), ACCESSES (field/property).
+  *(Annotation 2026-06-30: the type-usage anchor was authored here asserting a standalone `USES` edge; during
+  Step 3b the USES reliance was found false against the host (dogfood #20) and the anchor was reframed to
+  assert the ACCESSES effect the type-binding enables — see the SDD-002 2026-06-30 clarification. The
+  Gate-3 RED state above is preserved as the historical record; the shipped anchor asserts ACCESSES, not USES.)*
 - REQ-006 — *(passes trivially now; see below — but its describe is anchored red by the REQ-005 its).*
 - REQ-007 — EXTENDS / IMPLEMENTS (nested types); REQ-005 delegation (this()/super()/super.method()).
 - REQ-008 — (i) exact-type, (i-fold) param-type case-fold, (ii) arity selection, (iv) multi-parameter.
@@ -42,10 +46,17 @@ have no failing state pre-impl (no binding occurs to be wrong); (2) enables a ta
 each is paired with a genuinely-RED positive anchor in the same describe, and each will fail if a
 future change mis-binds the reference (regression guard). They are NOT the gate's red evidence.
 
-- REQ-008 (iii) — `h(s)` undisambiguable assignable → 0 CALLS to `h` (no exact match is a miss, not
-  an ambiguity, so the host emits no `suppressed` record; edge-absence only).
-- REQ-008 §4 — external-arg overload `k(x:Account)` → 0 CALLS to `k` (external arg type, no user-defined
-  exact match; miss, no `suppressed` record). Anchored red by the other overload describe its.
+- REQ-008 (iii) — `h(s)` undisambiguable assignable → 0 CALLS to `h`. The arity filter leaves the two
+  equal-arity overloads, exact-type narrowing empties (no exact match), and Apex supplies no
+  conversion-rank, so the free-call path reports the call AMBIGUOUS → no edge **AND** records a
+  `suppressed` `overload-ambiguous` outcome (REQ-015's two obligations). The (iii) anchor asserts both.
+- REQ-008 §4 — external-arg overload `k(x:Account)` → 0 CALLS to `k`. The external argument type yields
+  no user-defined exact match; as in (iii) the equal-arity candidates survive and the free-call path
+  records a `suppressed` `overload-ambiguous` outcome (edge-absence + record). Anchored red by the
+  other overload describe its. *(`k`'s disambiguating argument is a method **parameter** (`Account x`),
+  left untyped in WI-2 — parameter-typed argument narrowing is **deferred to WI-4**, see SDD-002 §2
+  REQ-008 / §4; the untyped parameter is exactly what keeps this external case conservatively unresolved
+  without WI-4's external-type detection.)*
 - REQ-015 — absent member `t.missing()` → 0 CALLS (anchored red by `t.real()` resolving).
 - REQ-015 — unresolved receiver `x.foo()` → 0 CALLS (pure-negative fixture; value = no-throw).
 - REQ-015/§4 — external `System.debug` → 0 CALLS (pure-negative; value = no-throw, no Apex defect).

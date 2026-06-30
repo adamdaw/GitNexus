@@ -15,7 +15,9 @@
  *
  * Observability (the host mechanism SDD-002 §2 tagged [Gate-3 reliance], pinned
  * here at test-authoring time — validated against the real host at this gate):
- *   - resolved reference  -> a CALLS / ACCESSES / USES / EXTENDS / IMPLEMENTS edge
+ *   - resolved reference  -> a CALLS / ACCESSES / EXTENDS / IMPLEMENTS edge
+ *     (type usage resolves as a declared-type BINDING, not a standalone USES edge —
+ *      2026-06-30 clarification; no benchmark language emits one for a bare declaration)
  *   - lookup MISS          -> edge ABSENCE only (ResolveStats.unresolved is logged,
  *                             not exposed on PipelineResult)
  *   - AMBIGUITY suppressed -> a positive record in result.resolutionOutcomes
@@ -56,7 +58,6 @@ const suppressed = (result: PipelineResult) =>
 const RESOLUTION_EDGE_TYPES = [
   'CALLS',
   'ACCESSES',
-  'USES',
   'EXTENDS',
   'IMPLEMENTS',
   'HAS_METHOD',
@@ -72,27 +73,23 @@ describe.skipIf(!apexAvailable)('Apex resolution mechanics (REQ-005/006/007/009)
     result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-resolution'), () => {});
   }, 120000);
 
-  // REQ-005 — four reference kinds, each case-varied via the seam ───────────
-  it('resolves a case-varied type usage (ACCOUNT a) — binds the variable type (REQ-005)', () => {
-    // SDD-002 clarification (2026-06-30, Gate-3-reliance-found-false): the host emits
-    // NO standalone USES edge for a plain declared type — no benchmark language does.
-    // REQ-005 "type usage" resolution is exercised as the case-varied declared type
-    // BINDING the variable's type, which is precisely what lets the case-varied member
-    // access `a.NAME` (the ACCESSES assertion above) resolve. Asserting that effect is
-    // the host-supported observable for type-usage resolution; a standalone USES edge
-    // would exceed Java/Kotlin parity (REQ-012 scope).
+  // REQ-005 — reference kinds, each case-varied via the seam ────────────────
+  // Type usage and field/property access share ONE observable: the case-varied declared
+  // type `ACCOUNT a` BINDS a's type (no standalone USES edge — 2026-06-30 clarification,
+  // Gate-3-reliance-found-false; a USES edge would exceed Java/Kotlin parity, REQ-012),
+  // and that binding is precisely what lets the case-varied field access `a.NAME` resolve
+  // to ACCESSES `name`. The single ACCESSES edge proves both REQ-005 sub-clauses (the
+  // declared-type fold that forms the binding, and the access it enables); asserting it in
+  // two separate `it`s added no independent signal post-clarification, so they are one.
+  it('resolves case-varied type usage + field access (ACCOUNT a; a.NAME) via the binding → ACCESSES (REQ-005)', () => {
     expect(
       getRelationships(result, 'ACCESSES').find((e) => e.target === 'name'),
-      'the case-varied type usage ACCOUNT bound a -> resolves a.NAME',
+      'ACCOUNT folds + binds a (type usage) -> a.NAME resolves (field access)',
     ).toBeDefined();
   });
 
   it('resolves a case-varied constructor (new account()) to the type via CALLS (REQ-005)', () => {
     expect(getRelationships(result, 'CALLS').find((e) => e.target === 'Account')).toBeDefined();
-  });
-
-  it('resolves a case-varied field/property access (a.NAME) via ACCESSES (REQ-005)', () => {
-    expect(getRelationships(result, 'ACCESSES').find((e) => e.target === 'name')).toBeDefined();
   });
 
   it('resolves a case-varied method invocation (s.RUN()) via CALLS (REQ-005)', () => {
@@ -132,6 +129,16 @@ describe.skipIf(!apexAvailable)('Apex resolution mechanics (REQ-005/006/007/009)
     expect(
       getRelationships(result, 'IMPLEMENTS').find(
         (e) => e.source === 'Impl' && e.target === 'Greeter',
+      ),
+    ).toBeDefined();
+  });
+
+  it('resolves nested interface-extends-interface (SubGreeter extends Greeter) via IMPLEMENTS (REQ-007 parity)', () => {
+    // Apex (like Java) models interface-extends-interface as an IMPLEMENTS edge; pins the third
+    // heritage form the host synthesises, beyond class-extends/class-implements.
+    expect(
+      getRelationships(result, 'IMPLEMENTS').find(
+        (e) => e.source === 'SubGreeter' && e.target === 'Greeter',
       ),
     ).toBeDefined();
   });
@@ -218,10 +225,17 @@ describe.skipIf(!apexAvailable)('Apex overload resolution (REQ-008)', () => {
     );
   });
 
-  it('(iii) leaves a genuinely-undisambiguable assignable overload unresolved (REQ-008 -> REQ-015)', () => {
+  it('(iii) leaves a genuinely-undisambiguable assignable overload unresolved AND records it (REQ-008 -> REQ-015)', () => {
     // OverUndis: h(Base)/h(Other), h(s:Sub) assignable to Base but identical to neither -> no exact
-    // match -> no edge. [conservative-negative; see .vsdd/tdd/WI-2-red-gate.md]
-    expect(getRelationships(result, 'CALLS').filter((e) => e.target === 'h').length).toBe(0);
+    // match -> 2 equal-arity candidates survive -> ambiguous (free-call path). REQ-015's two obligations:
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'h').length,
+      'obligation 1: no binding edge',
+    ).toBe(0);
+    expect(
+      suppressed(result).some((o) => o.name === 'h'),
+      'obligation 2: the undisambiguable h(s) call is recorded unresolved (overload-ambiguous)',
+    ).toBe(true);
   });
 
   it('leaves an overload disambiguable only by an external arg type unresolved (REQ-008 §4 -> REQ-015)', () => {
