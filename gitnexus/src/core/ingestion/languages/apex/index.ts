@@ -36,4 +36,8 @@ export const apexProvider = defineLanguage({
   fieldExtractor: createFieldExtractor(apexFieldConfig),
   methodExtractor: createMethodExtractor(apexMethodConfig),
   classExtractor: createClassExtractor(apexClassConfig),
+  // WI-2 §2.2 seam: Apex identifiers and type names are case-insensitive, so the
+  // shared name-key boundaries fold member/binding names to lower case before
+  // keying (symmetric on register + lookup). Identity for case-sensitive peers.
+  normalizeIdentifier: (s: string): string => s.toLowerCase(),
 });
