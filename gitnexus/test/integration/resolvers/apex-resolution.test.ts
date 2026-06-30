@@ -73,8 +73,18 @@ describe.skipIf(!apexAvailable)('Apex resolution mechanics (REQ-005/006/007/009)
   }, 120000);
 
   // REQ-005 — four reference kinds, each case-varied via the seam ───────────
-  it('resolves a case-varied type usage (ACCOUNT a) to the type node via USES (REQ-005)', () => {
-    expect(getRelationships(result, 'USES').find((e) => e.target === 'Account')).toBeDefined();
+  it('resolves a case-varied type usage (ACCOUNT a) — binds the variable type (REQ-005)', () => {
+    // SDD-002 clarification (2026-06-30, Gate-3-reliance-found-false): the host emits
+    // NO standalone USES edge for a plain declared type — no benchmark language does.
+    // REQ-005 "type usage" resolution is exercised as the case-varied declared type
+    // BINDING the variable's type, which is precisely what lets the case-varied member
+    // access `a.NAME` (the ACCESSES assertion above) resolve. Asserting that effect is
+    // the host-supported observable for type-usage resolution; a standalone USES edge
+    // would exceed Java/Kotlin parity (REQ-012 scope).
+    expect(
+      getRelationships(result, 'ACCESSES').find((e) => e.target === 'name'),
+      'the case-varied type usage ACCOUNT bound a -> resolves a.NAME',
+    ).toBeDefined();
   });
 
   it('resolves a case-varied constructor (new account()) to the type via CALLS (REQ-005)', () => {

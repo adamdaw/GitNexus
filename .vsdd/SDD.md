@@ -571,6 +571,17 @@ downstream gates, authored in dependency order ITEM-002 → ITEM-003 → ITEM-00
 - **Builds on:** WI-1's graph (container + member nodes, case-preserving ids, collision-triggered
   param-type id segments). WI-2 fills the WI-1 resolution stubs (`type-config.ts`, `import-resolver.ts`)
   and adds the call/scope hooks — all under `languages/apex/` (Constitution §2.1).
+- **Amended (clarification) 2026-06-30 — REQ-005 type-usage USES (Gate-3-reliance-found-false).**
+  §2 REQ-005 tagged "the host reference pass emits the `USES` edge to the type node" as a
+  **[Gate-3 reliance]**. Step-3b implementation evidence: **no benchmark language emits a standalone
+  `USES` edge for a plain declared type** (`Account a;`), and the host has no such reference pass for
+  declarations — emitting one would exceed Java/Kotlin parity (REQ-012 scope). **Architect-approved
+  clarification (Adam, 2026-06-30):** REQ-005 "type usage" resolution is exercised as the declared type
+  **binding the variable's type** (the `@type-binding` that drives receiver typing), observable via the
+  member access it enables — NOT as a standalone `USES` edge. A standalone type-usage `USES` edge is
+  **deferred** (it would be a beyond-parity capability, akin to the type-level-annotation deferral
+  REQ-106). This is the finding-#13 pattern recurring at Gate 3→Step 3b: a host-API behaviour the
+  evidence-isolated spec could only FLAG, found false against the real host. Dogfood finding #20.
 
 ## 1. Design overview (the HOW, grounded in the host)
 
@@ -840,7 +851,8 @@ resolution failure degrades to an unresolved reference, never an unsafe binding.
 Each REQ clause, edge case, and the seam map to sub-items. **Gate-3 acceptance assertions** (single
 declaration unit, automated): **one explicit assertion per REQ-005 reference kind, each case-varied + via
 the seam** — method invocation → `CALLS`, constructor `new UserType()` → `CALLS`, type usage `UserType v;`
-→ `USES`, field/property access → `ACCESSES`; **AND each emits no unresolved record** (REQ-006's negative
+→ **binds the variable's type** (drives receiver typing — NOT a standalone `USES` edge; see the
+2026-06-30 clarification), field/property access → `ACCESSES`; **AND each emits no unresolved record** (REQ-006's negative
 — SRS §9 "no unresolved symbol is recorded"). *(The illustrative `ACCOUNT a = new account(); a.NAME` fixture
 exercises type-usage + constructor + field-access; a separate fixture supplies the method-invocation case.)*
 Ambiguous/case-only reference unresolved **AND recorded in the unresolved set** (REQ-015's two obligations);

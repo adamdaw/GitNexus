@@ -342,7 +342,49 @@ function apexBaseLookupNameNode(node: SyntaxNode): SyntaxNode | null {
   }
 }
 
+/** A capture range; `contains` uses lexical (line, col) ordering. */
+type Rng = { startLine: number; startCol: number; endLine: number; endCol: number };
+const rangeContains = (outer: Rng, inner: Rng): boolean => {
+  const startOk =
+    outer.startLine < inner.startLine ||
+    (outer.startLine === inner.startLine && outer.startCol <= inner.startCol);
+  const endOk =
+    outer.endLine > inner.endLine ||
+    (outer.endLine === inner.endLine && outer.endCol >= inner.endCol);
+  return startOk && endOk;
+};
+
 function resolveVarTypeBindings(matches: CaptureMatch[]): CaptureMatch[] {
+  // Method/constructor scopes (Apex methods are NOT nested), so each variable
+  // declaration and each call site lies in exactly one function scope. Var types
+  // are keyed by `<enclosingFnRange>\0<name>` so two methods' same-named locals
+  // (e.g. `String b` in one, `Boolean b` in another) do not collide — a flat
+  // name→type map would mark them ambiguous and drop both, leaving overload args
+  // untyped (and thus wrongly matchable). Range-scoping keeps each distinct.
+  const fnScopes: Rng[] = [];
+  for (const m of matches) {
+    const fn = m['@scope.function'];
+    if (fn !== undefined) fnScopes.push(fn.range);
+  }
+  // Smallest containing function scope (line/col span) — robust if scopes ever overlap.
+  const enclosingFnKey = (r: Rng | undefined): string => {
+    if (r === undefined) return '';
+    let best: Rng | undefined;
+    for (const fn of fnScopes) {
+      if (!rangeContains(fn, r)) continue;
+      if (
+        best === undefined ||
+        fn.startLine > best.startLine ||
+        (fn.startLine === best.startLine && fn.startCol > best.startCol)
+      ) {
+        best = fn;
+      }
+    }
+    return best === undefined
+      ? ''
+      : `${best.startLine}:${best.startCol}:${best.endLine}:${best.endCol}`;
+  };
+
   const returnTypes = new Map<string, string>();
   const varTypes = new Map<string, string>();
   const ambiguousReturns = new Set<string>();
@@ -369,14 +411,16 @@ function resolveVarTypeBindings(matches: CaptureMatch[]): CaptureMatch[] {
       m['@type-binding.type'] !== undefined &&
       m['@type-binding.name'] !== undefined
     ) {
-      const name = m['@type-binding.name'].text;
+      // Scope the local-variable type to its enclosing function (class-level
+      // fields key to '' / global, still reachable via the fallback below).
+      const key = `${enclosingFnKey(m['@type-binding.name'].range)}\0${m['@type-binding.name'].text}`;
       const t = m['@type-binding.type'].text;
-      const existing = varTypes.get(name);
+      const existing = varTypes.get(key);
       if (existing !== undefined && existing !== t) {
-        ambiguousVars.add(name);
-        varTypes.delete(name);
-      } else if (!ambiguousVars.has(name)) {
-        varTypes.set(name, t);
+        ambiguousVars.add(key);
+        varTypes.delete(key);
+      } else if (!ambiguousVars.has(key)) {
+        varTypes.set(key, t);
       }
     }
   }
@@ -387,10 +431,13 @@ function resolveVarTypeBindings(matches: CaptureMatch[]): CaptureMatch[] {
       try {
         const types: string[] = JSON.parse(m['@reference.parameter-types'].text);
         const names: string[] = JSON.parse(m['@reference.arg-names'].text);
+        // The call site's enclosing function (param-types is captured on the call node).
+        const callFnKey = enclosingFnKey(m['@reference.parameter-types'].range);
         let patched = false;
         for (let i = 0; i < types.length; i++) {
           if (types[i] === '' && names[i] !== undefined && names[i] !== '') {
-            const rt = varTypes.get(names[i]!);
+            // Same-function local first; fall back to class-level/global (fields).
+            const rt = varTypes.get(`${callFnKey}\0${names[i]!}`) ?? varTypes.get(`\0${names[i]!}`);
             if (rt !== undefined) {
               // Fold the resolved var type (Apex case-insensitivity) to match the
               // folded declared param types in overload narrowing.
