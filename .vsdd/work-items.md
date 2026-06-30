@@ -21,7 +21,7 @@ per-item state machine. Keep it current as each item advances.*
 | Item | WI | Status | Phase | Gates cleared | Artifacts |
 |---|---|---|---|---|---|
 | ITEM-001 | WI-1 parse & graph | **DONE** (Gates 1–5) | 6→done | 1, 1-decomp, 2, 3, 4, 5 | light-SRS ✓, SDD-001 v1.2.1 ✓, pass-records gate1/decomp/2/3/4/5 ✓; impl green |
-| ITEM-002 | WI-2 resolution mechanics | **active** | **4 cleared → ready for Gate 5 (Phase 6)** | 1, 1-decomp, 2, 3, **4** | light-SRS ✓, SDD-002 ✓ (+ USES clarification #20; REQ-008 param-arg narrowing → WI-4), SRS v1.3, Constitution v1.1.1, pass-records gate2-wi2/gate3-wi2/**gate4-wi2** ✓; **impl GREEN — 29 integration + 7 unit anchors; full resolver surface + peers green (NFR-002 holds)**. Gate 4: Pass 1 PASS_FIXED (8 cold rounds), Pass 2 PASS_ACCEPTED (2 cold rounds), Adam-signed 2026-06-30 |
+| ITEM-002 | WI-2 resolution mechanics | **DONE** (Gates 1–5) | 6→done | 1, 1-decomp, 2, 3, 4, **5** | light-SRS ✓, SDD-002 ✓ (+ USES clarification #20; REQ-008 param-arg narrowing → WI-4), SRS v1.3, Constitution v1.1.1, pass-records gate2-wi2/gate3-wi2/gate4-wi2/**gate5-wi2** ✓; **impl GREEN — 29 integration + 7 unit anchors + 25 Gate-5 hardening; full resolver surface + peers green (NFR-002 holds)**. Gate 4: Pass 1 PASS_FIXED (8 cold rounds), Pass 2 PASS_ACCEPTED (2 cold rounds), Adam-signed 2026-06-30. Gate 5 (Phase 6): fuzz (24-input corpus + 10k smoke-fuzz, 0 crashes) + 8/8 mutants killed + purity audit, all PASS, Adam-signed 2026-06-30 |
 | ITEM-003 | WI-3 cross-file & trigger | proposed | — | (epic 1+decomp) | light-SRS ✓; SDD pending |
 | ITEM-004 | WI-4 parity & external | proposed | — | (epic 1+decomp) | light-SRS ✓; SDD pending |
 
