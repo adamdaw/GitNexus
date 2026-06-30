@@ -174,7 +174,12 @@ export interface MutableSemanticModel extends SemanticModel {
 // coverage, uniqueness, and no-extra-keys at build time. No runtime guard
 // is needed because drift is structurally impossible in the source.
 
-export const createSemanticModel = (): MutableSemanticModel => {
+export const createSemanticModel = (
+  // Generic §2.2 identifier-key normalizer resolver (per file → fold fn). Folds the
+  // member/type name segment of the registry keys for case-insensitive languages
+  // (Apex). Identity for every case-sensitive peer (NFR-002). Undefined ⇒ no fold.
+  resolveNormalizer?: (filePath: string) => (s: string) => string,
+): MutableSemanticModel => {
   // 1. Create the pure, registry-unaware SymbolTable leaf.
   // rawSymbols is the only handle in the codebase whose type (the
   // internal createSymbolTable return) includes `.clear()`. cascadeClear
@@ -187,7 +192,7 @@ export const createSemanticModel = (): MutableSemanticModel => {
   const fields = createFieldRegistry();
 
   // 3. Build the dispatch table, closed over THIS instance's registries.
-  const dispatchTable = createRegistrationTable({ types, methods, fields });
+  const dispatchTable = createRegistrationTable({ types, methods, fields, resolveNormalizer });
 
   // 4. Wrap rawSymbols so `add()` fans out into the registries via the
   //    dispatch table. See module JSDoc for the three-step contract.

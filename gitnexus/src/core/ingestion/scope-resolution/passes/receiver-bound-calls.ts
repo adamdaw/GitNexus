@@ -80,6 +80,7 @@ import type {
  *  refactors lighter — callers only need to populate what we read. */
 type ReceiverBoundProviderSubset = Pick<
   ScopeResolver,
+  | 'languageProvider'
   | 'isSuperReceiver'
   | 'isSuperReceiverInContext'
   | 'fieldFallbackOnMethodLookup'
@@ -257,7 +258,12 @@ export function emitReceiverBoundCalls(
       if (site.explicitReceiver === undefined) continue;
 
       const receiverName = site.explicitReceiver.name;
-      const memberName = site.name;
+      // §2.2 lookup-side fold (symmetric with the registration-table register fold):
+      // fold the member name via the language's normalizeIdentifier (Apex → toLowerCase)
+      // so `acc.NAME` keys onto the field registered `name`. Identity for case-sensitive
+      // peers. pickOverload/findOwnedMember inherit this folded name.
+      const memberName =
+        provider.languageProvider?.normalizeIdentifier?.(site.name) ?? site.name;
       const siteKey = `${parsed.filePath}:${site.atRange.startLine}:${site.atRange.startCol}`;
 
       // ── super branch ─────────────────────────────────────────────

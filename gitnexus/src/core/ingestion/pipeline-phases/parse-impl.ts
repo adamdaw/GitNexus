@@ -396,7 +396,15 @@ export async function runChunkedParseAndResolve(
    *  (otherwise ~58s on a 1000-file repo). */
   parsedFiles: import('gitnexus-shared').ParsedFile[];
 }> {
-  const model = createSemanticModel();
+  // §2.2 identifier-key normalizer: per file → the language's normalizeIdentifier
+  // (Apex → toLowerCase; identity for case-sensitive peers). Folds the registry
+  // key name segment so case-insensitive references resolve (symmetric with the
+  // lookup-side fold in receiver-bound-calls). ponytail: per-call getProvider; memoize if hot.
+  const model = createSemanticModel((filePath) => {
+    const lang = getLanguageFromFilename(filePath);
+    const norm = lang ? getProvider(lang).normalizeIdentifier : undefined;
+    return norm ?? ((s) => s);
+  });
   const symbolTable = model.symbols;
 
   const parseableScanned = scannedFiles.filter((f) => {
