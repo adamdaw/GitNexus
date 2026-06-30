@@ -17,6 +17,51 @@
  * (they are the two separate nodes WI-1 already emits). Node ids are untouched;
  * this folds only the overload-comparison string.
  */
+
+import type { SyntaxNode } from '../../utils/ast-helpers.js';
+import { apexMethodConfig } from './method-config.js';
+
 export function normalizeApexParamType(raw: string): string {
   return raw.trim().toLowerCase();
+}
+
+/**
+ * Extract Apex arity metadata from a method-like tree-sitter node —
+ * `method_declaration` or `constructor_declaration`.
+ *
+ * Mirrors `languages/java/arity-metadata.ts:computeJavaArityMetadata`, reusing
+ * `apexMethodConfig.extractParameters` so scope-extracted defs carry the same
+ * arity semantics as the WI-1 parse path. Apex user methods take no
+ * optional/default-valued parameters and no user varargs (SDD-002 A-WI2-1), so
+ * `parameterCount === requiredParameterCount` in practice; the varargs branch is
+ * preserved for structural fidelity (it stays inert because the Apex parameter
+ * extractor always reports `isVariadic === false`).
+ */
+export interface ApexArityMetadata {
+  readonly parameterCount: number | undefined;
+  readonly requiredParameterCount: number | undefined;
+  readonly parameterTypes: readonly string[] | undefined;
+}
+
+export function computeApexArityMetadata(fnNode: SyntaxNode): ApexArityMetadata {
+  const params = apexMethodConfig.extractParameters?.(fnNode) ?? [];
+
+  let hasVariadic = false;
+  const types: string[] = [];
+  for (const p of params) {
+    if (p.isVariadic) hasVariadic = true;
+    if (p.type !== null) types.push(p.type);
+  }
+  if (hasVariadic) types.push('varargs');
+
+  const total = params.length;
+  const fixedCount = params.filter((p) => !p.isVariadic).length;
+  const parameterCount = hasVariadic ? undefined : total;
+  const requiredParameterCount = hasVariadic ? fixedCount : total;
+
+  return {
+    parameterCount,
+    requiredParameterCount,
+    parameterTypes: types.length > 0 ? types : undefined,
+  };
 }

@@ -101,6 +101,10 @@ export type ScopeExtractorHooks = Pick<
   | 'interpretImport'
   | 'interpretTypeBinding'
   | 'classifyCallForm'
+  // §2.2 generic identifier-key normalizer — folds declaration binding keys for
+  // case-insensitive languages (Apex), symmetric with the folded type bindings and
+  // the folded member registries. Identity for case-sensitive peers (NFR-002).
+  | 'normalizeIdentifier'
 >;
 
 // ─── Public entry point ─────────────────────────────────────────────────────
@@ -532,8 +536,11 @@ function pass2AttachDeclarations(
       provider.bindingScopeFor?.(match, draftToScope(innermost), scopeTree) ?? autoHostedId;
     const bindingHost = draftById.get(bindingScopeId) ?? innermost;
 
-    const nameKey = deriveDeclarationName(match, def);
-    if (nameKey === undefined) continue;
+    const rawNameKey = deriveDeclarationName(match, def);
+    if (rawNameKey === undefined) continue;
+    // §2.2 fold: key the binding under the language's normalized identifier
+    // (Apex → lower-case) so a case-varied reference resolves; identity for peers.
+    const nameKey = provider.normalizeIdentifier?.(rawNameKey) ?? rawNameKey;
 
     const existing = bindingHost.bindings.get(nameKey) ?? [];
     existing.push({ def, origin: 'local' });
