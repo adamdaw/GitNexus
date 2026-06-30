@@ -88,6 +88,11 @@ export function emitFreeCallFallback(
      *  fail at the call site. Three-valued; `'unknown'` keeps the
      *  candidate (monotonicity). */
     readonly constraintCompatibility?: ScopeResolver['constraintCompatibility'];
+    /** REQ-015 (Apex): when an unqualified implicit-`this` call is a genuine
+     *  overload set that argument-type narrowing cannot disambiguate, suppress
+     *  the call (record unresolved + mark handled) instead of leaving it for the
+     *  reference-index emitter to guess a first-overload target. Default false. */
+    readonly conservativeOverloadResolution?: boolean;
     readonly recordResolutionOutcome?: ResolutionOutcomeRecorder;
     /** Resolved-callee-id capture sink (#2227 U2). Threaded in only under
      *  `--pdg`; `undefined` ⇒ zero overhead, byte-identity (R4). Captured at
@@ -169,12 +174,32 @@ export function emitFreeCallFallback(
       // arity + argument types.
       let fnDefFromImplicitThis = false;
       if (fnDef === undefined) {
-        fnDef = pickImplicitThisOverload(site, scopes, workspaceIndex, model, {
+        const implicitThis = resolveImplicitThisCall(site, scopes, workspaceIndex, model, {
           conversionRankFn: options.conversionRankFn,
           conversionOnlyArgTypePrefixes: options.conversionOnlyArgTypePrefixes,
           constraintCompatibility: options.constraintCompatibility,
         });
+        fnDef = implicitThis.def;
         fnDefFromImplicitThis = fnDef !== undefined;
+        // REQ-015 (Apex): a genuine implicit-`this` overload set that narrowing
+        // could not disambiguate is left UNRESOLVED — record it and mark the site
+        // handled so the reference-index emitter does not guess a first overload.
+        if (
+          fnDef === undefined &&
+          implicitThis.ambiguous &&
+          options.conservativeOverloadResolution === true
+        ) {
+          recordSuppressedOutcome(options.recordResolutionOutcome, {
+            phase: 'free-call-fallback',
+            filePath: parsed.filePath,
+            name: site.name,
+            range: site.atRange,
+            reason: 'overload-ambiguous',
+            candidates: implicitThis.candidates,
+          });
+          handledSites.add(siteKey(parsed.filePath, site));
+          continue;
+        }
       }
       // Scope-chain callable lookup. First-match preserves scope-chain
       // precedence (local shadows import). When a conversion-rank function
@@ -839,6 +864,42 @@ export function pickImplicitThisOverload(
     readonly constraintCompatibility?: ScopeResolver['constraintCompatibility'];
   },
 ): SymbolDefinition | undefined {
+  return resolveImplicitThisCall(site, scopes, workspaceIndex, model, hookCtx).def;
+}
+
+/**
+ * Resolve an unqualified implicit-`this` call to a method on the enclosing class,
+ * distinguishing three outcomes:
+ *   - `{ def }` — a unique target (single method, or overloads narrowed to one).
+ *   - `{ def: undefined, ambiguous: true, candidates }` — a genuine same-name
+ *     overload set that argument-type narrowing could NOT reduce to one. A
+ *     conservative language (Apex, REQ-015) suppresses; others fall through to
+ *     the next fallback.
+ *   - `{ def: undefined, ambiguous: false }` — no enclosing class, or no method
+ *     of that name (not an overload-ambiguity).
+ */
+function resolveImplicitThisCall(
+  site: {
+    readonly inScope: ScopeId;
+    readonly name: string;
+    readonly arity?: number;
+    readonly argumentTypes?: readonly string[];
+    readonly argumentTypeClasses?: readonly import('gitnexus-shared').ParameterTypeClass[];
+  },
+  scopes: ScopeResolutionIndexes,
+  workspaceIndex: WorkspaceResolutionIndex,
+  model: SemanticModel,
+  hookCtx?: {
+    readonly conversionRankFn?: ConversionRankFn;
+    readonly conversionOnlyArgTypePrefixes?: readonly string[];
+    readonly constraintCompatibility?: ScopeResolver['constraintCompatibility'];
+  },
+): {
+  readonly def: SymbolDefinition | undefined;
+  readonly ambiguous: boolean;
+  readonly candidates: readonly SymbolDefinition[];
+} {
+  const none = { def: undefined, ambiguous: false, candidates: [] as const };
   // Find the enclosing Class scope by walking parents.
   let curId: ScopeId | null = site.inScope;
   let classScopeId: ScopeId | undefined;
@@ -851,15 +912,15 @@ export function pickImplicitThisOverload(
     }
     curId = sc.parent;
   }
-  if (classScopeId === undefined) return undefined;
+  if (classScopeId === undefined) return none;
 
   // O(1) reverse-lookup via inverse map on WorkspaceResolutionIndex.
   const classDefId = workspaceIndex.classScopeIdToDefId.get(classScopeId);
-  if (classDefId === undefined) return undefined;
+  if (classDefId === undefined) return none;
 
   const overloads = model.methods.lookupAllByOwner(classDefId, site.name);
-  if (overloads.length === 0) return undefined;
-  if (overloads.length === 1) return overloads[0];
+  if (overloads.length === 0) return none;
+  if (overloads.length === 1) return { def: overloads[0], ambiguous: false, candidates: overloads };
 
   // Narrow on arity + argument types. Require a UNIQUE survivor —
   // ambiguous narrowing (multiple compatible candidates with no
@@ -871,6 +932,7 @@ export function pickImplicitThisOverload(
     conversionOnlyArgTypePrefixes: hookCtx?.conversionOnlyArgTypePrefixes,
     constraintCompatibility: hookCtx?.constraintCompatibility,
   });
-  if (candidates.length !== 1) return undefined;
-  return candidates[0];
+  if (candidates.length === 1) return { def: candidates[0], ambiguous: false, candidates };
+  // Genuine overload set, not disambiguated → ambiguous.
+  return { def: undefined, ambiguous: true, candidates: overloads };
 }

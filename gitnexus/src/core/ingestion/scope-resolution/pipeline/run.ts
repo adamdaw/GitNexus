@@ -768,6 +768,7 @@ export function runScopeResolution(
       conversionRankFn: provider.conversionRankFn,
       conversionOnlyArgTypePrefixes: provider.conversionOnlyArgTypePrefixes,
       constraintCompatibility: provider.constraintCompatibility,
+      conservativeOverloadResolution: provider.conservativeOverloadResolution === true,
       recordResolutionOutcome,
       calleeIdSink: calleeIdAccumulator,
     },

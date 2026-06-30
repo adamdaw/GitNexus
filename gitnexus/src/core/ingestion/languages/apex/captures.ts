@@ -28,7 +28,7 @@ import {
   syntheticCapture,
   type SyntaxNode,
 } from '../../utils/ast-helpers.js';
-import { computeApexArityMetadata } from './arity-metadata.js';
+import { computeApexArityMetadata, normalizeApexParamType } from './arity-metadata.js';
 import { synthesizeApexReceiverBinding } from './receiver-binding.js';
 import { getApexParser, getApexScopeQuery } from './query.js';
 import { getTreeSitterBufferSize } from '../../constants.js';
@@ -164,7 +164,10 @@ export function emitApexScopeCaptures(
           String(args.length),
         );
 
-        const argTypes = args.map((arg) => inferArgType(arg!));
+        // Fold each inferred argument type (Apex case-insensitivity), symmetric
+        // with the folded declared param types — so overload narrowing's exact
+        // per-slot comparison matches case-varied user types.
+        const argTypes = args.map((arg) => normalizeApexParamType(inferArgType(arg!)));
         grouped['@reference.parameter-types'] = syntheticCapture(
           '@reference.parameter-types',
           callNode,
@@ -389,7 +392,9 @@ function resolveVarTypeBindings(matches: CaptureMatch[]): CaptureMatch[] {
           if (types[i] === '' && names[i] !== undefined && names[i] !== '') {
             const rt = varTypes.get(names[i]!);
             if (rt !== undefined) {
-              types[i] = rt;
+              // Fold the resolved var type (Apex case-insensitivity) to match the
+              // folded declared param types in overload narrowing.
+              types[i] = normalizeApexParamType(rt);
               patched = true;
             }
           }

@@ -50,7 +50,10 @@ export function computeApexArityMetadata(fnNode: SyntaxNode): ApexArityMetadata 
   const types: string[] = [];
   for (const p of params) {
     if (p.isVariadic) hasVariadic = true;
-    if (p.type !== null) types.push(p.type);
+    // Fold the declared param type (Apex case-insensitivity) so overload
+    // narrowing compares argument and parameter types case-insensitively
+    // (the argument side is folded symmetrically in captures.ts).
+    if (p.type !== null) types.push(normalizeApexParamType(p.type));
   }
   if (hasVariadic) types.push('varargs');
 
