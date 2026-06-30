@@ -21,7 +21,7 @@ per-item state machine. Keep it current as each item advances.*
 | Item | WI | Status | Phase | Gates cleared | Artifacts |
 |---|---|---|---|---|---|
 | ITEM-001 | WI-1 parse & graph | **DONE** (Gates 1–5) | 6→done | 1, 1-decomp, 2, 3, 4, 5 | light-SRS ✓, SDD-001 v1.2.1 ✓, pass-records gate1/decomp/2/3/4/5 ✓; impl green |
-| ITEM-002 | WI-2 resolution mechanics | **active** | **3** (Step 3a: author tests → Gate 3) | 1, 1-decomp, **2** | light-SRS ✓, **SDD-002 ✓** (SRS v1.2 + RESEARCH-002), pass-record gate2-wi2 ✓ |
+| ITEM-002 | WI-2 resolution mechanics | **active** | **3** (Step 3b: implement → Gate 4) | 1, 1-decomp, 2, **3** | light-SRS ✓, SDD-002 ✓, pass-records gate2-wi2 ✓ + **gate3-wi2 ✓** (4-round cold loop, Adam-signed 2026-06-30); tests RED (26 anchors), WI-2-red-gate ✓ |
 | ITEM-003 | WI-3 cross-file & trigger | proposed | — | (epic 1+decomp) | light-SRS ✓; SDD pending |
 | ITEM-004 | WI-4 parity & external | proposed | — | (epic 1+decomp) | light-SRS ✓; SDD pending |
 

@@ -51,6 +51,11 @@ govern. Nothing here weakens a host-project gate.
    `.github/vendored-grammars.json`, consistent with Swift/Kotlin/C/Dart.
 5. **Per-language test.** Apex carries a scope-resolution test at
    `gitnexus/test/integration/resolvers/apex.test.ts` (auto-discovered by CI parity).
+   *(Clarified 2026-06-29, Architect-approved: the Apex test surface spans additive sibling suites —
+   `apex.test.ts` (WI-1 parse/graph), `apex-resolution.test.ts` (WI-2 resolution),
+   `apex-hardening.test.ts` (Gate-5 hardening), and main-thread unit anchors `test/unit/apex-*.test.ts`
+   — all auto-discovered by the same vitest glob. The named path is representative, not exclusive; the
+   additive siblings satisfy §2.5, they do not contradict it.)*
 
 ## 3. Quality Goals & Thresholds
 
