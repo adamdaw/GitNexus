@@ -22,7 +22,7 @@ per-item state machine. Keep it current as each item advances.*
 |---|---|---|---|---|---|
 | ITEM-001 | WI-1 parse & graph | **DONE** (Gates 1–5) | 6→done | 1, 1-decomp, 2, 3, 4, 5 | light-SRS ✓, SDD-001 v1.2.1 ✓, pass-records gate1/decomp/2/3/4/5 ✓; impl green |
 | ITEM-002 | WI-2 resolution mechanics | **DONE** (Gates 1–5) | 6→done | 1, 1-decomp, 2, 3, 4, **5** | light-SRS ✓, SDD-002 ✓ (+ USES clarification #20; REQ-008 param-arg narrowing → WI-4), SRS v1.3, Constitution v1.1.1, pass-records gate2-wi2/gate3-wi2/gate4-wi2/**gate5-wi2** ✓; **impl GREEN — 29 integration + 7 unit anchors + 25 Gate-5 hardening; full resolver surface + peers green (NFR-002 holds)**. Gate 4: Pass 1 PASS_FIXED (8 cold rounds), Pass 2 PASS_ACCEPTED (2 cold rounds), Adam-signed 2026-06-30. Gate 5 (Phase 6): fuzz (24-input corpus + 10k smoke-fuzz, 0 crashes) + 8/8 mutants killed + purity audit, all PASS, Adam-signed 2026-06-30 |
-| ITEM-003 | WI-3 cross-file & trigger | proposed | — | (epic 1+decomp) | light-SRS ✓; SDD pending |
+| ITEM-003 | WI-3 cross-file & trigger | **active** | **2 cleared → Phase 3** | 1, 1-decomp, **2** | light-SRS ✓ (+ REQ-008 cross-file-receiver + super-delegation), **SDD-003 ✓**, **RESEARCH-003 ✓** (§A.6 + 3 addenda), SRS **v1.4** (REQ-011 type-usage), pass-record **gate2-wi3** ✓ (PASS_FIXED, 17-round cold loop, Adam-signed 2026-06-30). 2 Architect-accepted Gate-3 reliances (edge-source, cross-language). Design: Seam B `populateNamespaceSiblings` (pure registration) + `qualifiedName` top-level discriminant + inject-none collision guard |
 | ITEM-004 | WI-4 parity & external | proposed | — | (epic 1+decomp) | light-SRS ✓; SDD pending |
 
 **Dependency-DAG execution (refines the binary mode):** the run follows the dependency graph, not a
@@ -51,10 +51,26 @@ chains, …) reach across files. WI-3 co-owns no WI-2 mechanic REQ; it owns the 
 completes their inherently-cross-file epic §9 scenarios end-to-end (see WI-2 / WI-3 below).
 
 **REQ-008 stays owned by WI-2** (the overload-resolution mechanic), verified within its single-
-declaration-unit acceptance for local/field/literal/constructor argument types. Its **parameter-typed
-argument** narrowing completes at **WI-4** (it needs WI-4's REQ-013 external-type detection to tell a
-user-defined parameter type from an external one), exactly as WI-3/REQ-010 completes WI-2's cross-file
-forms — a deferred *completion*, not co-ownership (see WI-2 / WI-4 below).
+declaration-unit acceptance for local/field/literal/constructor argument types. It has **two distinct
+deferred completions** (each a *completion*, not co-ownership):
+- the **cross-file-receiver** form — an overloaded call whose receiver type is defined in another file —
+  completes at **WI-3** via the REQ-010 enabler (REQ-010 making WI-2's REQ-008 mechanic reach across files,
+  exactly as it does REQ-005/007/009; this is the *dominant real-world Apex case*, since every class is its
+  own file). Added to ITEM-003 at WI-3 Gate-2 round 3 (2026-06-30, Architect-approved — "as long as it gets
+  covered, the division of labour is fine"); and
+- the **parameter-typed argument** narrowing — typing a method-parameter used as an overload argument —
+  completes at **WI-4** (it needs WI-4's REQ-013 external-type detection to tell a user-defined parameter
+  type from an external one).
+These are orthogonal sub-cases (cross-file receiver with a local/literal arg vs. a parameter-typed arg), so
+they sit in different WIs without conflict.
+
+**Receiver-*variable*-name case-fold (case-insensitivity completeness) → WI-4.** WI-2's §2.2 seam folded
+type and member names but deferred folding a receiver *variable*'s name (its "§2.2 ceiling"); SDD-002 noted
+revisiting it at WI-3. WI-3 does **not** need it — a variable is method-local and never crosses a file
+boundary, and **no epic §9 acceptance scenario varies a variable's case** (cross-file reach keys on type and
+member names, already folded). It is therefore a case-insensitivity **completeness** item parked at **WI-4**
+(parity hardening), owned there against REQ-005/REQ-008 case-insensitivity — recorded here so it is not a
+floating prose deferral. Surfaced at WI-3 Gate-2 round 4 (2026-06-30).
 
 **Cross-cutting (per epic SRS §11 — gates on *every* WI, not single-owned):** **NFR-001** (malformed/
 incomplete input → the *run* completes without crashing; the unparseable file is skipped) and
@@ -197,6 +213,17 @@ annotation capture is the deferred REQ-106.)
     enabler) — a top-level class `extends`/`implements` a user-defined type in another file; completing
     end-to-end the inheritance scenario WI-2 verified only in its nested-type analog. (No new REQ — REQ-010
     making the WI-2 REQ-007 mechanic reach across files, exactly as for REQ-005/009.)
+  - The **top-level-parent form** of constructor/method delegation — `super()` / `super.method()` to a
+    top-level superclass in **another file** (REQ-005 delegation sub-clause via the REQ-010 enabler) —
+    completing end-to-end the delegation WI-2 verified only for a nested-sibling parent. (No new REQ —
+    REQ-010 making WI-2's REQ-005 `super`-delegation reach a top-level parent across files, exactly as for
+    REQ-005/007/009. Surfaced at WI-3 Gate-2 round 1; reconciled into the decomposition 2026-06-30.)
+  - The **cross-file-receiver form** of "Overloaded method resolves by argument shape" (REQ-008's cross-file
+    completion via the REQ-010 enabler) — a call `B.f(arg)` where overloaded type `B` is in another file →
+    resolves the overload by the same arity+exact-type narrowing WI-2 verified same-unit. (No new REQ —
+    REQ-010 making WI-2's REQ-008 mechanic reach across files; the *dominant real-world Apex case*. The
+    distinct parameter-typed-argument completion stays WI-4 — see the coverage-map REQ-008 note. Surfaced at
+    WI-3 Gate-2 round 3; Architect-approved 2026-06-30.)
   - "A trigger resolves a call to a user-defined handler" — the **resolved-edge half** (REQ-011),
     completing the scenario whose container-node half WI-1 delivered.
 - **Dependencies & criticality:** depends on ITEM-002; security-critical = false. Cross-cutting

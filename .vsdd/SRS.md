@@ -21,6 +21,13 @@ detail. Derived from INTENT-001; reviewed against it and the Constitution at Gat
   2026-06-30 clarification; Architect-approved (Adam, 2026-06-30). A **clarification** aligning the text to
   the parity-mandated behaviour (NOT a scope change). Re-enters Gate 1 fidelity (verified by the fresh Gate 2
   adversary reading SRS+SDD together).
+  **Amended v1.4 (2026-06-30)** — REQ-011's **type-usage** sub-clause clarified to match REQ-005 v1.3: a bare
+  declared-type usage in a trigger body resolves as the declared-type **binding** (no standalone edge),
+  while constructor/static/method/field references still emit resolved edges. The same parity-mandated
+  behaviour (no benchmark emits an edge for a bare type declaration — REQ-012) applied to REQ-011's "type"
+  arm. Driven by WI-3 SDD-003 Gate-2 round 5 (a v1.3 clarification found to need parallel ratification for a
+  sibling REQ sharing the pattern); Architect-approved (Adam, 2026-06-30). A **clarification**, not a scope
+  change. Re-enters Gate 1 fidelity (verified by the fresh Gate 2 adversary reading SRS+SDD together).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope
@@ -120,8 +127,17 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
 - **REQ-009** — The system SHALL resolve field and property access chains across user-defined Apex types.
 - **REQ-010** — The system SHALL resolve references between user-defined Apex symbols declared in
   different files of the analysed repository without requiring an explicit import statement.
-- **REQ-011** — WHEN a user-defined Apex trigger body references a user-defined Apex type, method, or
-  field, the system SHALL emit a resolved edge from the trigger to the referenced symbol.
+- **REQ-011** *(type-usage sub-clause clarified v1.4)* — WHEN a user-defined Apex trigger body references a
+  user-defined Apex type, method, or field, the system SHALL resolve the reference to that symbol. For a
+  **method/constructor invocation** (incl. a static `Type.method()` call) or a **field/property access**,
+  resolution is a resolved edge from the trigger to the symbol's node (CALLS / ACCESSES). For a **bare
+  declared-type usage** in the trigger body (e.g. `Account a;`), resolution is the binding of the declared
+  type to the variable's static type — observable via the member access it enables — **not** a standalone
+  edge, consistent with the Java/Kotlin benchmark and with REQ-005 (no benchmark emits an edge for a bare
+  type declaration — REQ-012). (**Amended v1.4 — clarification, re-entering Gate 1:** the prior text demanded
+  "a resolved edge" for *all three* reference kinds including a bare type usage; this aligns REQ-011's
+  type arm to the same parity-mandated binding-not-edge behaviour REQ-005 received at v1.3, rather than
+  changing scope. Driven by WI-3 SDD-003 Gate-2 round 5; Architect-approved 2026-06-30.)
 
 **Parity and external handling**
 - **REQ-012** — For each capability applicable to Apex — explicit-type binding, constructor-type

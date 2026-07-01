@@ -915,4 +915,511 @@ delegation edges, the chain, and the forward reference each also assert zero unr
 reference they resolve.** The cross-file forms of REQ-005/007/009 are **not** claimed here — they complete
 at WI-3.
 
-*WI-3…4 SDD sections follow after WI-2 clears its gates, in dependency order.*
+# SDD-003 — WI-3: Cross-file binding & trigger resolution
+
+- **Consumes:** SRS-001 **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body resolution);
+  the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
+  Architect-approved 2026-06-30) — the cross-file-binding seam (A-3 confirmed; Seam B chosen).
+- **Constitution:** CONST-gitnexus-apex v1.1.1. **Security-critical = false** (operates on WI-1's safe-parsed
+  output + WI-2's resolution model; introduces no new untrusted-source parse path — SECT-001 stays WI-1's).
+  No new SEC clause.
+- **Builds on / completes:** WI-2's resolution mechanics (SDD-002), all verified within a **single
+  declaration unit**. WI-3 supplies the one **cross-file enabler** that lets every WI-2 mechanic reach across
+  files, thereby **completing** (not re-owning) the inherently-cross-file epic §9 forms WI-2 deferred:
+  two-class calls (REQ-005), cross-file field/property chains (REQ-009), top-level `extends`/`implements`
+  (REQ-007), and top-level-parent `super()`/`super.method()` delegation (REQ-005 sub-clause). WI-3 owns no
+  WI-2 mechanic REQ; it owns the enabler (REQ-010) + trigger-body resolution (REQ-011).
+
+## 1. Design overview (the HOW, grounded in the host)
+
+Apex has **no imports and no packages**: each top-level user-defined type is its own file and is visible
+**globally by its simple name** across the analysed repository. WI-2 set `resolveImportTarget: () => null`
+and resolved only within a single file; the gap is purely the **absence of a cross-file visibility hook**
+(RESEARCH-003 finding 5) — the host's name-lookup is already global-aware.
+
+**REQ-010 — the cross-file enabler (Seam B, `populateNamespaceSiblings`).** WI-3 registers the host's
+per-language `populateNamespaceSiblings` hook (contract `scope-resolver.ts:902`) on the Apex resolver. The
+hook runs after `finalizeScopeModel` and before `resolveReferenceSites` (`run.ts:636` → `:683`), and injects
+**every top-level user-defined Apex type** (class, interface, enum) into the host global registry
+`workspaceFqnBindings`, keyed by its **`normalizeIdentifier`-folded simple name** (so the §2.2
+case-insensitivity seam composes — a cross-file `ACCOUNT`/`account` reference folds to the same global key).
+`lookupBindingsAt` (`walkers.ts:63`) consults `workspaceFqnBindings`. The **[structural]** facts are the
+registration and the injected key set; that the lookup ranks the global channel **below** local/lexical
+bindings (so a same-unit declaration shadows a same-named global) and that **every WI-2 mechanic resolves
+cross-file unchanged** once the registry is populated are **host behaviours — [Gate-3 reliance]** (§2/§4/§7;
+RESEARCH-003 residual #2), expected by design but validated at Gate 3, not pinned here. The receiver-typing,
+member lookup, inheritance-edge, and **overload-narrowing** passes all flow through that same global-aware
+lookup. The
+**cross-file overloaded call is the dominant real-world Apex case** (every class is its own file, so a call
+to an overloaded method on another class crosses a file boundary): REQ-010 resolves the receiver type
+globally, then WI-2's REQ-008 narrowing runs over that cross-file type's overload set — it is acceptance-
+tested (§4/§8), not merely asserted. **An *instance* receiver** (`B b = …; b.f(arg)`, `new B().f(arg)`) uses
+WI-2's validated receiver-typing path; **a *static type-name* receiver** (`B.f(arg)`) is the shared
+static-type-name-receiver resolution reliance (§2 REQ-011, §4) with its one committed fallback. **Scope
+boundary:** WI-3's overload completion covers the **four argument kinds WI-2 supports** — local-variable,
+**field**, literal, and constructor-expression — reached cross-file (§8); a cross-file overload whose
+disambiguating argument is itself a **method-parameter** (the one kind WI-2 defers) is the intersection of
+WI-3 (cross-file receiver) and WI-4 (parameter-typed-arg narrowing) and **completes at WI-4** — until then
+it stays conservatively unresolved (never mis-bound), owned by neither prematurely. **Seam B over Seam A
+(`emitImplicitImportEdges`):** Apex has no imports, so synthetic `IMPORTS` edges would be beyond-parity graph
+noise; Java models the identical no-import same-package case with Seam B (RESEARCH-003 finding 4; Architect
+sign-off 2026-06-30). This is **registration of an existing generic host seam** (Constitution §2.2) — it
+names no language, is configured by the isolated provider, and is inert for every peer (each peer registers
+or omits its own hook; NFR-002). **WI-3 is pure registration — no *committed* shared-code edit** (the
+injection discriminant, the trigger exclusion, and the inject-none collision guard are all Apex-local, §3).
+**One *reserved, Gate-3-conditional* shared edit may prove necessary:** *if* Gate-3 finds the trigger edge's
+source is attributed in the shared emit pass and cannot be corrected Apex-locally, the reserved options are a
+generic §2.2 source-attribution seam or a §7 amendment for REQ-011's "from the trigger" obligation (§2) —
+each subject to its own §2.2/§7 review at selection; a contingent route, not a committed or pre-sanctioned
+edit. *(The §2.2 receiver-**variable**-name fold WI-2 deferred as its ceiling
+stays deferred — to **WI-4** parity hardening: a variable is method-local and never crosses a file boundary,
+so cross-file reach, which keys on type and member names — already folded — does not need it. Closing the
+WI-2→WI-3 handoff: re-deferred with rationale, not actioned.)*
+
+**REQ-011 — trigger-body resolution.** WI-1 emits trigger container nodes and the scope query tags
+`trigger_declaration` as `@scope.class` (`query.ts:41,56`); WI-2 explicitly excluded triggers from
+`this`/`super` receiver-binding (a trigger declares no methods — `receiver-binding.ts:17-24`). WI-3 makes a
+**trigger body's references to user-defined symbols** resolve. The canonical Apex form is a **static-style
+call on a type name** — `trigger T on Account (before insert) { AccountHandler.handle(Trigger.new); }` — or
+a `new AccountHandler()`. The trigger-body reference **capture** is already confirmed (the RESEARCH-003
+grammar-probe addendum: a trigger body parses like a class body and the WI-2 captures fire on it), so the
+**residual WI-3 design risk is purely the *resolution*** of the static type-name receiver — `AccountHandler`
+typing to the class node so the member lookup finds `handle` — a shape WI-2 did not exercise (a trigger has
+no `this`). SDD-003 treats this as a **design obligation validated by a concrete Gate-3 trigger fixture**.
+**One committed fallback if that fixture is red:** a **trigger-scope type-binding synthesis** that binds the
+static receiver's type-name to the class node it resolves to in `workspaceFqnBindings` (mirroring
+`apexReceiverBinding`'s `this`/`super` synthesis, but for a type-name receiver via the global registry), all
+under `languages/apex/`. It is NOT asserted as automatic, but the fallback is a single named mechanism, not
+an open choice.
+
+**Acceptance boundary.** WI-3's acceptance is the **cross-file / multi-file** form: fixtures with ≥2
+top-level types in separate files (and a trigger file), completing end-to-end the §9 scenarios WI-2 verified
+same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
+
+## 2. Behavioural contract (each REQ → clause; host-structural vs Gate-3 reliance marked)
+
+> **Verification split (finding #13).** **[structural]** = pinned here (hook registration, the injected def
+> set, the folded global key, edge labels — read-verifiable against the host API). **[Gate-3 reliance]** =
+> host-API *behaviour* only the real host confirms — design obligations validated at Gate 3 (tests vs host),
+> not Gate-2 pins. The Gate-2 adversary reviews the wiring + the split, NOT the truth of the behaviours.
+
+- **REQ-010 (resolve references between user-defined symbols in different files, no import).**
+  - *Precondition:* a reference in file A whose unambiguous target is a top-level user-defined Apex type (or
+    a member reached through one) declared in a different file B of the analysed repository.
+  - *Postcondition:* the reference resolves to B's symbol **identical to the same reference's in-unit form**,
+    by reference kind: a method/constructor **invocation** → `CALLS`; a **field/property access** →
+    `ACCESSES`; an **inheritance reference** (`extends`/`implements`, REQ-007) → `EXTENDS`/`IMPLEMENTS`; a
+    **bare declared-type usage** (`B b;` where B is in another file) → the declared-type **binding** (no
+    standalone edge, per REQ-005 v1.3 — observable via the member access it enables) — all with **no import
+    statement and no synthetic IMPORTS edge**. The match is case-insensitive (the
+    folded global key); the emitted target id is the case-preserving id. **[structural]** WI-3 registers
+    `populateNamespaceSiblings`, which injects every top-level **non-trigger** user-defined type def
+    (class/interface/enum; the §3 predicate — access-modifier visibility filtering is a REQ-012 parity
+    reliance, §7, not pinned) into `workspaceFqnBindings` under its `normalizeIdentifier`-folded simple name
+    (dedup by nodeId).
+    **[Gate-3 reliance]** that the host, with the global registry so populated, resolves each WI-2 mechanic
+    end-to-end across files (two-class call REQ-005, cross-file chain REQ-009, top-level `extends`/`implements`
+    REQ-007, top-level-parent `super` delegation, and qualified nested-type access `Outer.Inner` via the
+    outer's global binding), and that the `workspaceFqnBindings` precedence shadows correctly
+    (local-over-global).
+  - *Invariant:* conservative skip is preserved — a cross-file reference with no unique global target (none,
+    or two folded-same-name top-level types) emits no edge and is recorded unresolved (REQ-015); cross-file
+    does not relax conservatism. **For Apex-internal duplicates this no-mis-bind property is guaranteed
+    Apex-locally** by the §3 collision guard (it injects ≤1 binding per folded key), so it does **not** depend
+    on the host's >1-bucket handling — that host reliance is **foreclosed** for Apex (§3, §7(4)). The only
+    residual multi-binding case is the *cross-language* one (a peer entry sharing an Apex folded key), a
+    [Gate-3 reliance] bearing on NFR-002 (§7(8)).
+- **REQ-011 (trigger body references a user-defined type/method/field → resolved edge).**
+  - *Precondition:* a user-defined Apex trigger whose body references a user-defined Apex type, method, or
+    field (canonically a static-style call on a user-defined handler type, or `new Handler()`).
+  - *Postcondition* (per **REQ-011 v1.4**, which received REQ-005 v1.3's parity clarification): a
+    method/constructor invocation (incl. a static `Type.method()`) or a field/property access resolves to an
+    edge **from the trigger** (the trigger container node, per REQ-011's "from the trigger") — CALLS for an
+    invocation/constructor, ACCESSES for a field/property — at parity with the same reference from a class
+    body; a **bare declared-type usage** in the trigger body (`Account a;`) resolves to the declared-type
+    **binding** (observable via the member access it enables), **not** a standalone edge (REQ-011 v1.4 = the
+    Java/Kotlin parity behaviour, mirroring REQ-005 v1.3). **[structural — probe-confirmed]**
+    the trigger-body reference *capture* is a settled grammar fact: a trigger body parses to the same
+    `method_invocation`/`object_creation_expression`/`field_access` node types as a class body, and the WI-2
+    reference query patterns (**unanchored** — not scoped to a `class_body`) fire on them tree-wide, with
+    `trigger_declaration` tagged a container scope (`@scope.class`). Verified by the RESEARCH-003 trigger-body
+    grammar-probe addendum (`AccountHandler.handle(...)` → `@reference.call.member`, `new AccountHandler()` →
+    `@reference.call.constructor`, `h.name` → `@reference.read.member`). So the trigger's references are
+    captured and the trigger participates as a scope like any container. The edge **originating from the trigger
+    container node** is a **[structural obligation]** (REQ-011 *requirement text*, "from the trigger" — a
+    target WI-3 must meet, the §8 fixture asserts it); whether the host's **default** edge-attribution already
+    puts the source on the trigger (vs an inner body scope) is an **Architect-accepted [Gate-3 reliance]**
+    (held for Gate-3 validation, 2026-06-30). Unlike the
+    static-receiver fallback (grounded in the existing `apexReceiverBinding` hook), no current hook is known
+    to control edge *source* attribution and RESEARCH-003 did not probe it. **The satisfaction path is
+    bounded (pre-authorised), not open-ended:** the source for a body reference is set from its **enclosing
+    scope** (for a trigger body, that is the trigger — the most likely default), which the §8 fixture
+    confirms; *if* Gate-3 finds the host attributes it elsewhere and it cannot be corrected Apex-locally, the
+    correction **reserves the option of** a generic §2.2 seam (language-agnostic source-attribution hook) **or,
+    failing that,** a §7 Constitution amendment — **each still subject to its own review/approval at selection**
+    (an SDD does not pre-sanction a §2.2 seam or a §7 amendment; §2.2/§7 govern those at Gate-3 selection time).
+    So REQ-011's owned output has a bounded set of remediation routes, not an unbounded outcome — the
+    which-route (and its sanction) is decided at Gate 3.
+    **[Gate-3 reliance]** that the host *resolves* the captured trigger-body reference end-to-end —
+    specifically the **static type-name-receiver** shape where the receiver is a *type name*, not a typed
+    variable. This covers **both** a static **call** (`Handler.handle()` → CALLS) **and a static field /
+    property / enum-constant access** (`MyClass.FIELD`, `MyEnum.VALUE` → ACCESSES — REQ-011's explicit "field"
+    arm and REQ-010, equally a type-name receiver). It is the **shared static-type-name-receiver resolution
+    reliance** (§4) — the SAME shape as a cross-file static reference `B.f(...)` / `B.CONST`; it is not
+    trigger-specific, and WI-2's receiver binding covers only `this`/instance receivers, so it is unvalidated
+    for both. **Committed fallback (one mechanism, shared across the call and field/enum-constant arms):** if
+    any static-receiver fixture (trigger or cross-file, call or field) is red, a **static-receiver
+    type-binding synthesis** binds the receiver's type-name to the class/enum node it resolves to in
+    `workspaceFqnBindings` (mirroring `apexReceiverBinding`'s `this`/`super` synthesis, but for a type-name
+    receiver via the global registry), so the subsequent member/constant lookup proceeds — all under
+    `languages/apex/`. Not an open choice.
+    **[Gate-3 reliance]** that a **trigger-body local-variable (instance) receiver** also resolves — e.g.
+    `AccountHandler h = new AccountHandler(); h.name` (the RESEARCH-003 probe's own instance case): resolving
+    `h.name` needs the trigger-scope local `h` to receive its declared-type binding via
+    `interpretApexTypeBinding`, but WI-2 validated instance-receiver typing only inside a *class* declaration
+    unit and excluded triggers from receiver-binding — so trigger-scope instance-receiver typing is **not free
+    fallout** of WI-2. Committed fallback if its §8 fixture is red: extend the type-binding interpretation to
+    the trigger scope (under `languages/apex/`), the same class of Apex-local addition as the static-receiver
+    synthesis.
+  - *Invariant:* a trigger body reference to an external symbol (sObject/stdlib, e.g. `Trigger.new`,
+    `Database.insert`) is left unresolved, no Apex-specific defect, no throw (REQ-013 is WI-4, but the slice
+    must not throw — NFR-001).
+
+## 3. Interface definition (what WI-3 adds)
+
+- **`languages/apex/namespace-siblings.ts`** (new) — `populateApexNamespaceSiblings(parsedFiles, indexes,
+  ctx)`: iterate each **`parsedFile.localDefs`** (these are `SymbolDefinition`s — the same shape the C#
+  precedent iterates — carrying `label`, `qualifiedName` and `filePath`, the discriminant fields below), and
+  select the **top-level non-trigger user-defined type defs** (class / interface / enum) to inject.
+  **Predicate 1 — def kind:** `def.label ∈ {Class, Interface, Enum}` (inject **only type defs**, never a
+  method/field/property/enum-constant member — a member must never enter `workspaceFqnBindings` as a global
+  type binding, else `new foo()` could mis-bind to a method; **[structural]**). **Predicate 2 — top-level by
+  qualified-name shape:** WI-1's Apex
+  class-config enables `qualifiedNodeId`, keying a **nested** type's `qualifiedName` as `Outer.Inner`
+  (`languages/apex/class-config.ts:4-5,26`, REQ-002), while a **top-level** type's `qualifiedName` is a bare
+  simple name (`Account`) — `SymbolTable` sets `qualifiedName = metadata.qualifiedName ?? name` for class-like
+  defs (`model/symbol-table.ts:263-264`). So a def is top-level **iff its `qualifiedName` contains no `.`
+  separator**, and it injects under that bare name. **[structural]** — a read-verifiable field (`qualifiedName`)
+  grounded in WI-1's documented qualified-id behaviour; totally decidable, no host-runtime/pass-ordering
+  dependency, and it **reliably excludes nested types** (their `qualifiedName` has a `.`, so they are never
+  injected by a bare simple name — a bare `Inner` reference cannot mis-bind, §4). This injects **every genuine
+  top-level type, including a *misfiled* one** (`class Helper` in `Utils.cls` — reachable in uncompiled
+  source; still bare `qualifiedName`), so no validly-named top-level target REQ-010 SHALL-resolves is silently
+  dropped. (Nested cross-file access is `Outer.Inner`, resolved via `Outer`'s global binding + member lookup,
+  §4 — not by injecting `Inner` globally.) It is NOT the `File→type DEFINES` edge: SDD-001 v1.2 (REQ-002) gives a
+  nested type the same `File→DEFINES` edge as a top-level one, so `DEFINES` is non-discriminating.
+  **Collision handling — conservative inject-none (REQ-015, parity, no invention):** when **>1
+  distinct-`nodeId` def folds to one key** the injection emits **nothing** for that key (the key is absent →
+  the reference falls through to REQ-015-unresolved, **no mis-bind**, no sentinel node). This is pure REQ-015
+  conservatism — no winner is picked, no Apex-specific liveness heuristic, no benchmark-anchorless invention
+  (Constitution §1). In **valid** Apex this never fires (one type per file, name = filename, no duplicate type
+  names). **Documented limitation (§A.13, Architect-accepted 2026-06-30):** a re-parented error-recovery
+  fragment (SDD-001 NFR-001 re-parents a malformed nested type to file scope, owner erased) is
+  indistinguishable from a top-level type and is injected; if its folded name collides with a legitimate
+  top-level type's, the key injects nothing → that **valid** type is left cross-file-**unresolved** (never
+  mis-bound). Triple-narrow (a malformed file + a re-parented fragment + an exact folded-name collision with a
+  valid type), invalid-source-only, a **liveness** limitation only — safety (no mis-bind) is preserved
+  unconditionally.
+  **Exclude triggers by source-file extension `.trigger`** — a trigger's `qualifiedName` is also bare (no
+  `.`), so the predicate above does not exclude it; the discriminant is the def's **`filePath` ending in
+  `.trigger`** (read-verifiable on `SymbolDefinition.filePath`, `model/symbol-table.ts:268` — NOT the
+  graph-only `apexConstruct`, which lives on the `ParsedNode`, not the resolution-side def). Triggers are
+  declared only in `.trigger` files; classes/interfaces/enums only in `.cls` — so inject only `.cls`-sourced
+  defs. (A trigger is a *referencing* container, never a *referenced* type; injecting one would let
+  `new Foo()` / `Foo.x` mis-bind to a trigger — REQ-004 non-referenceability / REQ-015.)
+  **Injection policy = inject-all (REQ-010 determinate, a deliberate *permissive* choice — NOT the
+  Constitution §1.2 "conservatism" term):** WI-3 injects every top-level non-trigger type **irrespective of
+  access modifier** (`public`/`global`/`private`) — the **denotational code-graph default** (GitNexus graphs
+  and resolves symbols; it does not enforce Apex compile-time visibility). This is deliberately permissive
+  (it resolves references Apex's compiler would reject), not the §1.2 "conservatism" term. **[Gate-3
+  reliance]** that a non-exported top-level type so injected actually resolves cross-file — i.e. that the host
+  global lookup does **not** itself visibility-filter (WI-1 built an `exportChecker` precisely because the
+  host tracks `isExported`, so whether the lookup honours it is an unprobed host behaviour, not pinned).
+  **Two distinct dispositions (do not conflate):** (a) *whether it resolves* — a non-exported type is a
+  user-defined symbol REQ-010 SHALL resolve, so a host visibility-filter blocking it is a **WI-3 REQ-010
+  gap** with a reserved remediation (§7(7)), symmetric with the other REQ-010/011 reliances — **not** a WI-4
+  matter; (b) *whether resolving it is parity-correct* — a **WI-4 REQ-012** question (WI-4 may add a
+  visibility filter to match the benchmark), a disclosed forward-dependency in the manner SDD-001 disclosed
+  for the `Property` label. The §8 acceptance is the hard "resolves cross-file" of (a). **Injection algorithm (one procedure, no get-or-create-then-push):** first
+  **group** the selected type defs by their `normalizeIdentifier`-folded simple name; then for each key
+  inject a binding into `workspaceFqnBindings` **iff the group has exactly one distinct `nodeId`** — a key
+  with ≥2 distinct-`nodeId` defs injects **nothing** (it is never created). So a folded key carries **at most
+  one** Apex binding by construction; the no-mis-bind safety property is **guaranteed Apex-locally at
+  injection** (no 2-binding Apex bucket can ever form). **This forecloses the §2 / §7(4) "host treats a
+  >1-bucket as ambiguous" reliance for Apex-internal duplicates** — a >1 Apex bucket can never reach the host
+  lookup (the guard injects ≤1 per key), so that reliance is moot for Apex; the only reachable multi-binding
+  case is the cross-language one (next).
+  **Cross-language registry collision is an Architect-accepted [Gate-3 reliance] (§7(8)) that bears on
+  NFR-002** (held for Gate-3 validation, 2026-06-30): `workspaceFqnBindings` is a *shared* flat
+  `Map<string, BindingRef[]>` across all languages (`model/scope-resolution-indexes.ts:90`, evidenced in the
+  RESEARCH-003 addendum), whose design relies on per-language keys "never colliding". Apex injects
+  **lower-cased simple names**; case-sensitive peers insert exact-case keys and most peers leave the workspace
+  channel empty, so the case-fold gives **de-facto partitioning** in the common case. But a peer with a
+  genuinely lower-case identifier could share an Apex folded key — so whether the host lookup is
+  language/file-scoped (so an Apex reference binds only Apex defs, and a peer reference never retrieves an Apex
+  binding) is **unprobed and Gate-3-validated**; accordingly **NFR-002 safety is not pinned outright** for the
+  shared-registry surface — it is asserted for the registration mechanics and Gate-3-validated for the
+  cross-language key interaction. Mirrors `languages/csharp/namespace-siblings.ts` (the global-namespace
+  path). **WI-3 is pure registration — no shared-code edit, no new seam** (the discriminant, the trigger
+  exclusion, and the collision guard are Apex-local). The hook is pure given `parsedFiles`; the write target
+  is the host's post-finalize append-only registry handed in by the hook contract.
+- **`languages/apex/scope-resolver.ts`** — register `populateNamespaceSiblings: populateApexNamespaceSiblings`
+  on `apexScopeResolver`. (`resolveImportTarget` stays `() => null`; `propagatesReturnTypesAcrossImports`
+  stays `false` — no imports.)
+- **Trigger-body / static-receiver resolution (REQ-011 + cross-file static call)** — capture is
+  probe-confirmed (§2), so the only addition the Gate-3 fixtures might force is the **single committed
+  mechanism**: a **static-receiver type-binding synthesis** that binds a static *type-name* receiver
+  (`Handler.handle()`, `B.f()`) to the class node it resolves to in `workspaceFqnBindings`, mirroring
+  `apexReceiverBinding`'s `this`/`super` synthesis but for a type-name receiver — under `languages/apex/`
+  (Constitution §2.1). Built only if a static-receiver fixture is red (the host may already resolve it via
+  REQ-010); not pre-built speculatively. One mechanism, one hook site — not an open choice.
+- **Nested-type cross-file resolution (REQ-010 SHALL — `Outer.Inner`)** — `Outer` resolves globally (the
+  injection); `.Inner` resolves as a nested-type member lookup on `Outer`'s binding. This is an **unambiguous
+  reference REQ-010 SHALL resolve** — so it is **committed to resolve**, NOT de-scoped: if the host's member
+  lookup does not natively resolve a nested *type* as a member of its outer's global binding (a Gate-3
+  reliance), the **committed fallback** is a nested-type member-resolution addition under `languages/apex/`
+  (the same "commit a mechanism to satisfy the SHALL" pattern as the static-receiver fallback) — never a
+  silent conservative-unresolved (which would be an unsanctioned REQ-010 reduction, Constitution §7).
+- **No committed shared-code edit, no new seam, no new dependency, no new edge label.** WI-3 registers the
+  existing `populateNamespaceSiblings` hook and reuses WI-2's captures/labels and the `normalizeIdentifier`
+  seam; the top-level discriminant, the trigger exclusion, and the inject-none collision guard are Apex-local
+  in `namespace-siblings.ts`. The **only** potential shared edit is the *reserved, Gate-3-conditional*
+  source-attribution seam for REQ-011's "from the trigger" (§1/§2) — a contingency, not a committed edit.
+
+## 4. Edge-case catalog (per-input checklist → each traces to a Gate-3 test)
+
+- **Two-class cross-file call** — file A's method calls a method on a top-level type in file B → `CALLS`
+  across files (REQ-005 two-file form, completing the WI-2 same-unit case).
+- **Cross-file field/property chain** — `a.b.c` where the declaring types span files → per-segment
+  `ACCESSES` across files (REQ-009 cross-file form).
+- **Top-level inheritance** — `class Derived extends Base` / `class Impl implements Iface` with the
+  parent/interface a top-level type in another file → `EXTENDS`/`IMPLEMENTS` (REQ-007 top-level form).
+- **Top-level-parent `super`** — `super()` / `super.method()` where the superclass is a top-level type in
+  another file → resolves to the parent member (REQ-005 delegation top-level form).
+- **Cross-file overloaded call (the dominant real-world case)** — file A calls an overloaded method on
+  top-level type B (in file B) declaring `f(Integer)`/`f(String)`, `arg` statically `Integer` → resolves to
+  `f(Integer)`; an undisambiguable case → unresolved (REQ-015). REQ-008 narrowing (WI-2) composes with REQ-010
+  global receiver resolution. **Two receiver forms:** an **instance** receiver (`B b = …; b.f(arg)` /
+  `new B().f(arg)`) uses WI-2's validated receiver-typing path; a **static type-name** receiver (`B.f(arg)`)
+  is the **shared static-type-name-receiver resolution reliance** (§2 REQ-011) with its one committed
+  fallback — the same shape as the trigger static call, not assumed free. **[Gate-3 reliance]** that global
+  receiver resolution + overload narrowing compose end-to-end across files (both receiver forms).
+- **Cross-file inherited-member resolution** — child type in file C `extends` a parent type in file B, the
+  referenced member is declared on the parent → resolves to the parent member (REQ-005/007 cross-file
+  inheritance ∘ member lookup). **[Gate-3 reliance]** that the host's MRO/member lookup walks the cross-file
+  parent once the parent is globally visible (expected to be fallout of REQ-010 + the host `buildMro`/member
+  lookup WI-2 configures — the MRO includes C's now-globally-visible superclass B). **Committed fallback if
+  its §8 fixture is red:** a cross-file superclass member-walk addition under `languages/apex/` (the same
+  class of Apex-local addition as the nested-type and static-receiver fallbacks) — **never** a silent
+  conservative-unresolved, which would reduce a REQ-005/007 SHALL without an SRS amendment (Constitution §7).
+- **Cross-file mutual / cyclic type chain** — `class A { B b; }` in file A and `class B { A a; }` in file B
+  (the two-file mutual form SDD-002 §4 deferred to WI-3), access `a.b.a...` → resolves the reachable
+  segments and **terminates** (the host field-access fixpoint's bounded convergence, as in the WI-2 in-unit
+  cyclic case), no hang/throw. **[Gate-3 reliance]** that the fixpoint terminates on a cross-file cyclic
+  receiver-type graph.
+- **Case-varied cross-file reference** — `ACCOUNT`/`account` referencing a type defined in another file
+  resolves via the folded global key (the §2.2 seam composing with REQ-010).
+- **Trigger static handler call** — `trigger T on Account (...) { Handler.handle(...); }` → `CALLS` to the
+  user-defined `handle` (REQ-011 canonical form).
+- **Trigger constructor / field reference** — `new Handler()` or a user-defined type/field reference in a
+  trigger body → resolved edge (REQ-011).
+- **Cross-file reference to a non-existent or external type** — no unique user-defined global target →
+  unresolved (REQ-015), no throw; an external sObject/stdlib reference is benign-unresolved (REQ-013/WI-4,
+  but no throw here).
+- **Duplicate global simple name** — two top-level types folding to one global key → the §3 guard injects
+  **nothing** for that key → unresolved Apex-locally, never mis-bound (REQ-015), with **no reliance on the
+  host's >1-bucket handling** (foreclosed, §3/§7(4)). Reachable because GitNexus graphs **uncompiled** source
+  (SDD-001 §4) — Apex *compilation* would forbid a duplicate type name, but the analyser must not.
+- **Local shadows global** — a same-unit declaration of a name that also names a top-level type elsewhere →
+  the local binding wins (`lookupBindingsAt` ranks local above `workspaceFqnBindings`); the global is not
+  mis-selected. **[Gate-3 reliance]** on the host precedence.
+- **User-defined top-level type shadows an external/sObject of the same name** — inject-all registers a
+  user-defined `class Account` under the folded key `account`; a reference `new Account()` / `Account a;` then
+  resolves to the **user-defined** node, not the external sObject `Account`. This is the **intended
+  precedence** (REQ-005 resolves in-repository user-defined symbols; the external/sObject interpretation,
+  REQ-013/WI-4, is the fallback **only** for a name with *no* user-defined top-level type). No throw; the
+  external case stays unresolved precisely when there is no user-defined type of that name.
+- **Nested-type cross-file qualified access** — `Outer.Inner` referenced from another file **resolves**
+  (REQ-010 SHALL — an unambiguous user-defined cross-file reference): `Outer` is globally visible (REQ-010)
+  and `.Inner` resolves as a nested-type member lookup on it. **[Gate-3 reliance]** that the host resolves a
+  nested *type* as a member of its outer's global binding (RESEARCH-003 validated simple-name visibility, not
+  this); but resolution is **committed, not de-scoped** — if the host lacks it, the **committed fallback is a
+  nested-type member-resolution addition** under `languages/apex/` (the "commit a mechanism to satisfy the
+  SHALL" pattern, §3), NOT a silent conservative-unresolved (which would reduce REQ-010 without an SRS
+  amendment — Constitution §7). §8 asserts resolution.
+- **Nested type not injected by bare simple name (no mis-bind)** — a nested type's `qualifiedName` is
+  `Outer.Inner` (has a `.`), so the §3 top-level discriminant **excludes** it from the global injection; a
+  bare `Inner` reference from another file therefore finds no global `Inner` binding and stays conservatively
+  unresolved (REQ-015), never mis-binding to a nested type. (Nested types are reachable only as `Outer.Inner`,
+  the bullet above.)
+- **Class misfiled in a `.trigger` file (documented liveness limitation)** — the trigger exclusion keys on
+  the `.trigger` extension (triggers and classes share `label=Class`, and `apexConstruct` is graph-only, §3),
+  so a class/interface/enum *mis-declared* in a `.trigger` file is excluded from injection and left
+  cross-file-unresolved. This is **invalid Apex** (a `.trigger` file holds exactly one trigger; types go in
+  `.cls`), so it is an invalid-source-only **liveness** limitation — symmetric in spirit to the `.cls`-misfile
+  case (which *is* injected) but conservatively dropped here because the extension is the only available
+  trigger discriminant. Safety preserved (no mis-bind); no throw.
+- **Reference into a skipped/malformed sibling file** — NFR-001 cross-file slice: cross-file resolution
+  completes, the reference is left unresolved, no throw.
+- **Duplicate / colliding folded key (incl. malformed re-parented fragment) → inject none (REQ-015)** — when
+  >1 def folds to one key (two duplicate-named valid types, or a re-parented fragment colliding with a valid
+  type), the §3 guard injects **nothing** → the reference is left unresolved Apex-locally, **never mis-bound**,
+  no reliance on the host's >1-bucket handling. **Documented §A.13 limitation (Architect-accepted):** in the
+  fragment-collision case the valid same-folded-name type is left cross-file-unresolved (a malformed file
+  causes a triple-narrow, invalid-source-only **liveness** loss for a colliding valid peer — safety
+  preserved). No throw, no mis-bind.
+- **Trigger with a partial / error-recovery body** — conservative skip of the malformed reference, no throw
+  (NFR-001).
+- **Single-file repo / no cross-file references** — the injection is a no-op for resolution outcomes; no
+  regression of WI-2's same-unit behaviour.
+
+## 5. Non-functional requirements (baked in)
+
+- **NFR-001 (resolution-stage slice, cross-file/trigger).** Cross-file and trigger-body resolution complete
+  without crashing on partial/error-recovery trees and on references into skipped files; an unresolvable
+  reference is left unresolved, never a throw.
+- **NFR-002.** No peer regression — `populateNamespaceSiblings` is registered **only** on the Apex resolver;
+  every other language is untouched (it registers or omits its own hook). The folded global key uses the §2.2
+  `normalizeIdentifier` seam, identity for case-sensitive peers. WI-3 adds no new shared seam (pure
+  registration), so there is no new peer-facing behaviour from the wiring. **One NFR-002 surface is NOT pinned
+  safe outright** (an Architect-accepted [Gate-3 reliance], §7(8)): because Apex writes into the *shared*
+  `workspaceFqnBindings`, whether a peer reference could retrieve an Apex lower-cased key (or vice-versa)
+  depends on the host lookup's language-scoping; the case-fold partitions in the common case, but
+  cross-language non-interference is **held for Gate-3 validation, not asserted**. Measured by peer resolver
+  suites green.
+- **Performance:** one O(top-level-type-defs) injection pass at finalize; no new per-reference cost (the
+  global lookup already runs). The injection is a bounded map population.
+
+## 6. Security-critical tag & clauses
+
+**security-critical = false.** WI-3 consumes WI-1's safe-parsed model and WI-2's resolution model; it opens
+no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The conservative-skip default
+(REQ-015) holds across files: an unresolved cross-file reference degrades to no edge, never an unsafe binding.
+
+## 7. Verification architecture (Step 2b — Builder proposal, Architect approval pending)
+
+- **Provable properties (§A.3): none** — but this is an **explicit per-property disposition, not a blanket
+  denial** (matching SDD-001 §7). The one property that *reads* as a candidate is the **cross-file
+  no-mis-bind** safety property (REQ-015: a duplicate/ambiguous global key never mis-binds). Per the §A.3
+  decision table it is **test-only**: it is **graph-resolution correctness** — finitely example-verifiable by
+  fixtures (the collision injects ≤1 binding ⇒ no edge to a wrong target) — **not** a data-integrity or
+  trust-boundary invariant over unbounded state (WI-3 opens no trust boundary, §6; it operates on WI-1's
+  safe-parsed output). It guards no security/financial/data-integrity/safety/concurrency invariant, so no
+  Prove obligation arises. Gate 5 for WI-3 reduces to the resolution-slice no-crash fuzz + mutation over the
+  new `languages/apex/` cross-file code (same calibration as WI-1/WI-2, reached by per-property reasoning).
+- **Purity boundary.** Pure core = `populateApexNamespaceSiblings`' def-selection + key-folding (a pure
+  function of `parsedFiles` — no I/O, no module state, deterministic). The **write into
+  `workspaceFqnBindings` is the host's sanctioned post-finalize append channel** handed to the hook by the
+  pipeline contract (the host owns the index and the mutation point; the Apex hook supplies the pure
+  def→key computation) — identical to the csharp/java precedent. Dependency direction is shell→core (the
+  host pipeline invokes the Apex hook). Any trigger-scope addition (REQ-011) is likewise a pure capture/
+  binding computation under `languages/apex/`.
+- **Tooling.** Host test framework (vitest) — integration resolution tests over **multi-file fixtures**
+  (≥2 top-level types in separate files; a trigger file), plus main-thread unit anchors for the new pure
+  function(s) so the cross-file logic is coverage-attributable (dogfood #16 — the hook runs in the
+  resolution phase, but the def-selection helper is unit-testable on the main thread).
+- **Gate-3 reliances (finding #13 — the explicit list to FLAG, not pin):** (1) end-to-end cross-file
+  resolution of each WI-2 mechanic once `workspaceFqnBindings` is populated; (2) the local-over-global
+  precedence shadowing; (3) **static type-name-receiver resolution** — the shape SHARED by a trigger call
+  `Handler.handle()` (REQ-011) and a cross-file static call `B.f()` (the WI-3 design risk; capture is
+  probe-confirmed [structural], the edge-from-trigger is a [structural obligation], the host's *default*
+  edge-attribution (an **Architect-accepted** reliance, held for Gate-3) and the *resolution* are the
+  reliances — with one committed fallback each), **and (3b) trigger-body instance-receiver typing** (a
+  trigger-scope local `h = new …; h.x` getting its type binding — not free fallout of WI-2, §2); (4) **FORECLOSED
+  for Apex-internal duplicates** — the §3 collision guard injects ≤1 binding per folded key, so a >1 *Apex*
+  bucket never reaches the host lookup; the host's ">1-bucket → ambiguous, not first-match" behaviour is moot
+  for Apex (the safety is Apex-local, not host-dependent). The only reachable multi-binding case is (8); (5)
+  qualified nested-type access (`Outer.Inner`) resolving via the outer's global binding + nested-type member
+  lookup; (6) the host edge-label selection (EXTENDS vs IMPLEMENTS by target kind) for a cross-file
+  interface-extends-interface source (the REQ-012-parity behaviour); (7) whether a non-exported top-level
+  type so injected actually **resolves cross-file** — that the host global lookup does not visibility-filter.
+  A non-exported type is a *user-defined* symbol, so a host filter blocking it is a **WI-3 REQ-010 resolution
+  gap** (a Phase-5 gap), **not** a WI-4 parity refinement — with a **reserved remediation** symmetric with the
+  other REQ-010/011 reliances: an Apex-local adjustment or, failing that, a reserved §2.2 lookup-visibility
+  seam (subject to §2.2 review at selection) to make WI-3's injected user-defined bindings resolve. (Distinct
+  from the *parity* question — whether a private type *should* resolve — which is WI-4's REQ-012.); (8)
+  **cross-language registry partitioning** (an **Architect-accepted**
+  reliance, held for Gate-3) — that a peer-language entry in the shared `workspaceFqnBindings` cannot occupy
+  an Apex lower-cased-simple-name key (and that the lookup binds Apex references only to Apex defs) — the
+  host's "keys never collide" assumption, bearing on NFR-002; the Apex collision guard covers only
+  Apex-internal duplicates; (9) **cross-file cyclic-chain fixpoint termination** (§4) — that the host
+  field-access fixpoint terminates (no hang/throw) on a *cross-file* mutual/cyclic receiver-type graph
+  (`class A{B b;}`/`class B{A a;}`), an NFR-001 robustness reliance; the remediation if it does not is the
+  host fixpoint's existing bounded-iteration cap (the same mechanism that bounds the WI-2 in-unit cyclic
+  case — no unbounded Apex walk is added), and a cross-file cyclic fixture pins no-hang; (10) **cross-file
+  inherited-member resolution** (§4, a REQ-005/007 SHALL) — that the host MRO / member-lookup walk reaches a
+  member declared on a parent type in another file once the parent is globally visible; expected to be fallout
+  of (1) + the host `buildMro`, with a **committed Apex-local fallback** (a cross-file superclass member-walk
+  addition) if its fixture is red — not a silent de-scope (symmetric with the nested-type/static-receiver
+  reliances). Gate 3 (tests vs the real host) validates
+  all of these; the Gate-2 adversary validates the wiring (Seam-B registration, the injected def set, the
+  collision guard, the folded key) and the split, not the behaviours.
+
+## 8. Tracker integration & Gate-3 acceptance
+
+Each REQ clause and edge case maps to a sub-item. **Gate-3 acceptance assertions** (multi-file fixtures,
+automated), completing the WI-2-deferred §9 cross-file scenarios:
+- **REQ-010 two-class call** — file A calls a method on a top-level type in file B → `CALLS` across files,
+  no unresolved record (REQ-006 negative);
+- **REQ-009 cross-file chain** — a property chain whose declaring types span files → per-segment `ACCESSES`;
+- **REQ-007 top-level inheritance** — top-level `extends` (→ `EXTENDS`) and `implements` (→ `IMPLEMENTS`),
+  and interface-extends-interface (→ `IMPLEMENTS` by the host's edge-label selection on target kind — the
+  REQ-012-parity behaviour SDD-002 established, a Gate-3 reliance, not bare REQ-007), the parent/interface in
+  another file;
+- **REQ-005 top-level `super`** — `super()` / `super.method()` to a top-level parent in another file;
+- **cross-file overloaded call** (the dominant real-world case) — B (file B) has `f(Integer)`/`f(String)`,
+  `arg` statically `Integer` → resolves `f(Integer)`, must not bind `f(String)`; undisambiguable → unresolved
+  (REQ-015 ∘ REQ-010). Asserted for **both** receiver forms: an **instance** receiver (`new B().f(arg)` /
+  typed variable, the validated path) and a **static type-name** receiver (`B.f(arg)`, carrying the
+  static-receiver reliance + fallback); and the disambiguating argument is exercised across WI-2's supported
+  kinds — a **field-typed** argument (`this.acct` of a user-defined field type) as well as
+  local/literal/constructor — reached cross-file (the method-parameter kind stays WI-4);
+- **cross-file inherited member** — child (file C) `extends` parent (file B), member declared on the parent
+  → the call resolves to the parent member across files;
+- **cross-file mutual/cyclic chain** — `class A{B b;}` (file A) / `class B{A a;}` (file B), `a.b.a…` resolves
+  the reachable segments and terminates (bounded fixpoint), no hang/throw;
+- **case-varied cross-file** — `ACCOUNT`/`account` resolving across files via the folded global key;
+- **cross-file bare type-usage binding** — a bare declared-type usage of a cross-file type (`B b;`, B in
+  another file) binds `b`'s static type (**no standalone edge**, REQ-005 v1.3), observably enabling
+  `b.member` to resolve to B's member across files;
+- **nested-type qualified access** — `Outer.Inner` referenced from another file **resolves** (REQ-010 SHALL)
+  via `Outer`'s global binding + nested-type member lookup; resolution is required (committed mechanism, not
+  de-scoped), never a mis-bind;
+- **collision / non-poisoning (REQ-015)** — two defs folding to one key (duplicate-named types, or a
+  re-parented fragment colliding with a valid type) → **no edge** for that reference, recorded unresolved
+  (the §3 inject-none guard); never a mis-bind. The fragment-collision liveness loss for a colliding valid
+  type is the documented §A.13 limitation (a black-box-observable absence of edge, not a mis-bind);
+- **misfiled valid top-level type** — `class Helper` saved in `Utils.cls` (name ≠ filename) is still injected
+  (its `qualifiedName` is bare) and resolves cross-file when its key is unique (no silent REQ-010
+  reduction, §3);
+- **non-exported top-level type** — black-box: a cross-file reference to a `private`/no-modifier top-level
+  type **resolves** (WI-3 inject-all + the §7(7) [Gate-3 reliance] that the host lookup does not
+  visibility-filter). Whether resolving it is *parity-correct* is a **WI-4 REQ-012** question (WI-4 owns the
+  benchmark comparison and may add a visibility filter) — not asserted here;
+- **static field / enum-constant via a type-name receiver** — a cross-file (and trigger-body) `MyClass.FIELD`
+  / `MyEnum.VALUE` → `ACCESSES` to the user-defined field/constant (the static-receiver field arm, §2 — same
+  reliance + fallback as the static call);
+- **REQ-011 trigger** — a trigger body's static call on a user-defined handler → `CALLS`, and `new Handler()`
+  → `CALLS`; a trigger body field/property access → `ACCESSES` — **each edge asserted as originating from the
+  trigger container node** (REQ-011 v1.4 "from the trigger", for CALLS *and* ACCESSES); a bare declared-**type**
+  usage in a trigger body follows REQ-005 v1.3 (binds the variable's type — **no standalone edge**, not a
+  "resolved edge"); no unresolved record for any reference that resolves;
+- **trigger-body instance receiver** — in a trigger body `AccountHandler h = new AccountHandler();` then both
+  `h.name` → `ACCESSES` to `name` **and** `h.handle()` → `CALLS` to `handle` (the canonical instance method
+  dispatch), each from the trigger — the trigger-scope local-variable type-binding case (§2 reliance), a
+  distinct fixture from the static-receiver case;
+- **conservatism** — a duplicate/ambiguous global simple name and a local-shadows-global case → the local or
+  the conservative-unresolved outcome, never a mis-bind (REQ-015);
+- **NFR-001** — cross-file/trigger resolution no-crash on a partial tree + a reference into a skipped sibling
+  file; **NFR-002** — peer resolver suites green.
+
+**REQ-006's negative assertion (no false "unresolved" record) is checked on *every* cross-file reference
+SDD-003 claims to resolve** — not only the two-class call and the trigger ref: the cross-file chain,
+top-level inheritance, top-level `super`, cross-file overload, cross-file inherited member, case-varied, and
+nested-qualified resolved references each also assert zero unresolved record for the reference they resolve
+(mirroring SDD-002 §8).
+
+The cross-file forms of REQ-005/007/009 that WI-2 verified only same-unit are **claimed here** (this is the
+WI-3 completion); the parity-fixture (REQ-012) and external-handling (REQ-013) forms remain **WI-4**.
+
+*WI-4 SDD section follows after WI-3 clears its gates, in dependency order.*
