@@ -454,3 +454,17 @@ channel interior): the heritage pre-emit pass runs pre-hook and suppresses retry
 post-hook passes consult `lookupBindingsAt` — where the injected workspace channel lives — during their
 resolution (Addendum 5; the folded-key REACHABILITY per callsite remains the §7(11)/(13) Gate-3
 reliances).
+
+## Addendum 14 (2026-07-02) — ctor-path folding: read-fact + behavioural counter-evidence
+
+**Read-pinned:** the shared free-call fallback hands the RAW reference name to the class-binding walk
+(`free-call-fallback.ts:137-142`; no `normalizeIdentifier` in `free-call-fallback.ts`, `walkers.ts`, or
+`run.ts` on the reference side) — a raw `ENGINE`/`Twist` can never meet the folded workspace key on THAT
+path, and the raw exact-case index serves the pre-hook binds Addendum 4 observed.
+
+**Behavioural counter-evidence:** WI-2's in-unit case-varied constructor resolution (`new account()` →
+CALLS `Account`) is green since WI-2 — an Apex-configured FOLDING ctor path exists (the WI-2
+call-config / registration-table folded keyspaces), distinct from the raw free-call fallback. SDD-003
+§7(11) is therefore sharpened, not falsified: the Gate-3 question is whether the WI-2 folding path
+reaches the workspace channel cross-file and claims ctor references before the raw channel; the
+committed fallback's named attachment is that same WI-2 Apex-local machinery.

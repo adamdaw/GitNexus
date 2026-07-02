@@ -1470,11 +1470,11 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   exact-case key stays unique, so pre-impl the exact-case channel binds `new Twist()` to the TRIGGER
   (probed, Addendum 8) — a REQ-004 breach / mis-bind on valid source. **Committed to fix (Architect,
   2026-07-02):** post-injection the folded workspace key `twist` holds the class (trigger excluded), and
-  the reference MUST bind the class — riding the §7(11) callsite-folding reliance — the class-wins outcome
-  holds iff the ctor callsite's folded lookup hits the workspace binding INSIDE the walk, which precedes
-  the QualifiedNameIndex fallback (a fold-retry-AFTER-miss shape would not fire, since the exact-case
-  channel HITS here); **if the fixture is red at Gate 3 the sole remediation is Phase-5 escalation**
-  (per §7(11): no workable Apex-local fallback exists at a ctor site).
+  the reference MUST bind the class — riding the sharpened §7(11) reliance — the class-wins outcome
+  holds iff the WI-2 folding ctor path (which already folds in-unit ctor references) reaches the
+  injected workspace key AND claims the reference before the raw exact-case channel; **if the fixture is
+  red at Gate 3 the remediation is the §7(11) committed fallback (extend the WI-2 machinery) where
+  ordering permits, else Phase-5 escalation** — nothing left to improvise.
   §8 fixture asserts class-wins for ctor and member forms. **The heritage arm of the twin**
   (`class Sub extends Twist`) is DIFFERENT: it resolves in the PRE-hook heritage pass (Addendum 9),
   where the injection can never intercept — the trigger binds (the Addendum-5 lone-trigger analog) —
@@ -1635,24 +1635,23 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   member declared on a parent type in another file once the parent is globally visible; expected to be fallout
   of (1) + the host `buildMro`, with a **committed Apex-local fallback** (a cross-file superclass member-walk
   addition) if its fixture is red — not a silent de-scope (symmetric with the nested-type/static-receiver
-  reliances). (11) **Exact-case-channel callsite folding** — whether the ctor/free-call and heritage
-  callsites fold their lookup name before `lookupBindingsAt` (the WI-2 seam folded the
-  receiver-bound-calls and declared-type keyspaces; these two are unprobed), i.e. whether case-varied
-  `new ENGINE()` / `extends BASE` reach WI-3's folded workspace keys — committed fallback class: an
-  Apex-local pass addition (the static-receiver-synthesis class) or, if impossible Apex-locally, Phase-5
-  escalation. **Scope (Addendum 9): the ctor/free-call arm only** — the heritage arm is moot (the pre-hook pass
+  reliances). (11) **Ctor-arm folded-path reach (sharpened 2026-07-02, round 21)** — the shared free-call fallback
+  passes the RAW reference name (`free-call-fallback.ts:137-142`; no `normalizeIdentifier` on that path —
+  read-pinned), so it can never meet the folded workspace key. BUT an Apex-configured FOLDING ctor path
+  exists — behaviourally proven by WI-2's in-unit case-varied ctor resolution (`new account()` → CALLS,
+  green since WI-2, riding the WI-2 call-config/registration-table folded keyspaces). The reliance is
+  whether THAT path reaches the workspace channel cross-file (serving `new ENGINE()`, the valid twin's
+  `new Foo()`, and the case-variant twin's `new Twist()` before the raw exact-case channel). **Committed
+  fallback (named mechanism + attachment):** extend the WI-2 Apex call-config/receiver-bound machinery —
+  the existing Apex-local surface that already folds ctor references in-unit — to consult the workspace
+  key; no new seam. **Scope (Addendum 9): the ctor/free-call arm only** — the heritage arm is moot (the pre-hook pass
   cannot reach the workspace keys; SRS v1.8). **The ctor arm is SAFETY-BEARING for the case-variant
-  trigger/class twin's ctor form (§4):** there the exact-case channel HITS the trigger def, so only a
-  folded lookup INSIDE the walk (before the QualifiedNameIndex fallback) can win — a
-  fold-retry-after-miss shape is insufficient. **Remediation splits by SHAPE:** for the MISS-shapes
-  (`new ENGINE()` — exact-case channel finds nothing; valid-twin `new Foo()` — two-def key, guard binds
-  nothing) a committed **Apex-local fold-retry pass addition** IS workable (the exact-case channel has
-  already missed, so a folded retry against the workspace key fires) and is the committed fallback; for
-  the HIT-shape (case-variant twin `new Twist()` — the exact-case channel BINDS the trigger first) no
-  Apex-local fallback exists (a receiver-binding synthesis has no receiver at a ctor site; a
-  fold-retry-after-miss never fires; dual-key raw injection cannot match a reference in the TRIGGER's
-  case): a red hit-shape fixture's sole remediation is **Phase-5 escalation to the Architect** — stated
-  here so a red fixture leaves nothing to improvise. (12) **Single-registry sufficiency** (§3 pin) — Apex declared-type/instance-receiver typing
+  trigger/class twin's ctor form (§4):** there the raw exact-case channel would bind the trigger, so the
+  WI-2 folding ctor path (or the committed fallback extending it) must claim the reference FIRST — a
+  fold-retry that runs only after the raw channel binds is insufficient. If the folding path cannot be
+  made to precede the raw channel for the hit-shape, the remediation is **Phase-5 escalation to the
+  Architect** (a further v1.6-family ratification or a sanctioned mechanism beyond pure registration) —
+  stated here so a red fixture leaves nothing to improvise. (12) **Single-registry sufficiency** (§3 pin) — Apex declared-type/instance-receiver typing
   resolves injected names via `lookupBindingsAt` without the `workspaceTypeBindings` channel; committed
   remediation: add that second write to the Apex hook. (13) **Qualified-outer folding** — whether the
   `OUTER` segment of a qualified nested reference (`OUTER.Inner`) folds before reaching the workspace
@@ -1699,8 +1698,10 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
 - **case-varied cross-file** — `ACCOUNT`/`account` resolving across files via the folded global key,
   asserted for the instance-receiver form AND for the **static type-name-receiver forms** (a case-varied
   cross-file static field read `CONSTS.FLOOR` and a case-varied trigger-body static call
-  `ACCOUNTHANDLER.notify()`) AND for the **constructor** (`new ENGINE()`) form — §7(3)/§7(11) folded-key completions, red until
-  the injection lands (the ctor green additionally validates the §7(11) callsite-folding reliance).
+  `ACCOUNTHANDLER.notify()`) AND for the **constructor** (`new ENGINE()`) form — delivered by the WI-2 folding ctor path reaching
+  the injected workspace key (§7(11)) or, if that path stops at unit scope, by the committed fallback
+  extending it — NOT by the injection alone (the shared free-call fallback passes raw names, read-pinned
+  §7(11)).
   The **heritage** forms (`class CaseKid extends BASE implements IFACE`) are the ratified SRS v1.8(i)
   limitation — pinned as UNRESOLVED (the pre-hook pass, Addendum 9), not asserted as resolving;
 - **user-defined type shadows an external/sObject name** — `Account a = new Account(); a.save()` resolves
