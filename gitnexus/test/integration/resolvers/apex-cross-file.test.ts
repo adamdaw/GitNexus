@@ -233,6 +233,16 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toBeDefined();
   });
 
+  it('resolves a CASE-VARIED cross-file static field via a type-name receiver (CONSTS.FLOOR) (REQ-010/§7(3))', () => {
+    // The §7(3) static-field arm's folded-key completion: the exact-case form is fallback-
+    // channel already-green; the case-varied receiver resolves only via the bindings channel.
+    expect(
+      getRelationships(result, 'ACCESSES').find(
+        (e) => e.target === 'FLOOR' && e.targetFilePath.includes('Consts'),
+      ),
+    ).toBeDefined();
+  });
+
   it('resolves a cross-file enum constant via a type-name receiver (Color.RED) via ACCESSES (REQ-010)', () => {
     expect(
       getRelationships(result, 'ACCESSES').find(
@@ -248,7 +258,7 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     // assertion is equivalent today, but the scoped set is the SDD-003 §8 obligation).
     const resolvingNames = new Set([
       'start', 'stop', 'label', 'leaf', 'value', 'greet', 'inherited', 'Base',
-      'Engine', 'assist', 'reveal', 'MAX_SIZE', 'RED', 'Iface',
+      'Engine', 'assist', 'reveal', 'MAX_SIZE', 'FLOOR', 'RED', 'Iface',
     ]);
     expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
   });
@@ -523,6 +533,14 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
     expect(fromTrigger(access!)).toBe(true);
   });
 
+  it('resolves a CASE-VARIED trigger-body static call (ACCOUNTHANDLER.notify()) from the trigger (REQ-011/§7(3))', () => {
+    // The §7(3) static-call arm's folded-key completion: exact-case handle() is fallback-
+    // channel already-green; the case-varied receiver resolves only via the bindings channel.
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'notify');
+    expect(call).toBeDefined();
+    expect(fromTrigger(call!), 'edge originates from the trigger container node').toBe(true);
+  });
+
   it('narrows a trigger-body overloaded static call (AccountHandler.log(7)) to log(Integer) (REQ-011 ∘ REQ-008)', () => {
     // The §4 trigger-body overload composition: REQ-008 narrowing over a cross-file overload
     // set, with the disambiguating argument typed in TRIGGER scope (§7(3b) — not free fallout
@@ -569,7 +587,7 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
   it('records no unresolved/suppressed outcome for the resolving trigger references (REQ-006)', () => {
     // `pick` is excluded: its undisambiguable call is a REQ-015 reference the host records.
     const resolvingNames = new Set([
-      'handle', 'process', 'name', 'MAX_SIZE', 'HIGH', 'AccountHandler', 'log',
+      'handle', 'process', 'name', 'MAX_SIZE', 'HIGH', 'AccountHandler', 'log', 'notify',
     ]);
     expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
   });

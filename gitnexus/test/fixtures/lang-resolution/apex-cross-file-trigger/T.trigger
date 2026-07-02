@@ -2,6 +2,7 @@
 // trigger container node T. System.debug is the benign-unresolved external (§2 invariant).
 trigger T on Account (before insert) {
     AccountHandler.handle();
+    ACCOUNTHANDLER.notify();
     AccountHandler h = new AccountHandler();
     h.process();
     String n = h.name;

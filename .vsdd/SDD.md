@@ -917,8 +917,9 @@ at WI-3.
 
 # SDD-003 — WI-3: Cross-file binding & trigger resolution
 
-- **Consumes:** SRS-001 (**v1.5**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
-  resolution), with REQ-015 as amended v1.5 (the bounded fallback-channel exception);
+- **Consumes:** SRS-001 (**v1.6**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
+  resolution), with REQ-015 as amended v1.5 (the bounded fallback-channel exception) and the REQ-010/REQ-004
+  v1.6 bounded misfile exceptions;
   the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
   Architect-approved 2026-06-30; addendum 4, 2026-07-02) — the cross-file-binding seam (A-3 confirmed;
   Seam B chosen) + the two-channel probe evidence.
@@ -990,11 +991,10 @@ sign-off 2026-06-30). This is **registration of an existing generic host seam** 
 names no language, is configured by the isolated provider, and is inert for every peer (each peer registers
 or omits its own hook; NFR-002). **WI-3 is pure registration — no *committed* shared-code edit** (the
 injection discriminant, the trigger exclusion, and the inject-none collision guard are all Apex-local, §3).
-**One *reserved, Gate-3-conditional* shared edit may prove necessary:** *if* Gate-3 finds the trigger edge's
-source is attributed in the shared emit pass and cannot be corrected Apex-locally, the reserved options are a
-generic §2.2 source-attribution seam or a §7 amendment for REQ-011's "from the trigger" obligation (§2) —
-each subject to its own §2.2/§7 review at selection; a contingent route, not a committed or pre-sanctioned
-edit. *(The §2.2 receiver-**variable**-name fold WI-2 deferred as its ceiling
+*(Superseded 2026-07-02 — a reserved, Gate-3-conditional shared edit for trigger edge-source attribution
+was held here; RESEARCH-003 Addendum 4 validated the host's native trigger-container source attribution
+TRUE, so the contingency is discharged and NO shared edit is reserved: WI-3 is pure registration,
+unconditionally.)* *(The §2.2 receiver-**variable**-name fold WI-2 deferred as its ceiling
 stays deferred — to **WI-4** parity hardening: a variable is method-local and never crosses a file boundary,
 so cross-file reach, which keys on type and member names — already folded — does not need it. Closing the
 WI-2→WI-3 handoff: re-deferred with rationale, not actioned.)*
@@ -1047,10 +1047,15 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     (local-over-global).
   - *Invariant:* conservative skip is preserved **on the bindings channel** — a cross-file reference whose
     resolution flows through `lookupBindingsAt` and finds no unique global target (none, or two
-    folded-same-name top-level types) emits no edge and is recorded unresolved (REQ-015 — discharged via the host's internal unresolved
-    stats (`ResolveStats.unresolved`, logged, not exposed on the pipeline result); the **black-box
-    observable** for an injection-guard miss is edge ABSENCE, the WI-2 observability model — a
-    `suppressed` outcome exists only where an ambiguity reaches the host resolver); cross-file does
+    folded-same-name top-level types) emits no edge and is recorded unresolved (REQ-015). **The single record-observability rule (WI-2 model,
+    restated once here; §8 aligns to it):** a positive `suppressed` outcome on the pipeline result is
+    assertable **iff the ambiguity reaches the host resolver** (overload-ambiguity among live candidates,
+    case-collision member ambiguity); a **guard-miss** (the §3 inject-none guard never creates the key, so
+    the lookup plain-misses) is recorded only in the host's internal unresolved stats
+    (`ResolveStats.unresolved`, logged, not exposed) and its black-box observable is edge ABSENCE. So the
+    §8 collision fixture asserts edge absence (guard-miss shape) while the §8 trigger-overload
+    undisambiguable fixture asserts edge absence AND the `suppressed` record (ambiguity-reaches-resolver
+    shape) — consistent, not divergent. Cross-file does
     not relax conservatism. **For Apex-internal duplicates this no-mis-bind property is guaranteed
     Apex-locally on that channel** by the §3 collision guard (it injects ≤1 binding per folded key), so it
     does **not** depend on the host's >1-bucket handling — that host reliance is **foreclosed** for Apex
@@ -1081,17 +1086,9 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     puts the source on the trigger (vs an inner body scope) was an **Architect-accepted [Gate-3 reliance]**
     (held 2026-06-30) — **validated TRUE 2026-07-02** (RESEARCH-003 Addendum 4: the host natively
     attributes trigger-body edge sources to the trigger container node; fixture-pinned). **The reserved
-    source-attribution contingency below is therefore discharged/moot.** Unlike the
-    static-receiver fallback (grounded in the existing `apexReceiverBinding` hook), no current hook is known
-    to control edge *source* attribution and RESEARCH-003 did not probe it. **The satisfaction path is
-    bounded (pre-authorised), not open-ended:** the source for a body reference is set from its **enclosing
-    scope** (for a trigger body, that is the trigger — the most likely default), which the §8 fixture
-    confirms; *if* Gate-3 finds the host attributes it elsewhere and it cannot be corrected Apex-locally, the
-    correction **reserves the option of** a generic §2.2 seam (language-agnostic source-attribution hook) **or,
-    failing that,** a §7 Constitution amendment — **each still subject to its own review/approval at selection**
-    (an SDD does not pre-sanction a §2.2 seam or a §7 amendment; §2.2/§7 govern those at Gate-3 selection time).
-    So REQ-011's owned output has a bounded set of remediation routes, not an unbounded outcome — the
-    which-route (and its sanction) is decided at Gate 3.
+    source-attribution contingency below is therefore discharged/moot.** The source for a body
+    reference is set from its enclosing scope (for a trigger body, the trigger container), confirmed by
+    the Addendum-4 probe and pinned by the §8 fixtures — no remediation route is held open.
     **[Gate-3 reliance]** that the host *resolves* the captured trigger-body reference end-to-end —
     specifically the **static type-name-receiver** shape where the receiver is a *type name*, not a typed
     variable. This covers **both** a static **call** (`Handler.handle()` → CALLS) **and a static field /
@@ -1174,7 +1171,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   declared only in `.trigger` files; classes/interfaces/enums only in `.cls` — so inject only `.cls`-sourced
   defs. (A trigger is a *referencing* container, never a *referenced* type; injecting one would let
   `new Foo()` / `Foo.x` mis-bind to a trigger — REQ-004 non-referenceability / REQ-015.)
-  **Mirror limitation — trigger misfiled in a `.cls` file (§A.13, Architect-accepted 2026-07-02):** the
+  **Mirror limitation — trigger misfiled in a `.cls` file (§A.13, Architect-accepted 2026-07-02; ratified
+  at SRS level as the REQ-004 v1.6 bounded exception):** the
   extension is the only trigger discriminant available on the resolution-side def (triggers and classes
   share `type=Class` on the resolution-side def; `apexConstruct` is graph-only, and re-deriving the declaration node kind in the
   hook would require an AST re-walk with a worker-path fallback — beyond pure registration). So a
@@ -1241,8 +1239,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
 - **No committed shared-code edit, no new seam, no new dependency, no new edge label.** WI-3 registers the
   existing `populateNamespaceSiblings` hook and reuses WI-2's captures/labels and the `normalizeIdentifier`
   seam; the top-level discriminant, the trigger exclusion, and the inject-none collision guard are Apex-local
-  in `namespace-siblings.ts`. The **only** potential shared edit is the *reserved, Gate-3-conditional*
-  source-attribution seam for REQ-011's "from the trigger" (§1/§2) — a contingency, not a committed edit.
+  in `namespace-siblings.ts`. There is NO reserved shared edit: the sole prior
+  contingency (trigger edge-source attribution, §1/§2) was validated moot 2026-07-02 (Addendum 4).
 
 ## 4. Edge-case catalog (per-input checklist → each traces to a Gate-3 test)
 
@@ -1300,7 +1298,9 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   user-defined `class Account` under the folded key `account`; a reference `new Account()` / `Account a;` then
   resolves to the **user-defined** node, not the external sObject `Account`. This is the **intended
   precedence** (REQ-005 resolves in-repository user-defined symbols; the external/sObject interpretation,
-  REQ-013/WI-4, is the fallback **only** for a name with *no* user-defined top-level type). No throw; the
+  REQ-013/WI-4, is the fallback **only** for a name with *no* user-defined top-level type). The resolution
+  outcome rides the §7(1) end-to-end [Gate-3 reliance] (the injected binding winning for the typed-receiver
+  member form) — asserted by a §8 fixture, not pinned. No throw; the
   external case stays unresolved precisely when there is no user-defined type of that name.
 - **Nested-type cross-file qualified access** — `Outer.Inner` referenced from another file **resolves**
   (REQ-010 SHALL — an unambiguous user-defined cross-file reference): `Outer` is globally visible (REQ-010)
@@ -1315,7 +1315,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   bare `Inner` reference from another file therefore finds no global `Inner` binding and stays conservatively
   unresolved (REQ-015), never mis-binding to a nested type. (Nested types are reachable only as `Outer.Inner`,
   the bullet above.)
-- **Class misfiled in a `.trigger` file (documented limitation)** — the trigger exclusion keys on
+- **Class misfiled in a `.trigger` file (documented limitation; ratified as the REQ-010 v1.6 bounded
+  exception)** — the trigger exclusion keys on
   the `.trigger` extension (triggers and classes share `type=Class`, and `apexConstruct` is graph-only, §3),
   so a class/interface/enum *mis-declared* in a `.trigger` file is excluded from **injection**: its
   case-folded / typed-receiver-member forms stay cross-file-unresolved on the bindings channel. Its
@@ -1332,7 +1333,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   Probed on the real host (2026-07-02): pre-injection the fallback channel does NOT mis-bind the twin
   pair — it resolves neither (a pre-WI-3 liveness miss on valid source that the injection closes); the
   post-injection class-wins outcome is asserted by a §8 fixture (genuinely red pre-impl).
-- **Trigger misfiled in a `.cls` file (documented §A.13 limitation, the mirror case)** — a
+- **Trigger misfiled in a `.cls` file (documented §A.13 limitation, the mirror case; ratified as the
+  REQ-004 v1.6 bounded exception)** — a
   `trigger_declaration` saved in a `.cls` file passes the §3 predicates (`type=Class`, bare
   `qualifiedName`, `.cls` extension) and **is injected**: a reference to its name — including a
   case-varied one via the folded key — binds the trigger def (a REQ-004 non-referenceability breach,
@@ -1410,7 +1412,9 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
 - **Gate-3 reliances (finding #13 — the explicit list to FLAG, not pin).** *Step-3a validation
   (2026-07-02) found several of these TRUE on the real host before any WI-3 code, via the §1 fallback
   channel: the ctor/heritage/super/static-Property arms of (1), (3)'s static-call and static-field arms
-  (incl. the REQ-011 edge-from-trigger source attribution), and (6). The corresponding acceptance tests
+  (incl. the REQ-011 edge-from-trigger source attribution), and (6) — all **exact-case-only** (the fallback
+  channel does not fold): the CASE-VARIED static type-name-receiver forms remain bindings-channel
+  obligations, genuinely red, with their own §8 fixtures. The corresponding acceptance tests
   are already-green with committed no-red justifications (`.vsdd/tdd/WI-3-red-gate.md`); the bindings-
   channel arms below remain genuinely red and Gate-3-validated at Step 3b.* (1) end-to-end cross-file
   resolution of each WI-2 mechanic once `workspaceFqnBindings` is populated; (2) the local-over-global
@@ -1477,7 +1481,14 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   → the call resolves to the parent member across files;
 - **cross-file mutual/cyclic chain** — `class A{B b;}` (file A) / `class B{A a;}` (file B), `a.b.a…` resolves
   the reachable segments and terminates (bounded fixpoint), no hang/throw;
-- **case-varied cross-file** — `ACCOUNT`/`account` resolving across files via the folded global key;
+- **case-varied cross-file** — `ACCOUNT`/`account` resolving across files via the folded global key,
+  asserted for the instance-receiver form AND for the **static type-name-receiver forms** (a case-varied
+  cross-file static field read `CONSTS.FLOOR` and a case-varied trigger-body static call
+  `ACCOUNTHANDLER.notify()`) — the §7(3) arms' folded-key completion, red until the injection lands;
+- **user-defined type shadows an external/sObject name** — `Account a = new Account(); a.save()` resolves
+  to the user-defined `Account.cls` node (the §4 precedence bullet's fixture);
+- **nested type not injected by bare simple name** — a cross-file bare `Inner` reference emits no edge and
+  never mis-binds (the §4 no-mis-bind bullet's fixture);
 - **cross-file bare type-usage binding** — a bare declared-type usage of a cross-file type (`B b;`, B in
   another file) binds `b`'s static type (**no standalone edge**, REQ-005 v1.3), observably enabling
   `b.member` to resolve to B's member across files;
@@ -1495,8 +1506,8 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
 - **misfiled valid top-level type** — `class Helper` saved in `Utils.cls` (name ≠ filename) is still injected
   (its `qualifiedName` is bare) and resolves cross-file when its key is unique (no silent REQ-010
   reduction, §3); a class misfiled in a `.trigger` file is excluded from injection (member/case-folded
-  forms unresolved) while its exact-case ctor form binds via the fallback channel — both asserted as the
-  §4 documented-limitation behaviour;
+  forms unresolved — the REQ-010 v1.6 bounded exception) while its exact-case ctor form binds via the
+  fallback channel — both asserted as the §4 documented-limitation behaviour;
 - **non-exported top-level type** — black-box: a cross-file reference to a `private`/no-modifier top-level
   type **resolves** (WI-3 inject-all + the §7(7) [Gate-3 reliance] that the host lookup does not
   visibility-filter). Whether resolving it is *parity-correct* is a **WI-4 REQ-012** question (WI-4 owns the
@@ -1519,7 +1530,8 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   → resolves `log(Integer)` (CALLS from the trigger container), must not bind `log(String)`; an
   undisambiguable same-arity trigger-body call → unresolved + recorded (REQ-015) — the REQ-011 ∘ REQ-008
   composition (§4);
-- **trigger misfiled in a `.cls` file** — pinned §A.13 limitation behaviour: the misfiled trigger def is
+- **trigger misfiled in a `.cls` file** — pinned §A.13 limitation behaviour (the REQ-004 v1.6 bounded
+  exception): the misfiled trigger def is
   injected, so a (case-varied) reference to its name binds it (documented breach of REQ-004
   non-referenceability, invalid-source-only — asserted as the limitation, not as correct resolution);
 - **valid twin (trigger + class sharing a name)** — `Foo f = new Foo(); f.run()` from another file →

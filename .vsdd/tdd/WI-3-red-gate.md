@@ -14,8 +14,11 @@ state on the pre-impl host after the Gate-2 round-1 fixes (findings F1–F4, all
 Architect-dispositioned 2026-07-02 — SRS v1.5, the trigger-in-`.cls` limitation, the
 trigger-body overload composition, the IMPORTS-absence assertion) and round-2 fixes
 (SRS v1.6 misfile exceptions, the valid-twin fixture, the non-existent-type fixture,
-purity/field-name/observability corrections): **35 red / 27 passed of
-62** (54 integration + 8 unit); the full pre-existing apex + peer
+purity/field-name/observability corrections) and round-3 fixes (case-varied static
+type-name-receiver fixtures — CONSTS.FLOOR, ACCOUNTHANDLER.notify(); §8 bullets for the
+sObject-shadow and bare-Inner fixtures; the single record-observability rule; the
+discharged source-attribution contingency excised): **37 red / 27 passed of
+64** (56 integration + 8 unit); the full pre-existing apex + peer
 suites stay green (312/312 across apex.test, apex-resolution.test, apex-resolution-hardening,
 apex-resolution-unit, java.test). No **test scaffolding** (`// vsdd:scaffold`) was needed —
 grammar, provider, and registration all exist from WI-1/WI-2, so there is no scaffold ledger
@@ -42,7 +45,9 @@ All bindings-channel targets: no Apex `populateNamespaceSiblings` is registered,
   `x.b.a.b` (§7(9) — the no-hang half is enforced by the 120s timeout).
 - REQ-005/007 cross-file inherited member `c.inherited()` (§7(10) — the MRO walk needs the
   parent's binding).
-- Case-varied forms (the fallback channel is exact-case): `ENGINE e; e.STOP()`.
+- Case-varied forms (the fallback channel is exact-case): `ENGINE e; e.STOP()`; the
+  case-varied static type-name receivers `CONSTS.FLOOR` (cross-file field) and
+  `ACCOUNTHANDLER.notify()` (trigger-body call) — the §7(3) arms' folded-key completion.
 - Enum-constant access via type-name receiver: `Color.RED`, trigger `Level.HIGH` (unlike
   static Property access, which the fallback channel provides).
 - Nested-type qualified access `Outer.Inner → i.ping()` (§7(5)).

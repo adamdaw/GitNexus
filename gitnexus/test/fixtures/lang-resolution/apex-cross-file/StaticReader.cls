@@ -2,6 +2,7 @@
 public class StaticReader {
     public void read() {
         Integer l = Consts.MAX_SIZE;
+        Integer f = CONSTS.FLOOR;
         Color c = Color.RED;
     }
 }

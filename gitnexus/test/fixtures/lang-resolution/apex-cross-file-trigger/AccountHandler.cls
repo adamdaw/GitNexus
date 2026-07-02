@@ -3,6 +3,7 @@ public class AccountHandler {
     public String name;
     public static final Integer MAX_SIZE = 5;
     public static void handle() {}
+    public static void notify() {}
     public void process() {}
     public static void log(Integer n) {}
     public static void log(String s) {}
