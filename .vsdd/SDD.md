@@ -963,7 +963,8 @@ resolves cross-file names through two distinct channels, and WI-3 controls only 
   constants, and EVERY case-varied form; mis-binds — nested-parent heritage onto a same-tail top-level
   decoy (the v1.10(iv) limitation). Every limitation boundary and already-green justification below
   keys on that table, not on a mechanism narrative. One heritage-chain surface IS read-pinned as
-  Apex-inert: `resolveAmbiguousInheritanceBaseViaImports` (`walkers.ts:338, 478-510`) keys on finalized
+  Apex-inert: `resolveAmbiguousInheritanceBaseViaImports` (call site `walkers.ts:339`; declaration `:505`, doc
+  block `:477-504`) keys on finalized
   `ImportEdge[]`, which Apex never emits (`resolveImportTarget: () => null`). Through this
   channel the host already resolves, with no WI-3 code: cross-file **constructor calls** (`new B()`),
   **top-level `extends`/`implements`** (incl. the EXTENDS/IMPLEMENTS edge-label selection, §7(6)),
@@ -1177,12 +1178,14 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
 - **`languages/apex/namespace-siblings.ts`** (new) — `populateApexNamespaceSiblings(parsedFiles, indexes,
   ctx)`: iterate each **`parsedFile.scopes`**, mirroring the Java package-siblings iteration
   (`java/package-siblings.ts:95-105`): select the **class-kind scopes whose `parent` is the file's Module
-  scope** and take the FIRST class-like `SymbolDefinition` from each such scope's `ownedDefs` as the
-  INJECTION candidate (the Java precedent's take-first — a class-kind scope's `ownedDefs` also carries
-  Property/member defs) while **guard-counting EVERY class-like def in the scope** (a degenerate
-  error-recovery scope can carry more than one): all class-like defs contribute their folded keys to
-  the collision count, only the first is injectable — so the §2 no-mis-bind guarantee holds per
-  EXISTING def, and a same-folded-name pair co-owned by one degenerate scope still trips inject-none (the defs carry
+  scope** and take EVERY class-like `SymbolDefinition` from each such scope's `ownedDefs` into the def
+  universe (a class-kind scope's `ownedDefs` also carries Property/member defs — those are excluded by
+  Predicate 1; a degenerate error-recovery scope can carry more than one class-like def — ALL enter the
+  universe, so the §2 no-mis-bind guarantee holds per EXISTING def and a same-folded-name pair co-owned
+  by one degenerate scope still trips inject-none; a unique-keyed second def simply injects too — no
+  liveness loss, nothing to ratify). **The `.trigger`-extension exclusion (case-folded) filters defs
+  OUT OF this universe before grouping** — a trigger-filed def contributes NO folded key to the
+  collision count (which is what preserves the §4 twin commitments: the class alone occupies the key) (the defs carry
   `nodeId`, `type`, `filePath` — the discriminant fields below). All four Apex type-declaration kinds
   create class-kind scopes (`class`/`interface`/`enum`/`trigger_declaration` → `@scope.class`,
   `languages/apex/query.ts:38-41`), so the scope shape is total over the injectable kinds. This selects
@@ -1280,16 +1283,15 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   matter; (b) *whether resolving it is parity-correct* — a **WI-4 REQ-012** question (WI-4 may add a
   visibility filter to match the benchmark), a disclosed forward-dependency in the manner SDD-001 disclosed
   for the `Property` label. The §8 acceptance is the hard "resolves cross-file" of (a). **Injection algorithm (one procedure, no get-or-create-then-push):** first
-  **group ALL guard-counted class-like defs** (every class-like def owned by a Module-parented
-  class-kind scope — not only the first-per-scope injection candidates) by their
+  **group the def universe** (every class-like def owned by a Module-parented class-kind scope, MINUS
+  `.trigger`-filed defs — the case-folded extension filter runs before grouping) by the
   `normalizeIdentifier`-folded simple name; then for each key
   inject a binding into `workspaceFqnBindings` — the key is **`normalizeIdentifier(def.qualifiedName)`**
   (the def's only name-bearing field; guaranteed BARE for the owning-scope-selected top-level defs by the
   extractor fallback `qualifiedName: nameCap.text`, `scope-extractor.ts:591`) — **iff the group has
-  exactly one distinct `nodeId` AND that def is a first-per-scope injection candidate** (a unique-keyed
-  NON-first def injects nothing — a residual invalid-source-only liveness loss of the v1.9 disposition
-  class, reachable only in a degenerate error-recovery scope owning >1 class-like def) — a key
-  with ≥2 distinct-`nodeId` defs injects **nothing** (it is never created). The injected value is
+  exactly one distinct `nodeId`**; a key
+  with ≥2 distinct-`nodeId` defs injects **nothing** (it is never created). No candidacy tier exists —
+  any unique-keyed universe def injects (no non-first liveness loss). The injected value is
   **`{ def, origin: 'namespace' }`** with no `via` — the csharp workspace-channel precedent
   (`csharp/namespace-siblings.ts:688`; `origin` is required on `BindingRef` and at least one host
   consumer discriminates on it). So a folded key carries **at most
@@ -1457,6 +1459,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   inject-none guard sees ONE def per folded key: the top-level type injects and resolves cross-file
   (REQ-010 preserved on valid source — the v1 discriminant would have falsely collided here); the nested
   `Helper` stays reachable as `Outer.Helper`. §8 fixture pins the share.
+- **Class misfiled in a `.trigger` file vs a same-named correctly-filed class** — the misfiled def is
+  filtered out of the injection universe (the extension filter), so it does NOT guard-collide: the
+  valid `.cls`-filed class injects alone and resolves (no poisoning; the misfile costs only its own
+  def's visibility, per the v1.6 exception).
 - **Class misfiled in a `.trigger` file (documented limitation; ratified as the REQ-010 v1.6 bounded
   exception)** — the trigger exclusion keys on
   the `.trigger` extension (triggers and classes share `type=Class`, and `apexConstruct` is graph-only, §3),
@@ -1739,7 +1745,10 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   lookup's case dimension, its committed nested-type member-resolution fallback extended to fold the
   member segment) qualified forms — each fixture exercising BOTH the constructor form
   (`new Outer.Inner()`) and the declared-type/instance-member form (`Outer.Inner v; v.ping()`), the two
-  post-hook reference kinds (a single-kind green does not discharge the others);
+  post-hook reference kinds (a single-kind green does not discharge the others). *(A qualified STATIC
+  member on a nested type — `Outer.Inner.MAX` — is NOT expressible in valid Apex: inner classes cannot
+  declare static members (an Apex language restriction), so that kind is invalid-source-only and falls
+  under general conservatism, no fixture obligation.)*;
 - **nested-parent heritage (SRS v1.10 pins)** — `class Sub extends Outer.Inner`: no-decoy →
   NO heritage edge (v1.10(iii)); with a same-named top-level decoy → EXTENDS into the decoy, pinned as
   the v1.10(iv) documented limitation (never as correct resolution); the SAME-case valid twin's
