@@ -131,8 +131,10 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   correctly-filed trigger's name is referenced as a type (`new T()`, `extends T` — itself invalid
   Apex) and no same-named class exists, the host's exact-case single-match channel binds the trigger
   def — a documented limitation. A correctly-filed trigger remains non-referenceable on the
-  language's cross-file visibility channel (it is never registered there), and whenever a same-named
-  class-like def exists (the single-match guard binds nothing).)
+  language's cross-file visibility channel (it is never registered there), and whenever a
+  same-EXACT-CASE-named class-like def exists (the host's single-match guard keys exact-case — corrected
+  2026-07-02 after the case-variant-twin probe, re-ratified: a CASE-VARIANT same-named class does not
+  suppress the exact-case channel, and that shape is committed to resolve to the CLASS, not excepted).)
 
 **Reference resolution (user-defined)**
 - **REQ-005** *(type-usage sub-clause clarified v1.3)* — The system SHALL resolve a reference that

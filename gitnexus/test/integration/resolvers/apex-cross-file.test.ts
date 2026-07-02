@@ -550,6 +550,26 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     ).toEqual([]);
   });
 
+  it('resolves the CASE-VARIANT trigger/class twin to the CLASS, never the trigger (§4/§7(11) safety)', () => {
+    // Twist.trigger + class TWIST (valid Apex). Pre-impl the exact-case channel binds the
+    // TRIGGER (probed, Addendum 8); post-injection the folded key 'twist' holds the class
+    // alone and MUST win before the exact-case channel — the committed-to-fix shape.
+    const turn = getRelationships(result, 'CALLS').find((e) => e.target === 'turn');
+    expect(turn, 'w.turn() resolves to the class member').toBeDefined();
+    expect(turn!.targetFilePath).toContain('TWIST.cls');
+    const ctor = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'Twist' && e.sourceFilePath.includes('TwistCaller'),
+    );
+    expect(ctor, 'new Twist() binds the class').toBeDefined();
+    expect(ctor!.targetFilePath, 'never the trigger').toContain('TWIST.cls');
+    for (const type of ['CALLS', 'ACCESSES', 'EXTENDS', 'IMPLEMENTS']) {
+      expect(
+        getRelationships(result, type).filter((e) => e.targetFilePath.endsWith('Twist.trigger')),
+        `no ${type} edge into the trigger def`,
+      ).toEqual([]);
+    }
+  });
+
   it('resolves a valid same-name trigger+class twin to the CLASS, never the trigger (§4/REQ-004)', () => {
     // Twin.trigger + Twin.cls are VALID Apex. The §3 exclusion keeps the trigger out of the
     // injection, so `Twin t = new Twin(); t.spin()` resolves to the class (genuinely red

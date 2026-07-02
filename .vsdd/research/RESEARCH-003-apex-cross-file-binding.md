@@ -321,3 +321,15 @@ Addenda 5/6's probed facts remain valid. Rejected alternative (a) — synthesizi
 + top-level `class Helper`) selects only the top-level def → one def per folded key → injected (the v1
 discriminant would have falsely tripped the inject-none guard and stripped the valid top-level type of
 REQ-010).
+
+## Addendum 8 (2026-07-02) — case-variant trigger/class twin probe
+
+`Twist.trigger` (trigger Twist) + `TWIST.cls` (class TWIST) + `TwistCaller.cls`
+(`Twist w = new Twist(); w.turn();`): pre-impl the exact-case channel binds
+`CALLS go(TwistCaller.cls) → Twist(Twist.trigger) [Class:Twist.trigger:Twist]` — the trigger's
+exact-case key stays unique (the case-variant class keys separately), so the single-match guard does not
+suppress and the TRIGGER binds on valid source (REQ-004 breach / mis-bind; `w.turn()` does not resolve).
+Drove: the SRS v1.6 boundary-wording correction ("same-EXACT-CASE-named", re-ratified 2026-07-02) and the
+SDD-003 §4 committed-to-fix disposition — post-injection the folded workspace key holds the class alone
+and must win BEFORE the exact-case channel (the walk's workspace consult precedes the QualifiedNameIndex
+fallback; a fold-retry-after-miss remediation cannot fix this shape because the exact-case channel hits).

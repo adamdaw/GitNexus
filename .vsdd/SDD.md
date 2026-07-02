@@ -1052,11 +1052,12 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     standalone edge, per REQ-005 v1.3 — observable via the member access it enables) — all with **no import
     statement and no synthetic IMPORTS edge**. The match is case-insensitive (the
     folded global key); the emitted target id is the case-preserving id. **[structural]** WI-3 registers
-    `populateNamespaceSiblings`, which injects every top-level **non-trigger** user-defined type def
+    `populateNamespaceSiblings`, which injects each top-level **non-trigger** user-defined type def
     (class/interface/enum; the §3 predicate — a host access-modifier visibility filter blocking resolution
     is the §7(7) REQ-010 [Gate-3 reliance] with its reserved remediation; whether resolving a
-    non-exported type is *parity-correct* is WI-4 REQ-012 — the §3 two-dispositions split) into `workspaceFqnBindings` under its `normalizeIdentifier`-folded simple name
-    (dedup by nodeId).
+    non-exported type is *parity-correct* is WI-4 REQ-012 — the §3 two-dispositions split) into `workspaceFqnBindings` under its `normalizeIdentifier`-folded simple name **iff that folded key
+    is unique** — a key with ≥2 distinct-`nodeId` defs injects NOTHING (the §3 inject-none guard; the
+    same def seen twice dedups by `nodeId` and still injects).
     **[Gate-3 reliance]** that the host, with the global registry so populated, resolves each WI-2 mechanic
     end-to-end across files (two-class call REQ-005, cross-file chain REQ-009, top-level `extends`/`implements`
     REQ-007, top-level-parent `super` delegation, and qualified nested-type access `Outer.Inner` via the
@@ -1196,14 +1197,19 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   the `.trigger` exclusion below: it governs injection only; the exact-case channel binds a class-like
   def wherever it parses — one misfiled in a `.trigger` file, and (REQ-004 v1.6 corrected exception) a
   correctly-filed LONE trigger referenced as a type from invalid source (`new T()` → the trigger def;
-  probe-verified) — while a trigger twinned with a same-named class binds nothing (single-match).
+  probe-verified) — while a trigger twinned with a same-EXACT-CASE-named class binds nothing (single-match); a
+  CASE-VARIANT same-named class does NOT suppress the exact-case channel (the trigger's key stays
+  unique — probed, Addendum 8), so that shape is a committed-to-fix §7(11) safety case (§4), not a
+  limitation.
   **Exclude triggers by source-file extension `.trigger`, compared case-folded** — a trigger's
   `qualifiedName` is also bare (no
   `.`), so the predicate above does not exclude it; the discriminant is the def's **`filePath` ending in
   `.trigger` under a case-insensitive comparison** (the host classifies extensions case-insensitively —
   `getLanguageFromFilename` lowercases, `gitnexus-shared/src/language-detection.ts:88` — so `T.TRIGGER` /
   `H.CLS` are Apex files whose defs reach the hook with case-preserved `filePath`; a literal
-  `endsWith('.trigger')` would mis-classify both) (read-verifiable on `SymbolDefinition.filePath`, `model/symbol-table.ts:268` — NOT the
+  `endsWith('.trigger')` would mis-classify both) (read-verifiable on `SymbolDefinition.filePath` — the interface field
+  `gitnexus-shared/src/scope-resolution/symbol-definition.ts:28`, set by the `scope-extractor.ts` def
+  construction that feeds `localDefs` (Addendum 7) — NOT the
   graph-only `apexConstruct`, which lives on the `ParsedNode`, not the resolution-side def). Triggers are
   declared only in `.trigger` files; classes/interfaces/enums only in `.cls` — so inject only `.cls`-sourced
   defs. (A trigger is a *referencing* container, never a *referenced* type; injecting one would let
@@ -1402,6 +1408,15 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   — the REQ-004 v1.6 corrected exception, pinned by fixture as documented-limitation behaviour. The
   bindings channel never serves it (the §3 exclusion), and a same-named class flips it to the twin case
   below.
+- **Case-variant trigger/class twin (`Twist.trigger` + `class TWIST` — valid Apex)** — the trigger's
+  exact-case key stays unique, so pre-impl the exact-case channel binds `new Twist()` to the TRIGGER
+  (probed, Addendum 8) — a REQ-004 breach / mis-bind on valid source. **Committed to fix (Architect,
+  2026-07-02):** post-injection the folded workspace key `twist` holds the class (trigger excluded), and
+  the reference MUST bind the class — riding §7(11), whose committed fallback for this shape is
+  **safety-bearing and must intercept BEFORE the exact-case channel** (the workspace consult inside the
+  walk precedes the QualifiedNameIndex fallback, so a callsite fold — or the fallback's synthesis —
+  wins; a fold-retry-AFTER-miss remediation would not fire, since the exact-case channel HITS here).
+  §8 fixture asserts class-wins for ctor and member forms; never an SRS exception.
 - **Valid same-name trigger + class (`Foo.trigger` + `Foo.cls`, the SDD-001 §4 valid pair)** — the §3
   exclusion drops the trigger def from injection, so the **class alone** is injected under the folded key:
   a cross-file reference (`Foo f = new Foo(); f.run()`) resolves to the **class**, and **no resolution
@@ -1562,7 +1577,10 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   receiver-bound-calls and declared-type keyspaces; these two are unprobed), i.e. whether case-varied
   `new ENGINE()` / `extends BASE` reach WI-3's folded workspace keys — committed fallback class: an
   Apex-local pass addition (the static-receiver-synthesis class) or, if impossible Apex-locally, Phase-5
-  escalation. (12) **Single-registry sufficiency** (§3 pin) — Apex declared-type/instance-receiver typing
+  escalation. **This reliance is SAFETY-BEARING for the case-variant trigger/class twin (§4):** there
+  the exact-case channel HITS the trigger def, so the fallback must make the folded workspace binding
+  win BEFORE that channel (the walk's workspace consult precedes the QualifiedNameIndex fallback) — a
+  fold-retry-after-miss shape is insufficient and non-compliant for this case. (12) **Single-registry sufficiency** (§3 pin) — Apex declared-type/instance-receiver typing
   resolves injected names via `lookupBindingsAt` without the `workspaceTypeBindings` channel; committed
   remediation: add that second write to the Apex hook. Gate 3 (tests vs the real host) validates
   all of these; the Gate-2 adversary validates the wiring (Seam-B registration, the injected def set, the
@@ -1622,9 +1640,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   binds only the Apex def;
 - **collision / non-poisoning (REQ-015)** — two defs folding to one key (duplicate-named types, or a
   re-parented fragment colliding with a valid type) → **no member edge** through a typed receiver
-  (`Dupe d; d.hit()` — the §3 inject-none guard; the REQ-015 record obligation is discharged via the
-  host's internal unresolved stats — the black-box observable is edge ABSENCE, per the §2 observability
-  model). The ctor form (`new Dupe()`) binds exact-case-first via the §1 fallback channel — asserted as
+  (`Dupe d; d.hit()` — the §3 inject-none guard; the REQ-015 record obligation is dischargeable
+  host-internally per the SRS v1.7 plain-miss interpretation — the fixture asserts the observable, edge
+  ABSENCE, only). The ctor form (`new Dupe()`) binds exact-case-first via the §1 fallback channel — asserted as
   pinned host behaviour under the §3 parity-accepted limitation, NOT as a WI-3 resolution claim. The
   fragment-collision liveness loss for a colliding valid
   type is the documented §A.13 limitation (a black-box-observable absence of edge, not a mis-bind);
@@ -1667,6 +1685,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   (the exact-case channel's single-match guard + the §3 inject-none guard), never a bind;
 - **lone-trigger reference** — `new Lone()` with only `Lone.trigger` present → binds the trigger def via
   the exact-case channel (pinned REQ-004 v1.6 corrected-exception behaviour, not correct resolution);
+- **case-variant trigger/class twin** — `Twist.trigger` + `class TWIST`, reference `new Twist()` /
+  `w.turn()` → binds the CLASS, never the trigger (the committed-to-fix §7(11) safety case — red
+  pre-impl, the probe shows the trigger bound);
 - **trigger misfiled in a `.cls` file** — pinned §A.13 limitation behaviour (the REQ-004 v1.6 bounded
   exception): the misfiled trigger def is
   injected, so a (case-varied) reference to its name binds it (documented breach of REQ-004

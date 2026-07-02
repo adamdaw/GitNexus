@@ -32,7 +32,10 @@ Addendum 7, the qualifiedName discriminant was structurally false on localDefs; 
 anchors rebuilt on the scope shape; valid nested/top-level name-share fixtures; case-
 varied nested-qualified fixture; mixed-language §7(8) fixture — Apex 'Motor' vs Python
 'motor', Apex ref red / Python-unchanged pin green; §1/§3-vs-§7(7) contradiction
-qualified): **48 red / 32 passed of 80** (70 integration + 10 unit); the full
+qualified) and round-9/10 fixes (header v1.7 pin; §7 approval recorded; twin-ctor
+assertion policy; case-variant trigger/class twin — probed TRIGGER-bind on valid source,
+committed-to-fix, v1.6 boundary wording corrected to exact-case, Addendum 8):
+**49 red / 32 passed of 81** (71 integration + 10 unit); the full
 pre-existing apex + peer
 suites stay green (312/312 across apex.test, apex-resolution.test, apex-resolution-hardening,
 apex-resolution-unit, java.test). No **test scaffolding** (`// vsdd:scaffold`) was needed —
