@@ -1263,10 +1263,13 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   defs. (A trigger is a *referencing* container, never a *referenced* type; injecting one would let
   `new Foo()` / `Foo.x` mis-bind to a trigger — REQ-004 non-referenceability / REQ-015.)
   **Mirror limitation — trigger misfiled in a `.cls` file (§A.13, Architect-accepted 2026-07-02; ratified
-  at SRS level as the REQ-004 v1.6 bounded exception):** the
-  extension is the only trigger discriminant available on the resolution-side def (triggers and classes
-  share `type=Class` on the resolution-side def; `apexConstruct` is graph-only, and re-deriving the declaration node kind in the
-  hook would require an AST re-walk with a worker-path fallback — beyond pure registration). So a
+  at SRS level as the REQ-004 v1.6 bounded exception; ground corrected + re-affirmed same day):** the
+  extension discriminant is a **deliberate, Architect-owned trade-off**, not an impossibility: the hook
+  ctx's `treeCache` (`scope-resolver.ts:906-912`) would permit a registration-conformant
+  declaration-node-kind check, but it costs a cache-miss re-parse fallback + worker-path complexity to
+  fix INVALID-SOURCE-ONLY corner shapes (triggers and classes share `type=Class` on the resolution-side
+  def; `apexConstruct` is graph-only) — rejected on cost/complexity grounds, re-affirmed by the
+  Architect with the corrected ground. So a
   `trigger_declaration` *mis-declared* in a `.cls` file passes both predicates and **is injected** as a
   referenceable global name: a reference to that name can bind the trigger def (for a correctly-filed
   trigger the exclusion prevents exactly this). **Invalid Apex** (a trigger is declared only in a
@@ -1781,10 +1784,19 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   ABSENCE, only). The **case-varied/mismatched forms to the colliding pair** (`new dupe()`, `dupe d;` —
   the exact-case channel misses both keys, the folded key is guard-suppressed) emit nothing: asserted as
   exactly ONE ctor edge from the caller to the pair (the exact-case v1.5-exception bind) and zero member
-  edges — the v1.5 scenario's second Then-clause. The ctor form (`new Dupe()`) binds exact-case-first via the §1 fallback channel — asserted as
+  edges — the v1.5 scenario's second Then-clause. **The ctor fixture is the REPRESENTATIVE for the v1.5
+  family's three forms:** the heritage arm rides the pre-hook pass with the same
+  unique-exact-case-key bind (the Addendum-13 shape table's case-variant-duplicate row governs both
+  passes), and the static-type-name-receiver arm rides the same post-hook exact-case behaviour — same
+  disposition, pinned by the family (the §8 v1.6/v1.10 representativeness practice). The ctor form (`new Dupe()`) binds exact-case-first via the §1 fallback channel — asserted as
   pinned host behaviour under the §3 parity-accepted limitation, NOT as a WI-3 resolution claim. The
   fragment-collision liveness loss for a colliding valid
   type is the documented §A.13 limitation (a black-box-observable absence of edge, not a mis-bind);
+- **misfiled-class + same-named valid class (filter-before-grouping pin)** — `class Poison` misfiled
+  in a `.trigger` file + a correctly-filed `Poison.cls`: the misfiled def is filtered out of the
+  universe BEFORE grouping, so the valid class injects alone and its cross-file typed-receiver
+  reference resolves (a filter-AFTER-grouping implementation would trip inject-none and strip the
+  valid class — this fixture discriminates the §3 ordering);
 - **misfiled valid top-level type** — `class Helper` saved in `Utils.cls` (name ≠ filename) is still injected
   (its `qualifiedName` is bare) and resolves cross-file when its key is unique (no silent REQ-010
   reduction, §3); a class misfiled in a `.trigger` file is excluded from injection (member/case-folded

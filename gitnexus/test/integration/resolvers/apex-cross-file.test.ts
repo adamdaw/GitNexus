@@ -715,6 +715,21 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     ).toBeDefined();
   });
 
+  it('keeps a misfiled-class twin non-poisoning — the valid Poison resolves (§3 filter-before-grouping)', () => {
+    // PoisonHolder.trigger misfiles a class Poison; Poison.cls is the valid twin. The
+    // extension filter removes the misfiled def BEFORE grouping, so the valid class injects
+    // alone: p.good() resolves (red pre-impl). A filter-after-grouping implementation would
+    // trip inject-none and fail this.
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'good' && e.targetFilePath.endsWith('Poison.cls'),
+      ),
+    ).toBeDefined();
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'bad'),
+    ).toEqual([]);
+  });
+
   it('injects a trigger misfiled in a .cls file — a case-varied reference binds it (§4/§A.13 limitation)', () => {
     // PINNED LIMITATION BEHAVIOUR (Architect-accepted 2026-07-02): the .cls extension is the
     // only resolution-side discriminant, so the misfiled trigger def passes the §3 predicates

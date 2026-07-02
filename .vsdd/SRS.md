@@ -44,9 +44,11 @@ detail. Derived from INTENT-001; reviewed against it and the Constitution at Gat
   adversary reading SRS+SDD together).
   **Amended v1.6 (2026-07-02)** — REQ-010 + REQ-004: two bounded, invalid-source-only misfile exceptions
   ratified at SRS level (extending the v1.5 pattern; previously SDD-side notes). (i) A class/interface/enum
-  *mis-declared in a `.trigger` file* is excluded from the cross-file visibility registration — the only
-  available trigger discriminant is the source-file extension — so its typed-receiver and case-varied
-  cross-file forms remain unresolved (a REQ-010 liveness reduction). (ii) A trigger *mis-declared in a
+  *mis-declared in a `.trigger` file* is excluded from the cross-file visibility registration — the
+  source-file-extension discriminant is a deliberate, Architect-owned trade-off (an AST-level node-kind
+  check is available to the registration hook but costs re-parse-fallback complexity for
+  invalid-source-only shapes; ground corrected + re-affirmed 2026-07-02) — so its typed-receiver and
+  case-varied cross-file forms remain unresolved (a REQ-010 liveness reduction). (ii) A trigger *mis-declared in a
   `.cls` file* passes that same discriminant and becomes globally referenceable — a reference to its name
   can bind the trigger (a REQ-004 non-referenceability breach); additionally (probe-corrected and
   re-ratified 2026-07-02) a *correctly-filed* trigger whose name is referenced as a type from invalid
@@ -160,7 +162,7 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   represent each trigger as a container node in the knowledge graph.
   (**Amended v1.6 — bounded exception (text corrected 2026-07-02 after a lone-trigger probe,
   re-ratified same day):** WHERE a trigger is mis-declared in a `.cls` file — invalid Apex, reachable
-  only in uncompiled source — it is indistinguishable from a class by the available discriminant and
+  only in uncompiled source — it passes the extension discriminant (a deliberate trade-off, re-affirmed 2026-07-02) and
   becomes globally referenceable: a reference to its name can bind the trigger. AND WHERE a
   correctly-filed trigger's name is referenced as a type (`new T()`, `extends T` — itself invalid
   Apex) and no same-named class exists, the host's exact-case single-match channel binds the trigger
@@ -230,7 +232,8 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   different files of the analysed repository without requiring an explicit import statement.
   (**Amended v1.6 — bounded exception:** WHERE a class/interface/enum is mis-declared in a `.trigger`
   file — invalid Apex, reachable only in uncompiled source — its typed-receiver and case-varied
-  cross-file forms remain unresolved (the trigger discriminant is the source-file extension): a
+  cross-file forms remain unresolved (the source-file-extension discriminant, a deliberate trade-off
+  re-affirmed 2026-07-02): a
   documented liveness limitation. Correctly-filed types retain the full SHALL.)
 - **REQ-011** *(type-usage sub-clause clarified v1.4)* — WHEN a user-defined Apex trigger body references a
   user-defined Apex type, method, or field, the system SHALL resolve the reference to that symbol. For a
