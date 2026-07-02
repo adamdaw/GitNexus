@@ -1075,11 +1075,16 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     this rides the §7(11) [Gate-3 reliance] (committed WI-2-machinery extension — the folding ctor path
     reaching the workspace key; for the hit-shape the extension must precede the raw exact-case channel,
     else Phase-5 escalation), and for the qualified nested forms it rides §7(13) (outer segment) and §7(5)'s
-    fold-extended fallback (tail segment) — reliance-backed commitments, not pinned host behaviour — the host's inheritance
+    fold-extended fallback (tail segment) — reliance-backed commitments, not pinned host behaviour.
+    The postcondition is further bounded by the ratified SRS v1.5–v1.10 exceptions — in particular the
+    v1.6 class-misfiled-in-`.trigger` exclusion and the v1.9 fragment-collision inject-none also defeat
+    case-folded resolution for their (invalid-source-only) target shapes, exactly as §3/§4 catalogue — the host's inheritance
     pre-pass precedes the registration and suppresses retry, so case-varied `extends`/`implements` is
     the ratified SRS v1.8(i) bounded liveness limitation (exact-case heritage resolves via the host's
     own channel); the emitted target id is the case-preserving id. **[structural]** WI-3 registers
-    `populateNamespaceSiblings`, which injects each top-level **non-trigger** user-defined type def
+    `populateNamespaceSiblings`, which injects each top-level **non-`.trigger`-filed** (the §3
+    extension filter — kind-agnostic: it excludes a class misfiled in a `.trigger` file and admits a
+    trigger misfiled in a `.cls` file, the two v1.6 exceptions) user-defined type def
     (class/interface/enum; the §3 predicate — a host access-modifier visibility filter blocking resolution
     is the §7(7) REQ-010 [Gate-3 reliance] with its reserved remediation; whether resolving a
     non-exported type is *parity-correct* is WI-4 REQ-012 — the §3 two-dispositions split) into `workspaceFqnBindings` under its `normalizeIdentifier`-folded simple name **iff that folded key
@@ -1144,7 +1149,11 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     pinned by their §8 fixtures. The **instance-receiver trigger forms** (`h.process()`, `h.name` —
     emitted by the receiver-bound pass once the bindings channel serves them) were red pre-hook, so their
     edge-source attribution is a **residual [Gate-3 reliance]** (expected identical — same
-    enclosing-scope source resolution — but unobserved), covered by the §7(3b) committed-fallback class;
+    enclosing-scope source resolution — but unobserved), with its OWN disposition split from §7(3b)'s
+    typing half: the typing fallback cannot correct a wrong-source edge (source attribution lives in the
+    shared emission path with no Apex-local knob), so a fixture that resolves but mis-attributes →
+    Apex-local correction only if a registration-conformant hook exists, else **Phase-5 escalation**
+    (the §7(2) no-Apex-local-knob pattern);
     their §8 fixtures assert the trigger-container source and validate it.
     **[Gate-3 reliance]** that the host *resolves* the captured trigger-body reference end-to-end —
     specifically the **static type-name-receiver** shape where the receiver is a *type name*, not a typed
@@ -1826,7 +1835,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   distinct fixture from the static-receiver case; **plus a declaration-only typed variable**
   (`AccountHandler d;` with no initializer, then `d.size`) so the trigger-scope DECLARED-type binding via
   `interpretApexTypeBinding` is isolated from constructor-type inference (REQ-011 v1.4's bare
-  declared-type arm, discriminating acceptance);
+  declared-type arm, discriminating acceptance); **plus the case-varied trigger-scope declared type**
+  (`ACCOUNTHANDLER cv = …; cv.wake()` — §7(3b) trigger-scope typing ∘ the folded workspace key,
+  composed; compositions are not assumed free);
 - **conservatism** — a duplicate/ambiguous global simple name and a local-shadows-global case → the local or
   the conservative-unresolved outcome on the bindings channel, never a mis-bind there (REQ-015). The
   local-shadows-global fixture pins the **enclosing-scope shape** (§4): a nested type in the outer class,
