@@ -917,10 +917,11 @@ at WI-3.
 
 # SDD-003 — WI-3: Cross-file binding & trigger resolution
 
-- **Consumes:** SRS-001 (**v1.7**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
+- **Consumes:** SRS-001 (**v1.9**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
   resolution), with REQ-015 as amended v1.5 (the bounded exact-case-channel exception, probe-corrected) and
-  v1.7 (the record-observability interpretation), and the REQ-010/REQ-004 v1.6 bounded misfile exceptions
-  (probe-corrected);
+  v1.7 (the record-observability interpretation), the REQ-010/REQ-004 v1.6 bounded misfile exceptions
+  (probe-corrected), the REQ-007/REQ-010 v1.8 heritage-form limitations, and the REQ-010 v1.9
+  fragment-collision exception;
   the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
   Architect-approved 2026-06-30; addendum 4, 2026-07-02) — the cross-file-binding seam (A-3 confirmed;
   Seam B chosen) + the two-channel probe evidence.
@@ -954,7 +955,10 @@ resolves cross-file names through two distinct channels, and WI-3 controls only 
   probed 2026-07-02: with a same-tail decoy present, BOTH defs index under the tail key → nothing binds
   (Addendum 6). It is reached by the constructor/free-call path, the
   heritage pre-emit pass, and the static type-name-receiver path, for every language with no provider
-  hook; `isClassLike` admits trigger defs (`type=Class`). Through this
+  hook; `isClassLike` admits trigger defs (`type=Class`). **Probed arm difference (Addendum 10):** the
+  ctor/free-call arm binds TOP-LEVEL types only (a bare reference to a nested def's bare key emits
+  nothing in both the single-candidate and decoy shapes), while the heritage pre-pass DOES bind any
+  unique class-like key including trigger defs (the lone-trigger and twin-heritage probes). Through this
   channel the host already resolves, with no WI-3 code: cross-file **constructor calls** (`new B()`),
   **top-level `extends`/`implements`** (incl. the EXTENDS/IMPLEMENTS edge-label selection, §7(6)),
   **`super()`/`super.method()`** delegation to a cross-file parent, and **static type-name-receiver
@@ -1187,7 +1191,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   node). This is pure REQ-015
   conservatism — no winner is picked, no Apex-specific liveness heuristic, no benchmark-anchorless invention
   (Constitution §1). In **valid** Apex this never fires (one type per file, name = filename, no duplicate type
-  names). **Documented limitation (§A.13, Architect-accepted 2026-06-30):** a re-parented error-recovery
+  names). **Documented limitation (§A.13, Architect-accepted 2026-06-30; promoted to the SRS v1.9 REQ-010
+  bounded exception, 2026-07-02):** a re-parented error-recovery
   fragment (SDD-001 NFR-001 re-parents a malformed nested type to file scope, owner erased) is
   indistinguishable from a top-level type and is injected; if its folded name collides with a legitimate
   top-level type's, the key injects nothing → that **valid** type is left cross-file-**unresolved** (never
@@ -1220,7 +1225,7 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   `getLanguageFromFilename` lowercases, `gitnexus-shared/src/language-detection.ts:88` — so `T.TRIGGER` /
   `H.CLS` are Apex files whose defs reach the hook with case-preserved `filePath`; a literal
   `endsWith('.trigger')` would mis-classify both) (read-verifiable on `SymbolDefinition.filePath` — the interface field
-  `gitnexus-shared/src/scope-resolution/symbol-definition.ts:28`, set by the `scope-extractor.ts` def
+  `gitnexus-shared/src/scope-resolution/symbol-definition.ts:29`, set by the `scope-extractor.ts` def
   construction that feeds `localDefs` (Addendum 7) — NOT the
   graph-only `apexConstruct`, which lives on the `ParsedNode`, not the resolution-side def). Triggers are
   declared only in `.trigger` files; classes/interfaces/enums only in `.cls` — so inject only `.cls`-sourced
@@ -1335,6 +1340,11 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   its §8 fixture is red:** a cross-file superclass member-walk addition under `languages/apex/` (the same
   class of Apex-local addition as the nested-type and static-receiver fallbacks) — **never** a silent
   conservative-unresolved, which would reduce a REQ-005/007 SHALL without an SRS amendment (Constitution §7).
+- **Cross-file member case-collision (ambiguity-reaches-resolver, REQ-015 two obligations)** — a
+  cross-file typed receiver onto a class declaring case-colliding members (`class CaseColl { act; ACT; }`,
+  cross-file `c.Act()`) → no edge AND a positive `suppressed` record (the WI-2-validated case-collision
+  shape reached through the WI-3 binding; the §2/SRS-v1.7 assertable-record shape beyond the two
+  overload forms). §8 fixture.
 - **Cross-file mutual / cyclic type chain** — `class A { B b; }` in file A and `class B { A a; }` in file B
   (the two-file mutual form SDD-002 §4 deferred to WI-3), access `a.b.a...` → resolves the reachable
   segments and **terminates** (the host field-access fixpoint's bounded convergence, as in the WI-2 in-unit
@@ -1394,9 +1404,11 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   scope is parented to the outer type's class scope, so the §3 owning-scope discriminant **excludes** it
   from the global injection; a bare `Inner` reference from another file finds no WORKSPACE `Inner` binding
   and stays conservatively unresolved on the bindings channel (REQ-015). (Nested types are reachable only
-  as `Outer.Inner`, the bullet above. NOTE the exact-case channel indexes the nested def under its BARE
-  `qualifiedName` — Addendum 7 — so a bare-`Inner` single-candidate repo could bind it there; with any
-  top-level `Inner` present the single-match guard suppresses, per the tail-collision bullet.)
+  as `Outer.Inner`, the bullet above. The exact-case channel indexes the nested def under its BARE
+  `qualifiedName` — Addendum 7 — but the ctor/free-call arm binds TOP-LEVEL types only: probed in BOTH
+  repo shapes (Addendum 10 — no-decoy single-candidate: no edge; with a top-level decoy: no edge, the
+  single-match guard), so the bare cross-file reference emits nothing either way; the internal reason the
+  ctor arm skips nested defs is unpinned — the OUTCOME is fixture-pinned per shape, black-box.)
 - **Valid nested/top-level name share (`class Outer { class Helper {} }` + top-level `class Helper` —
   LEGAL Apex)** — under the owning-scope discriminant only the TOP-LEVEL `Helper` is selected, so the
   inject-none guard sees ONE def per folded key: the top-level type injects and resolves cross-file
@@ -1580,9 +1592,12 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   reliance, held for Gate-3) — that a peer-language entry in the shared `workspaceFqnBindings` cannot occupy
   an Apex lower-cased-simple-name key (and that the lookup binds Apex references only to Apex defs) — the
   host's "keys never collide" assumption, bearing on NFR-002; the Apex collision guard covers only
-  Apex-internal duplicates. **Validation vehicle (§8): a mixed-language fixture** — an Apex type and a
-  peer-language (Python) symbol sharing one folded key in one analysed repo; the peer reference must
-  resolve unchanged to the peer def and the Apex reference only to the Apex def; (9) **cross-file cyclic-chain fixpoint termination** (§4) — that the host
+  Apex-internal duplicates. **Validation vehicle (§8): a mixed-language fixture with BOTH directions** — (i) an Apex type and a
+  Python symbol sharing one folded key (Python registers no workspace hook, so this arm validates the
+  peer-REFERENCE direction: the peer resolves unchanged, the Apex reference binds only the Apex def);
+  (ii) a **C# global-namespace type** sharing the folded key (C# DOES write `workspaceFqnBindings` via
+  its own hook — the peer-ENTRY direction: a peer entry occupying an Apex folded key must not be
+  retrieved by the Apex reference, nor the Apex entry by the C# reference); (9) **cross-file cyclic-chain fixpoint termination** (§4) — that the host
   field-access fixpoint terminates (no hang/throw) on a *cross-file* mutual/cyclic receiver-type graph
   (`class A{B b;}`/`class B{A a;}`), an NFR-001 robustness reliance; the remediation if it does not is the
   host fixpoint's existing bounded-iteration cap (the same mechanism that bounds the WI-2 in-unit cyclic
@@ -1664,9 +1679,13 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
 - **valid nested/top-level name share** — nested `Outer.Helper` + top-level `class Helper` (legal Apex) →
   the top-level `Helper` injects alone (owning-scope discriminant) and resolves cross-file; no false
   collision (REQ-010 on valid source);
-- **cross-language folded-key share (NFR-002 / §7(8))** — an Apex type and a Python symbol sharing one
-  folded key in one repo → the Python reference resolves unchanged to the Python def; the Apex reference
-  binds only the Apex def;
+- **cross-language folded-key share (NFR-002 / §7(8), both directions)** — an Apex type, a Python
+  symbol, and a C# global-namespace type sharing one folded key in one repo → each language's reference
+  resolves only to its own def (Python: reference direction; C#: entry direction — its hook writes the
+  shared registry);
+- **cross-file member case-collision** — `CaseColl c = …; c.Act()` with `act`/`ACT` declared on the
+  cross-file target → no edge + a positive `suppressed` record (REQ-015 two obligations,
+  ambiguity-reaches-resolver);
 - **collision / non-poisoning (REQ-015)** — two defs folding to one key (duplicate-named types, or a
   re-parented fragment colliding with a valid type) → **no member edge** through a typed receiver
   (`Dupe d; d.hit()` — the §3 inject-none guard; the REQ-015 record obligation is dischargeable

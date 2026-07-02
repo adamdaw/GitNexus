@@ -643,6 +643,22 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     ).toBeDefined();
   });
 
+  it('leaves a cross-file member case-collision unresolved AND records it (REQ-015 two obligations)', () => {
+    // CaseColl declares act/ACT; the cross-file c.Act() matches both case-insensitively —
+    // the ambiguity REACHES the resolver (assertable positive record per SRS v1.7), unlike
+    // the guard-miss shapes. Red until the cross-file receiver binding lands.
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => (e.target === 'act' || e.target === 'ACT') && e.sourceFilePath.includes('CaseCollCaller'),
+      ),
+      'obligation 1: no binding edge',
+    ).toEqual([]);
+    expect(
+      suppressed(result).some((o) => o.name.toLowerCase() === 'act'),
+      'obligation 2: the c.Act() reference is recorded unresolved',
+    ).toBe(true);
+  });
+
   it('leaves no dangling resolution edges', () => {
     expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
   });
@@ -791,6 +807,27 @@ describe.skipIf(!apexAvailable)('Apex cross-language registry partitioning (NFR-
     const rev = getRelationships(result, 'CALLS').find((e) => e.target === 'rev');
     expect(rev, 'm.rev() resolves').toBeDefined();
     expect(rev!.targetFilePath, 'targets the Apex def').toContain('Motor.cls');
+  });
+
+  it('partitions the peer-ENTRY direction: C# and Apex each bind only their own def (§7(8))', () => {
+    // motor.cs is a GLOBAL-namespace C# type: its hook WRITES workspaceFqnBindings, so a
+    // peer entry genuinely occupies the folded key 'motor'. The C# m.Whir() must bind the
+    // C# member, and no Apex-sourced edge may land on the .cs def (nor C#-sourced on .cls).
+    const whir = getRelationships(result, 'CALLS').find((e) => e.target === 'Whir');
+    expect(whir, 'C# m.Whir() resolves').toBeDefined();
+    expect(whir!.targetFilePath, 'targets the C# def').toContain('motor.cs');
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.sourceFilePath.endsWith('.cls') && e.targetFilePath.endsWith('.cs'),
+      ),
+      'no Apex-sourced edge into the C# def',
+    ).toEqual([]);
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.sourceFilePath.endsWith('.cs') && e.targetFilePath.endsWith('.cls'),
+      ),
+      'no C#-sourced edge into the Apex def',
+    ).toEqual([]);
   });
 
   it('leaves the peer-language resolution unchanged (Python binds only the Python def) (NFR-002)', () => {

@@ -346,3 +346,28 @@ passes too" holds only for the POST-hook passes (free-call/ctor `run.ts:753`, re
 pure registration → ratified as the SRS v1.8 bounded limitations (Architect, 2026-07-02). The generic
 pipeline reorder (hook before the pre-emit pass) is noted as a candidate upstream contribution / WI-4
 item, subject to its own §2.2 review.
+
+## Addendum 10 (2026-07-02) — direct localDefs dump + bare-nested reference probes (both shapes)
+
+**Direct ground truth (extractParsedFile on `Outer.cls` with nested `Inner`):**
+
+```
+def type=Class qualifiedName=Outer   nodeId=def:Outer.cls#1:0:Class:Outer
+def type=Class qualifiedName=Inner   nodeId=def:Outer.cls#2:4:Class:Inner      <- BARE (Addendum 7 confirmed)
+def type=Method qualifiedName=ping
+scope Module  (parent=null)
+scope Class Outer (parent=Module)      owned=[Class:Outer]
+scope Class Inner (parent=Class Outer) owned=[Class:Inner]                     <- owning-scope shape confirmed
+```
+
+Nested defs carry BARE `qualifiedName` on the resolution side, and the §3 owning-scope discriminant's
+shape (type def in its own class scope; nested scope parented to the outer's scope, top-level to the
+Module scope) is exactly as specified.
+
+**Behavioural probes — bare cross-file `Inner` reference:** (a) no-decoy single-candidate repo
+(`Outer.cls` nested `Inner` + `JustBare.cls` `Inner j = new Inner(); j.ping();`) → **no edges**;
+(b) with a top-level decoy `class Inner` (Addendum 6) → **no edges**. So the exact-case channel's
+ctor/free-call arm binds TOP-LEVEL types only — a bare reference to a nested def's bare key emits
+nothing in both shapes (the internal reason is unpinned; the OUTCOME is fixture-pinned per shape).
+Contrast: the heritage pre-pass DOES bind any unique class-like key, including trigger defs
+(Addendum 5 lone-trigger, Addendum 8 twin-heritage).

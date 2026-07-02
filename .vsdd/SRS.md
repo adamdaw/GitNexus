@@ -77,6 +77,14 @@ detail. Derived from INTENT-001; reviewed against it and the Constitution at Gat
   bounded scope reductions; the generic pipeline reorder is noted as a candidate upstream/WI-4 item.
   Driven by WI-3 Gate-2 re-review round 11; Architect-approved (Adam, 2026-07-02). Re-enters Gate 1
   fidelity (verified by the fresh Gate 2 adversary reading SRS+SDD together).
+  **Amended v1.9 (2026-07-02)** — REQ-010 fragment-collision bounded exception promoted from the
+  2026-06-30 SDD-side note (consistency with the v1.5–v1.8 ratification route): WHERE a malformed file's
+  error-recovery re-parents a nested-type fragment to file scope AND its case-folded name collides with a
+  legitimate top-level type's, the cross-file visibility registration conservatively registers neither —
+  the valid type's typed-receiver/case-varied cross-file forms remain unresolved. Invalid-source-only
+  (requires the malformed file), triple-narrow, liveness-only (no mis-bind). A deliberate bounded scope
+  reduction; Architect-approved (Adam, 2026-07-02). Re-enters Gate 1 fidelity (verified by the fresh
+  Gate 2 adversary reading SRS+SDD together).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope

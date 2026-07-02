@@ -39,7 +39,12 @@ fixes (heritage pre-emit pass is PRE-hook — Addendum 9; SRS v1.8 heritage limi
 ratified: case-varied heritage pinned UNRESOLVED (i), twin heritage arm pinned
 trigger-bind (ii); §7(11) rescoped to the ctor arm with escalation-only remediation;
 SDD-003 §7 approval recorded on the correct section):
-**48 red / 34 passed of 82** (72 integration + 10 unit); the full
+**48 red / 34 passed of 82**, then round-12/13 fixes (v1.5 second-Then acceptance;
+edge-source discharge scoped; §7(13) qualified-outer arm; SRS v1.9 fragment-collision
+promotion; Addendum 10 — nested bare qualifiedName DIRECTLY confirmed and the bare
+cross-file reference probed no-bind in BOTH shapes; cross-file member case-collision
+fixture (red); C# peer-ENTRY arm in the mixed fixture (green pin)) → final
+**49 red / 35 passed of 84** (74 integration + 10 unit); the full
 pre-existing apex + peer
 suites stay green (312/312 across apex.test, apex-resolution.test, apex-resolution-hardening,
 apex-resolution-unit, java.test). No **test scaffolding** (`// vsdd:scaffold`) was needed —
