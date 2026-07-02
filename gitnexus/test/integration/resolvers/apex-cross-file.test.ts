@@ -636,11 +636,15 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
     expect(getRelationships(result, 'USES')).toEqual([]);
   });
 
-  it('leaves a trigger-body external reference (System.debug) unresolved, no throw (§2 invariant/NFR-001)', () => {
+  it('leaves trigger-body external references (System.debug, Trigger.new) unresolved, no throw (§2 invariant/NFR-001)', () => {
     // [conservative-negative; see WI-3-red-gate.md] — value is no-throw + no Apex defect.
     expect(result).toBeDefined();
     expect(
       getRelationships(result, 'CALLS').filter((e) => e.target === 'debug'),
+    ).toEqual([]);
+    // Trigger.new: the external context-variable member access emits no edge.
+    expect(
+      getRelationships(result, 'ACCESSES').filter((e) => e.target === 'new'),
     ).toEqual([]);
   });
 

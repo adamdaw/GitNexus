@@ -945,7 +945,8 @@ resolves cross-file names through two distinct channels, and WI-3 controls only 
 - **The exact-case single-match channel (pre-existing, hook-independent).** `findClassBindingInScope`
   (`scope/walkers.ts:276-306`) falls back — when the lexical scope walk misses — to the
   **`QualifiedNameIndex`**: `scopes.qualifiedNames.get(name)`, raw exact-case keys, **single-match-wins**
-  (binds iff exactly one class-like def carries the key; a same-key duplicate binds NOTHING —
+  (binds iff the key indexes exactly one def AND that def is class-like — `qnames.length === 1`
+  precedes the `isClassLike` check, `walkers.ts:283-291`; any same-key duplicate binds NOTHING —
   probe-verified, RESEARCH-003 Addendum 5). It is reached by the constructor/free-call path, the
   heritage pre-emit pass, and the static type-name-receiver path, for every language with no provider
   hook; `isClassLike` admits trigger defs (`type=Class`). Through this
@@ -1046,8 +1047,9 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     statement and no synthetic IMPORTS edge**. The match is case-insensitive (the
     folded global key); the emitted target id is the case-preserving id. **[structural]** WI-3 registers
     `populateNamespaceSiblings`, which injects every top-level **non-trigger** user-defined type def
-    (class/interface/enum; the §3 predicate — access-modifier visibility filtering is a REQ-012 parity
-    reliance, §7, not pinned) into `workspaceFqnBindings` under its `normalizeIdentifier`-folded simple name
+    (class/interface/enum; the §3 predicate — a host access-modifier visibility filter blocking resolution
+    is the §7(7) REQ-010 [Gate-3 reliance] with its reserved remediation; whether resolving a
+    non-exported type is *parity-correct* is WI-4 REQ-012 — the §3 two-dispositions split) into `workspaceFqnBindings` under its `normalizeIdentifier`-folded simple name
     (dedup by nodeId).
     **[Gate-3 reliance]** that the host, with the global registry so populated, resolves each WI-2 mechanic
     end-to-end across files (two-class call REQ-005, cross-file chain REQ-009, top-level `extends`/`implements`
@@ -1313,8 +1315,15 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   WI-3 outcome. Reachable because GitNexus graphs **uncompiled** source
   (SDD-001 §4) — Apex *compilation* would forbid a duplicate type name, but the analyser must not.
 - **Local shadows global** — a same-unit declaration of a name that also names a top-level type elsewhere →
-  the local binding wins (`lookupBindingsAt` ranks local above `workspaceFqnBindings`); the global is not
-  mis-selected. **[Gate-3 reliance]** on the host precedence.
+  the local binding wins (the SRS-required outcome, REQ-015 no-mis-bind on valid source). **[Gate-3
+  reliance]** on the host precedence — genuinely at risk for the **enclosing-scope shape** (§7(2)): the
+  canonical Apex form is a nested type declared in the outer type, referenced from the outer's METHOD
+  body, while another file's top-level same-named class sits injected under the folded key; the
+  scope-independent workspace channel is consulted at the method scope first, so the walk may return the
+  global before reaching the declaring class scope. The §8 fixture pins this exact shape; red → Phase-5
+  escalation (§7(2)). *(A method-local shadowing TYPE declaration — the other chain-level shape — is not
+  expressible in Apex: types cannot be declared in method bodies, so the nested-type shape is the only
+  reachable enclosing-scope case.)*
 - **User-defined top-level type shadows an external/sObject of the same name** — inject-all registers a
   user-defined `class Account` under the folded key `account`; a reference `new Account()` / `Account a;` then
   resolves to the **user-defined** node, not the external sObject `Account`. This is the **intended
@@ -1361,9 +1370,13 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   exclusion drops the trigger def from injection, so the **class alone** is injected under the folded key:
   a cross-file reference (`Foo f = new Foo(); f.run()`) resolves to the **class**, and **no resolution
   edge ever targets the trigger def** (REQ-004 non-referenceability, fulfilled on the bindings channel).
-  Probed on the real host (2026-07-02): pre-injection the fallback channel does NOT mis-bind the twin
-  pair — it resolves neither (a pre-WI-3 liveness miss on valid source that the injection closes); the
-  post-injection class-wins outcome is asserted by a §8 fixture (genuinely red pre-impl).
+  Probed on the real host (2026-07-02): pre-injection the exact-case channel does NOT mis-bind the twin
+  pair — it resolves neither (a pre-WI-3 liveness miss on valid source that the injection closes). **The
+  two arms differ:** `Foo f`/`f.run()` rides the folded declared-type keyspace (WI-2-validated fold) and
+  is asserted as the injection's outcome (genuinely red pre-impl); the `new Foo()` ctor edge cannot come
+  from the exact-case channel post-injection (the twin key still holds 2 defs → nothing) and reaches the
+  folded workspace key only via the §7(11) callsite-folding reliance — NOT asserted unconditionally; if
+  exercised, tagged §7(11) with its committed fallback class.
 - **Trigger misfiled in a `.cls` file (documented §A.13 limitation, the mirror case; ratified as the
   REQ-004 v1.6 bounded exception)** — a
   `trigger_declaration` saved in a `.cls` file passes the §3 predicates (`type=Class`, bare
@@ -1452,9 +1465,14 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   class if any arm's fixture is red:** an Apex-local addition to the hook (the `workspaceTypeBindings`
   write of §7(12), a `bindingAugmentations` append, or the named §3 fallbacks), never a silent
   de-scope (Constitution §7); (2) the local-over-global
-  precedence shadowing — structurally grounded (`walkScopeChain` checks `scope.bindings` local-first,
-  `walkers.ts:629-634`, and `lookupBindingsAt` ranks `workspaceFqnBindings` last, `walkers.ts:84-94`),
-  fixture-asserted; a red fixture here is a mis-bind on valid source → Phase-5 escalation to the
+  precedence shadowing — the cited ordering (`walkScopeChain` local-first `walkers.ts:629-634`;
+  `lookupBindingsAt` ranks `workspaceFqnBindings` last `walkers.ts:84-94`) grounds only the SAME-scope
+  case: the walk consults the scope-independent workspace channel at EVERY scope from the innermost out,
+  so an ENCLOSING-scope declaration (a nested type referenced from the outer type's method body) is
+  structurally AT RISK of losing to the injected global — the workspace hit can return at the method
+  scope before the walk reaches the declaring class scope. Genuinely unverified either way →
+  fixture-asserted with the required (SRS) local-wins outcome, the enclosing-scope shape pinned (§8); a
+  red fixture here is a mis-bind on valid source → Phase-5 escalation to the
   Architect (no Apex-local knob exists over the shared rank order); (3) **static type-name-receiver resolution** — the shape SHARED by a trigger call
   `Handler.handle()` (REQ-011) and a cross-file static call `B.f()` (the WI-3 design risk; capture is
   probe-confirmed [structural], the edge-from-trigger is a [structural obligation], the host's *default*
@@ -1577,7 +1595,12 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   dispatch), each from the trigger — the trigger-scope local-variable type-binding case (§2 reliance), a
   distinct fixture from the static-receiver case;
 - **conservatism** — a duplicate/ambiguous global simple name and a local-shadows-global case → the local or
-  the conservative-unresolved outcome on the bindings channel, never a mis-bind there (REQ-015);
+  the conservative-unresolved outcome on the bindings channel, never a mis-bind there (REQ-015). The
+  local-shadows-global fixture pins the **enclosing-scope shape** (§4): a nested type in the outer class,
+  the reference in the outer's method body, a same-named top-level type injected from another file → the
+  member edge targets the NESTED type's member, never the global's;
+- **trigger-body external reference (REQ-011 invariant)** — `System.debug(...)` and `Trigger.new` in the
+  trigger body → no edge, no Apex-specific defect record, run completes (the §2 invariant's acceptance);
 - **trigger-body overloaded call** — `Handler.log(7)` with `log(Integer)`/`log(String)` from a trigger body
   → resolves `log(Integer)` (CALLS from the trigger container), must not bind `log(String)`; an
   undisambiguable same-arity trigger-body call → unresolved + recorded (REQ-015) — the REQ-011 ∘ REQ-008
@@ -1590,8 +1613,10 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   exception): the misfiled trigger def is
   injected, so a (case-varied) reference to its name binds it (documented breach of REQ-004
   non-referenceability, invalid-source-only — asserted as the limitation, not as correct resolution);
-- **valid twin (trigger + class sharing a name)** — `Foo f = new Foo(); f.run()` from another file →
-  resolves to the **class** (the injected def); no resolution edge targets the trigger def (REQ-004);
+- **valid twin (trigger + class sharing a name)** — `Foo f = …; f.run()` from another file → resolves to
+  the **class** (the injected def, via the folded declared-type keyspace); the `new Foo()` ctor edge is a
+  §7(11)-reliance outcome, not asserted unconditionally; no resolution edge targets the trigger def
+  (REQ-004);
 - **non-existent type** — a cross-file reference to an undeclared type (`new Missing(); m.poke()`) →
   zero edges, run completes (REQ-015/NFR-001);
 - **single-file / no-op** — evidenced by the WI-2 same-unit suite staying green (regression), not a new

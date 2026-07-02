@@ -10,5 +10,6 @@ trigger T on Account (before insert) {
     Level v = Level.HIGH;
     AccountHandler.log(7);
     AccountHandler.pick('x');
+    List<Account> accs = Trigger.new;
     System.debug(n);
 }
