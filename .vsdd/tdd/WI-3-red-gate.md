@@ -27,7 +27,12 @@ fixes (trigger externals incl. Trigger.new; declaration-only typed trigger varia
 honest-wording) and round-7 fixes (SRS v1.7 REQ-015 observability interpretation
 ratified; case-folded extension discriminant — .CLS injected / .TRIGGER excluded,
 fixtures + unit anchor; coverage-map completion notes; RESEARCH-003 made
-self-contained): **44 red / 31 passed of 75** (66 integration + 9 unit); the full
+self-contained) and round-8 fixes (Predicate 2 re-grounded on OWNING-SCOPE shape —
+Addendum 7, the qualifiedName discriminant was structurally false on localDefs; unit
+anchors rebuilt on the scope shape; valid nested/top-level name-share fixtures; case-
+varied nested-qualified fixture; mixed-language §7(8) fixture — Apex 'Motor' vs Python
+'motor', Apex ref red / Python-unchanged pin green; §1/§3-vs-§7(7) contradiction
+qualified): **48 red / 32 passed of 80** (70 integration + 10 unit); the full
 pre-existing apex + peer
 suites stay green (312/312 across apex.test, apex-resolution.test, apex-resolution-hardening,
 apex-resolution-unit, java.test). No **test scaffolding** (`// vsdd:scaffold`) was needed —

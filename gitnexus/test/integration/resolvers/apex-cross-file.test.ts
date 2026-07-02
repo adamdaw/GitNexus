@@ -234,6 +234,35 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toBeDefined();
   });
 
+  it('resolves CASE-VARIED qualified nested access (OUTER.Inner → c.ping()) via the folded outer key (REQ-010)', () => {
+    // The case-varied completion of the nested-qualified form (§8): OUTER must reach
+    // Outer's folded workspace key before .Inner member lookup can run.
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'ping' && e.sourceFilePath.includes('CaseNested'),
+      ),
+    ).toBeDefined();
+  });
+
+  it('keeps a valid nested/top-level name share collision-free — h.assist() still resolves (§4)', () => {
+    // Outer declares a NESTED class Helper; Utils.cls declares the top-level class Helper.
+    // The owning-scope discriminant selects only the top-level def, so no false collision
+    // strips it of REQ-010 (this strengthens the misfiled-type test above: with the v1
+    // qualifiedName discriminant this fixture WOULD collide, since the nested def's
+    // resolution-side qualifiedName is bare — Addendum 7).
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'assist' && e.targetFilePath.includes('Utils'),
+      ),
+    ).toBeDefined();
+    // and the nested Helper's member is never bound from the misfile caller
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'fake' && e.sourceFilePath.includes('MisfileCaller'),
+      ),
+    ).toEqual([]);
+  });
+
   it('does NOT inject a nested type by bare simple name — bare Inner stays unresolved (REQ-015)', () => {
     // [conservative-negative; see WI-3-red-gate.md] — never mis-binds; anchored red
     // by the qualified-access positive above.
@@ -705,6 +734,37 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
 
   it('leaves no dangling resolution edges', () => {
     expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
+  });
+});
+
+// ── NFR-002 / §7(8) — cross-language folded-key share in one repo ────────────
+describe.skipIf(!apexAvailable)('Apex cross-language registry partitioning (NFR-002, §7(8))', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-cross-file-mixed'), () => {});
+  }, 120000);
+
+  it('resolves the Apex reference only to the Apex def despite a peer symbol on the same folded key (§7(8))', () => {
+    // Motor folds to 'motor'; mod.py declares class motor. The Apex m.rev() must bind
+    // the Apex member (red until the injection lands; a bind into mod.py is a §7(8) FAIL).
+    const rev = getRelationships(result, 'CALLS').find((e) => e.target === 'rev');
+    expect(rev, 'm.rev() resolves').toBeDefined();
+    expect(rev!.targetFilePath, 'targets the Apex def').toContain('Motor.cls');
+  });
+
+  it('leaves the peer-language resolution unchanged (Python binds only the Python def) (NFR-002)', () => {
+    // The Python use.py -> mod.motor().spin() path must be untouched by Apex keys.
+    // [already-green regression pin; see WI-3-red-gate.md]
+    const spin = getRelationships(result, 'CALLS').find((e) => e.target === 'spin');
+    expect(spin, 'python m.spin() resolves').toBeDefined();
+    expect(spin!.targetFilePath, 'targets the Python def').toContain('mod.py');
+    // and no Python-sourced edge ever lands on the Apex def
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.sourceFilePath.endsWith('.py') && e.targetFilePath.endsWith('.cls'),
+      ),
+    ).toEqual([]);
   });
 });
 

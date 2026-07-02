@@ -294,3 +294,30 @@ the decoy; conservative miss pre-injection.
 (`gitnexus-shared/src/scope-resolution/symbol-definition.ts:27-30`); there is no `label` field. SDD-003
 §3 Predicate 1 (`def.type ∈ {Class, Interface, Enum}`) is the corrected, authoritative statement and
 supersedes the addendum's field description.
+
+## Addendum 7 (2026-07-02) — top-level discriminant re-grounded: owning-scope shape (supersedes the earlier top-level-`qualifiedName` addendum's discriminant claim)
+
+**Finding.** The v1 discriminant ("a def is top-level iff its `qualifiedName` contains no `.`") is
+structurally FALSE on the iterated data: `ParsedFile.localDefs` is built by
+`scope-extractor.ts` (`qualifiedName = match['@declaration.qualified_name'] ?? name`, `:565`), and the
+Apex scope query emits **no** `@declaration.qualified_name` capture — so a NESTED Apex type's
+resolution-side def carries a **bare** `qualifiedName` (`Inner`, not `Outer.Inner`). Corroborated by the
+Addendum-6 probe: the nested `Inner` and the top-level decoy `Inner` both indexed under one bare key in
+the `QualifiedNameIndex` (which keys strictly by `def.qualifiedName`,
+`gitnexus-shared/src/scope-resolution/qualified-name-index.ts:46-64`) — impossible were the nested
+def's key dotted. The earlier addendum's `SymbolTable`/`class-config` citations describe parse-worker
+graph-id surfaces that do not feed `localDefs`.
+
+**Re-grounding (Architect-approved 2026-07-02, option (b)).** The discriminant is the **owning-scope
+shape**, mirroring `java/package-siblings.ts:95-105`: iterate `parsedFile.scopes`; a type def is
+top-level iff its declaring class-kind scope's `parent` is the file's Module scope. All four Apex
+type-declaration kinds create class-kind scopes (`query.ts:38-41` → `@scope.class`), so the shape is
+total. No parse-side change; the exact-case channel's indexing (bare nested keys) is untouched, so
+Addenda 5/6's probed facts remain valid. Rejected alternative (a) — synthesizing
+`@declaration.qualified_name` for nested types (the Kotlin precedent) — would re-key nested defs in the
+`QualifiedNameIndex` and re-open the dotted-tail decoy mis-bind on valid case-varied source.
+
+**Consequence for valid source.** A valid nested/top-level name share (`class Outer { class Helper {} }`
++ top-level `class Helper`) selects only the top-level def → one def per folded key → injected (the v1
+discriminant would have falsely tripped the inject-none guard and stripped the valid top-level type of
+REQ-010).

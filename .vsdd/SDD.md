@@ -1007,8 +1007,9 @@ or omits its own hook; NFR-002). **WI-3 is pure registration — no *committed* 
 injection discriminant, the trigger exclusion, and the inject-none collision guard are all Apex-local, §3).
 *(Superseded 2026-07-02 — a reserved, Gate-3-conditional shared edit for trigger edge-source attribution
 was held here; RESEARCH-003 Addendum 4 validated the host's native trigger-container source attribution
-TRUE, so the contingency is discharged and NO shared edit is reserved: WI-3 is pure registration,
-unconditionally.)* *(The §2.2 receiver-**variable**-name fold WI-2 deferred as its ceiling
+TRUE, so that contingency is discharged. WI-3 commits NO shared edit; the one surviving CONDITIONAL
+remediation that could touch shared code is §7(7)'s reserved lookup-visibility seam — subject to its own
+§2.2 review at selection, never pre-sanctioned.)* *(The §2.2 receiver-**variable**-name fold WI-2 deferred as its ceiling
 stays deferred — to **WI-4** parity hardening: a variable is method-local and never crosses a file boundary,
 so cross-file reach, which keys on type and member names — already folded — does not need it. Closing the
 WI-2→WI-3 handoff: re-deferred with rationale, not actioned.)*
@@ -1137,22 +1138,30 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
 ## 3. Interface definition (what WI-3 adds)
 
 - **`languages/apex/namespace-siblings.ts`** (new) — `populateApexNamespaceSiblings(parsedFiles, indexes,
-  ctx)`: iterate each **`parsedFile.localDefs`** (these are `SymbolDefinition`s — the same shape the C#
-  precedent iterates — carrying `type`, `qualifiedName` and `filePath`, the discriminant fields below), and
-  select the **top-level non-trigger user-defined type defs** (class / interface / enum) to inject.
+  ctx)`: iterate each **`parsedFile.scopes`**, mirroring the Java package-siblings iteration
+  (`java/package-siblings.ts:95-105`): select the **class-kind scopes whose `parent` is the file's Module
+  scope** and take the class-like `SymbolDefinition` from each such scope's `ownedDefs` (the defs carry
+  `nodeId`, `type`, `filePath` — the discriminant fields below). All four Apex type-declaration kinds
+  create class-kind scopes (`class`/`interface`/`enum`/`trigger_declaration` → `@scope.class`,
+  `languages/apex/query.ts:38-41`), so the scope shape is total over the injectable kinds. This selects
+  the **top-level non-trigger user-defined type defs** (class / interface / enum) to inject.
   **Predicate 1 — def kind:** `def.type ∈ {Class, Interface, Enum}` (`SymbolDefinition.type: NodeLabel`,
   `gitnexus-shared/src/scope-resolution/symbol-definition.ts:30` — the def carries no `label` field) (inject **only type defs**, never a
   method/field/property/enum-constant member — a member must never enter `workspaceFqnBindings` as a global
   type binding, else `new foo()` could mis-bind to a method; **[structural]**). **Predicate 2 — top-level by
-  qualified-name shape:** WI-1's Apex
-  class-config enables `qualifiedNodeId`, keying a **nested** type's `qualifiedName` as `Outer.Inner`
-  (`languages/apex/class-config.ts:4-5,26`, REQ-002), while a **top-level** type's `qualifiedName` is a bare
-  simple name (`Account`) — `SymbolTable` sets `qualifiedName = metadata.qualifiedName ?? name` for class-like
-  defs (`model/symbol-table.ts:263-264`). So a def is top-level **iff its `qualifiedName` contains no `.`
-  separator**, and it injects under that bare name. **[structural]** — a read-verifiable field (`qualifiedName`)
-  grounded in WI-1's documented qualified-id behaviour; totally decidable, no host-runtime/pass-ordering
-  dependency, and it **reliably excludes nested types** (their `qualifiedName` has a `.`, so they are never
-  injected by a bare simple name — a bare `Inner` reference cannot mis-bind, §4). This injects **every genuine
+  OWNING-SCOPE shape (re-grounded 2026-07-02, Architect-approved):** a def is top-level **iff its declaring
+  class-kind scope's `parent` is the file's Module scope** — the Java package-siblings discriminant
+  (`java/package-siblings.ts:95-105`); a nested type's scope is parented to the OUTER type's class scope,
+  never the module scope. It injects under its folded bare simple name. **[structural]** — read-verifiable
+  scope shape on the iterated `ParsedFile.scopes`, no host-runtime/pass-ordering dependency, and it
+  **reliably excludes nested types** (a bare `Inner` reference cannot mis-bind to a nested type via the
+  injection, §4). **The superseded v1 discriminant** (top-level iff `qualifiedName` has no `.`) was found
+  structurally FALSE on the iterated data: the Apex scope query emits no `@declaration.qualified_name`
+  capture, so a nested type's resolution-side def carries a BARE `qualifiedName` (scope-extractor fallback,
+  `scope-extractor.ts:565`; corroborated by the Addendum-6 probe — both nested and top-level `Inner`
+  indexed under one bare key — and recorded as RESEARCH-003 Addendum 7). The graph-side `Outer.Inner`
+  qualified ids (`class-config.ts` `qualifiedNodeId`) are a parse-worker surface that does not feed
+  `localDefs`. This injects **every genuine
   top-level type, including a *misfiled* one** (`class Helper` in `Utils.cls` — reachable in uncompiled
   source; still bare `qualifiedName`), so no validly-named top-level target REQ-010 SHALL-resolves is silently
   dropped. (Nested cross-file access is `Outer.Inner`, resolved via `Outer`'s global binding + member lookup,
@@ -1273,8 +1282,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
 - **No committed shared-code edit, no new seam, no new dependency, no new edge label.** WI-3 registers the
   existing `populateNamespaceSiblings` hook and reuses WI-2's captures/labels and the `normalizeIdentifier`
   seam; the top-level discriminant, the trigger exclusion, and the inject-none collision guard are Apex-local
-  in `namespace-siblings.ts`. There is NO reserved shared edit: the sole prior
-  contingency (trigger edge-source attribution, §1/§2) was validated moot 2026-07-02 (Addendum 4).
+  in `namespace-siblings.ts`. There is NO COMMITTED shared edit; the sole prior
+  contingency (trigger edge-source attribution, §1/§2) was validated moot 2026-07-02 (Addendum 4), and the
+  one surviving conditional remediation that could touch shared code is §7(7)'s reserved
+  lookup-visibility seam (its own §2.2 review at selection).
 
 ## 4. Edge-case catalog (per-input checklist → each traces to a Gate-3 test)
 
@@ -1357,11 +1368,18 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   indexed under the tail key nothing binds (probed 2026-07-02, Addendum 6 — no mis-bind into the decoy);
   post-injection the qualified reference resolves to the NESTED type via the outer's global binding +
   member lookup (§7(5)), never to the same-named top-level decoy. Fixture asserts both halves.
-- **Nested type not injected by bare simple name (no mis-bind)** — a nested type's `qualifiedName` is
-  `Outer.Inner` (has a `.`), so the §3 top-level discriminant **excludes** it from the global injection; a
-  bare `Inner` reference from another file therefore finds no global `Inner` binding and stays conservatively
-  unresolved (REQ-015), never mis-binding to a nested type. (Nested types are reachable only as `Outer.Inner`,
-  the bullet above.)
+- **Nested type not injected by bare simple name (no mis-bind via the injection)** — a nested type's
+  scope is parented to the outer type's class scope, so the §3 owning-scope discriminant **excludes** it
+  from the global injection; a bare `Inner` reference from another file finds no WORKSPACE `Inner` binding
+  and stays conservatively unresolved on the bindings channel (REQ-015). (Nested types are reachable only
+  as `Outer.Inner`, the bullet above. NOTE the exact-case channel indexes the nested def under its BARE
+  `qualifiedName` — Addendum 7 — so a bare-`Inner` single-candidate repo could bind it there; with any
+  top-level `Inner` present the single-match guard suppresses, per the tail-collision bullet.)
+- **Valid nested/top-level name share (`class Outer { class Helper {} }` + top-level `class Helper` —
+  LEGAL Apex)** — under the owning-scope discriminant only the TOP-LEVEL `Helper` is selected, so the
+  inject-none guard sees ONE def per folded key: the top-level type injects and resolves cross-file
+  (REQ-010 preserved on valid source — the v1 discriminant would have falsely collided here); the nested
+  `Helper` stays reachable as `Outer.Helper`. §8 fixture pins the share.
 - **Class misfiled in a `.trigger` file (documented limitation; ratified as the REQ-010 v1.6 bounded
   exception)** — the trigger exclusion keys on
   the `.trigger` extension (triggers and classes share `type=Class`, and `apexConstruct` is graph-only, §3),
@@ -1475,7 +1493,8 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   binding computation under `languages/apex/`.
 - **Tooling.** Host test framework (vitest) — integration resolution tests over **multi-file fixtures**
   (≥2 top-level types in separate files; a trigger file), plus main-thread unit anchors for the new pure
-  function(s) so the cross-file logic is coverage-attributable (dogfood #16 — the hook runs in the
+  function(s) — constructed on the §3 owning-scope shape (Module + class-kind scopes with `ownedDefs`) —
+  so the cross-file logic is coverage-attributable (dogfood #16 — the hook runs in the
   resolution phase, but the def-selection helper is unit-testable on the main thread).
 - **Gate-3 reliances (finding #13 — the explicit list to FLAG, not pin).** *Step-3a validation
   (2026-07-02) found several of these TRUE on the real host before any WI-3 code, via the §1 fallback
@@ -1524,7 +1543,9 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   reliance, held for Gate-3) — that a peer-language entry in the shared `workspaceFqnBindings` cannot occupy
   an Apex lower-cased-simple-name key (and that the lookup binds Apex references only to Apex defs) — the
   host's "keys never collide" assumption, bearing on NFR-002; the Apex collision guard covers only
-  Apex-internal duplicates; (9) **cross-file cyclic-chain fixpoint termination** (§4) — that the host
+  Apex-internal duplicates. **Validation vehicle (§8): a mixed-language fixture** — an Apex type and a
+  peer-language (Python) symbol sharing one folded key in one analysed repo; the peer reference must
+  resolve unchanged to the peer def and the Apex reference only to the Apex def; (9) **cross-file cyclic-chain fixpoint termination** (§4) — that the host
   field-access fixpoint terminates (no hang/throw) on a *cross-file* mutual/cyclic receiver-type graph
   (`class A{B b;}`/`class B{A a;}`), an NFR-001 robustness reliance; the remediation if it does not is the
   host fixpoint's existing bounded-iteration cap (the same mechanism that bounds the WI-2 in-unit cyclic
@@ -1588,7 +1609,14 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   `b.member` to resolve to B's member across files;
 - **nested-type qualified access** — `Outer.Inner` referenced from another file **resolves** (REQ-010 SHALL)
   via `Outer`'s global binding + nested-type member lookup; resolution is required (committed mechanism, not
-  de-scoped), never a mis-bind;
+  de-scoped), never a mis-bind; asserted for the exact-case AND the **case-varied** (`OUTER.Inner`)
+  qualified forms (the outer name reaching the folded key — the §7(11)-class completion for this form);
+- **valid nested/top-level name share** — nested `Outer.Helper` + top-level `class Helper` (legal Apex) →
+  the top-level `Helper` injects alone (owning-scope discriminant) and resolves cross-file; no false
+  collision (REQ-010 on valid source);
+- **cross-language folded-key share (NFR-002 / §7(8))** — an Apex type and a Python symbol sharing one
+  folded key in one repo → the Python reference resolves unchanged to the Python def; the Apex reference
+  binds only the Apex def;
 - **collision / non-poisoning (REQ-015)** — two defs folding to one key (duplicate-named types, or a
   re-parented fragment colliding with a valid type) → **no member edge** through a typed receiver
   (`Dupe d; d.hit()` — the §3 inject-none guard; the REQ-015 record obligation is discharged via the
