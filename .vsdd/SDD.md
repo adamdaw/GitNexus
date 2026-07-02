@@ -925,7 +925,8 @@ at WI-3.
   (probe-corrected), the REQ-007/REQ-010 v1.8 heritage-form limitations (extended v1.10 to
   nested-parent heritage), and the REQ-010 v1.9 fragment-collision exception;
   the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
-  Architect-approved 2026-06-30; **addenda 4–14**, 2026-07-02 — note Addendum 5 corrects Addendum 4's
+  Architect-approved 2026-06-30; **addenda 4–15**, 2026-07-02 (Addendum 15 supplies the v1.5 per-pass arm probes and the twin
+  static-member probe) — note Addendum 5 corrects Addendum 4's
   mechanism attribution, Addendum 7 supersedes the v1 discriminant, Addendum 12 retires the §7(8)
   cross-language reliance, and Addendum 13 retracts the exact-case-channel mechanism pin in favour of
   the behavioural shape table) — the cross-file-binding seam
@@ -1107,8 +1108,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     not relax conservatism. **For Apex-internal duplicates this no-mis-bind property is guaranteed
     Apex-locally on that channel** by the §3 collision guard (it injects ≤1 binding per folded key), so it
     does **not** depend on the host's >1-bucket handling — that host reliance is **foreclosed** for Apex
-    (§3, §7(4)). The only residual multi-binding case on the channel is the *cross-language* one (a peer
-    entry sharing an Apex folded key), a [Gate-3 reliance] bearing on NFR-002 (§7(8)). **The invariant does
+    (§3, §7(4)). No multi-binding case is reachable on the bindings channel: the Apex-internal case is
+    foreclosed by the §3 guard, and the cross-language case is structurally foreclosed (per-language-run
+    registry instances — Addendum 12; §7(8) retired), covered by the §8 mixed-language NFR-002
+    regression pin, not by a reliance. **The invariant does
     NOT extend to the §1 exact-case single-match channel** (ctor/heritage/static-receiver forms): a
     case-variant duplicate binds its unique exact-case key there; a same-case duplicate binds nothing
     (single-match guard) — the documented §3 limitation (invalid-source-only, Architect-accepted +
@@ -1641,7 +1644,8 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   bucket never reaches the host lookup; the host's ">1-bucket → ambiguous, not first-match" behaviour is moot
   for Apex (the safety is Apex-local, not host-dependent). The §1 fallback channel is OUTSIDE this
   foreclosure — its exact-case first-match behaviour on duplicates is the §3 parity-accepted limitation
-  (validated 2026-07-02). The only reachable multi-binding case on the bindings channel is (8); (5)
+  (validated 2026-07-02). No multi-binding case is reachable on the bindings channel — the Apex-internal case is foreclosed by
+  the §3 guard and the cross-language case structurally (retired (8)); (5)
   qualified nested-type access (`Outer.Inner`) resolving via the outer's global binding + nested-type member
   lookup — incl. the TAIL-varied form (`Outer.INNER`): the committed nested-type member-resolution fallback
   folds the member segment if the host lookup does not; (6) the host edge-label selection (EXTENDS vs IMPLEMENTS by target kind) for a cross-file
@@ -1838,7 +1842,11 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
 - **trigger-body overloaded call** — `Handler.log(7)` with `log(Integer)`/`log(String)` from a trigger body
   → resolves `log(Integer)` (CALLS from the trigger container), must not bind `log(String)`; an
   undisambiguable same-arity trigger-body call → unresolved + recorded (REQ-015) — the REQ-011 ∘ REQ-008
-  composition (§4);
+  composition (§4); asserted for the STATIC-receiver form AND the **instance-receiver** form
+  (`h.ilog(9)` — §7(3b) receiver typing ∘ argument typing, composed from trigger scope);
+- **trigger-body inherited member** — `h.tag()` where `tag` is declared on AccountHandler's cross-file
+  parent → CALLS to the parent member from the trigger container (REQ-011 ∘ §7(10), the MRO walk from
+  trigger scope — compositions are not assumed free);
 - **same-case duplicate** — two `class Samey` files → all reference forms conservatively unresolved
   (the exact-case channel's single-match guard + the §3 inject-none guard), never a bind;
 - **lone-trigger reference** — `new Lone()` with only `Lone.trigger` present → binds the trigger def via

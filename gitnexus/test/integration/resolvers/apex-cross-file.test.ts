@@ -886,6 +886,26 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
     ).toBeUndefined();
   });
 
+  it('narrows a trigger-body INSTANCE-receiver overload (h.ilog(9)) to ilog(Integer) (REQ-011 ∘ REQ-008)', () => {
+    // §7(3b) receiver typing ∘ argument typing, composed from trigger scope.
+    const calls = getRelationships(result, 'CALLS').filter((e) => e.target === 'ilog');
+    const exact = calls.find((e) => e.rel.targetId.includes('Integer'));
+    expect(exact, 'ilog(Integer) resolved').toBeDefined();
+    expect(fromTrigger(exact!)).toBe(true);
+    expect(
+      calls.find((e) => e.rel.targetId.includes('String') && !e.rel.targetId.includes('Integer')),
+      'must not bind ilog(String)',
+    ).toBeUndefined();
+  });
+
+  it('resolves a trigger-body inherited member (h.tag()) to the cross-file parent (REQ-011 ∘ §7(10))', () => {
+    // The MRO walk from trigger scope — composed, not assumed free.
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'tag');
+    expect(call).toBeDefined();
+    expect(fromTrigger(call!)).toBe(true);
+    expect(call!.targetFilePath, 'declared on the cross-file parent').toContain('BaseHandler');
+  });
+
   it('leaves an undisambiguable trigger-body overload unresolved AND records it (REQ-011 ∘ REQ-015)', () => {
     // pick(AccountHandler)/pick(Level) called with a String literal: equal arity, no exact
     // match -> ambiguous. REQ-015's two obligations, from trigger scope.
@@ -920,7 +940,7 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
   it('records no unresolved/suppressed outcome for the resolving trigger references (REQ-006)', () => {
     // `pick` is excluded: its undisambiguable call is a REQ-015 reference the host records.
     const resolvingNames = new Set([
-      'handle', 'process', 'name', 'MAX_SIZE', 'HIGH', 'AccountHandler', 'log', 'notify',
+      'handle', 'process', 'name', 'MAX_SIZE', 'HIGH', 'AccountHandler', 'log', 'notify', 'ilog', 'tag',
     ]);
     expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
   });
