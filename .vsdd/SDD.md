@@ -923,8 +923,9 @@ at WI-3.
   (probe-corrected), the REQ-007/REQ-010 v1.8 heritage-form limitations, and the REQ-010 v1.9
   fragment-collision exception;
   the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
-  Architect-approved 2026-06-30; addendum 4, 2026-07-02) — the cross-file-binding seam (A-3 confirmed;
-  Seam B chosen) + the two-channel probe evidence.
+  Architect-approved 2026-06-30; **addenda 4–10**, 2026-07-02 — note Addendum 5 corrects Addendum 4's
+  mechanism attribution and Addendum 7 supersedes the v1 discriminant) — the cross-file-binding seam
+  (A-3 confirmed; Seam B chosen) + the channel-model probe evidence.
 - **Constitution:** CONST-gitnexus-apex v1.1.1. **Security-critical = false** (operates on WI-1's safe-parsed
   output + WI-2's resolution model; introduces no new untrusted-source parse path — SECT-001 stays WI-1's).
   No new SEC clause.
@@ -958,7 +959,12 @@ resolves cross-file names through two distinct channels, and WI-3 controls only 
   hook; `isClassLike` admits trigger defs (`type=Class`). **Probed arm difference (Addendum 10):** the
   ctor/free-call arm binds TOP-LEVEL types only (a bare reference to a nested def's bare key emits
   nothing in both the single-candidate and decoy shapes), while the heritage pre-pass DOES bind any
-  unique class-like key including trigger defs (the lone-trigger and twin-heritage probes). Through this
+  unique class-like key including trigger defs (the lone-trigger and twin-heritage probes). **A third
+  surface exists in the heritage chain and is Apex-inert:** `resolveAmbiguousInheritanceBaseViaImports`
+  (`walkers.ts:338, 478-510`) disambiguates duplicate bases via the referencing file's finalized
+  `ImportEdge[]` — Apex emits no import edges (`resolveImportTarget: () => null`), so every tier leaves
+  >1 survivor and the refusal is preserved (the recorded ground for the duplicate-shape conservatism
+  probes, not an omission). Through this
   channel the host already resolves, with no WI-3 code: cross-file **constructor calls** (`new B()`),
   **top-level `extends`/`implements`** (incl. the EXTENDS/IMPLEMENTS edge-label selection, §7(6)),
   **`super()`/`super.method()`** delegation to a cross-file parent, and **static type-name-receiver
@@ -1138,7 +1144,13 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     arm and REQ-010, equally a type-name receiver). It is the **shared static-type-name-receiver resolution
     reliance** (§4) — the SAME shape as a cross-file static reference `B.f(...)` / `B.CONST`; it is not
     trigger-specific, and WI-2's receiver binding covers only `this`/instance receivers, so it is unvalidated
-    for both. **Committed fallback (one mechanism, shared across the call and field/enum-constant arms):** if
+    for both. **Enum-constant arm-specific disposition (probe-informed):** Addendum 4 shows the static
+    Property arm already resolves exact-case pre-hook while exact-case `Color.RED`/`Level.HIGH` do NOT —
+    so the enum-constant miss lies in the member/constant lookup half, not receiver visibility; the
+    committed fallback class for a red enum-constant fixture is therefore the static-receiver synthesis
+    **extended with an Apex-local enum-constant member-lookup arm** (under `languages/apex/`); if the
+    miss proves to sit in a shared member-lookup surface not correctable Apex-locally → Phase-5
+    escalation (named here so a red fixture leaves nothing to improvise). **Committed fallback (one mechanism, shared across the call and field/enum-constant arms):** if
     any static-receiver fixture (trigger or cross-file, call or field) is red, a **static-receiver
     type-binding synthesis** binds the receiver's type-name to the class/enum node it resolves to in
     `workspaceFqnBindings` (mirroring `apexReceiverBinding`'s `this`/`super` synthesis, but for a type-name
@@ -1605,7 +1617,10 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   peer-REFERENCE direction: the peer resolves unchanged, the Apex reference binds only the Apex def);
   (ii) a **C# global-namespace type** sharing the folded key (C# DOES write `workspaceFqnBindings` via
   its own hook — the peer-ENTRY direction: a peer entry occupying an Apex folded key must not be
-  retrieved by the Apex reference, nor the Apex entry by the C# reference); (9) **cross-file cyclic-chain fixpoint termination** (§4) — that the host
+  retrieved by the Apex reference, nor the Apex entry by the C# reference). **Red-fixture disposition:
+  Phase-5 escalation to the Architect** — the shared lookup's language-scoping has no Apex-local knob
+  (injection-side filtering cannot stop a peer reference retrieving an Apex key), matching the §7(2)
+  pattern; (9) **cross-file cyclic-chain fixpoint termination** (§4) — that the host
   field-access fixpoint terminates (no hang/throw) on a *cross-file* mutual/cyclic receiver-type graph
   (`class A{B b;}`/`class B{A a;}`), an NFR-001 robustness reliance; the remediation if it does not is the
   host fixpoint's existing bounded-iteration cap (the same mechanism that bounds the WI-2 in-unit cyclic
@@ -1690,6 +1705,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   qualified-outer-folding reliance) AND the **tail-varied** (`Outer.INNER` — the §7(5) nested-member
   lookup's case dimension, its committed nested-type member-resolution fallback extended to fold the
   member segment) qualified forms;
+- **dotted-tail decoy (both halves)** — nested `TOuter.TInner` + unrelated top-level `class TInner`:
+  the qualified reference resolves to the NESTED type (post-injection, via the outer's binding) and
+  ZERO edges ever land on the top-level decoy (pre-injection the tail arm binds nothing — Addendum 6);
 - **valid nested/top-level name share** — nested `Outer.Helper` + top-level `class Helper` (legal Apex) →
   the top-level `Helper` injects alone (owning-scope discriminant) and resolves cross-file; no false
   collision (REQ-010 on valid source);
