@@ -454,16 +454,18 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     ).toEqual([]);
   });
 
-  it('binds a duplicate-name constructor exact-case-first via the host fallback channel (§3 documented limitation)', () => {
-    // PINNED HOST BEHAVIOUR, not a WI-3 resolution claim: the pre-existing exact-case
-    // first-match workspace fallback (workspace-index/findExportedDefByName) resolves
-    // `new Dupe()` to DupOne's Dupe despite the DUPE duplicate. Parity-accepted §A.13-style
-    // limitation (Architect-accepted 2026-07-02). [already-green; see WI-3-red-gate.md]
-    const ctor = getRelationships(result, 'CALLS').find(
-      (e) => e.target === 'Dupe' && e.sourceFilePath.includes('DupCaller'),
+  it('binds a duplicate-name constructor only on its unique exact-case key (§3/v1.5 limitation, both Then-clauses)', () => {
+    // PINNED HOST BEHAVIOUR, not a WI-3 resolution claim: the exact-case single-match
+    // channel resolves `new Dupe()` to DupOne's Dupe despite the DUPE duplicate (unique
+    // exact-case key — the ratified v1.5 exception). The case-varied form `new dupe()`
+    // misses both exact-case keys and the folded key is guard-suppressed -> exactly ONE
+    // ctor edge to the pair (v1.5 scenario's second Then-clause).
+    // [already-green; see WI-3-red-gate.md]
+    const ctors = getRelationships(result, 'CALLS').filter(
+      (e) => (e.target === 'Dupe' || e.target === 'DUPE') && e.sourceFilePath.includes('DupCaller'),
     );
-    expect(ctor, 'the fallback channel binds the exact-case match').toBeDefined();
-    expect(ctor!.targetFilePath, 'exact-case target, not the case-variant').toContain('DupOne.cls');
+    expect(ctors.length, 'exactly the exact-case bind, nothing for the case-varied form').toBe(1);
+    expect(ctors[0]!.targetFilePath, 'exact-case target, not the case-variant').toContain('DupOne.cls');
   });
 
   it('lets a same-unit declaration shadow a same-named global (local-over-global precedence) (§4)', () => {

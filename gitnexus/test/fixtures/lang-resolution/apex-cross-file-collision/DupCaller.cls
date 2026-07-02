@@ -3,6 +3,7 @@ public class DupCaller {
     public void go() {
         Dupe d = new Dupe();
         d.hit();
+        dupe cv = new dupe();
         Solo s = new Solo();
         s.ok();
     }

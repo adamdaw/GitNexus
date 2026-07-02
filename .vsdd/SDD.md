@@ -1117,8 +1117,13 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     (held 2026-06-30) — **validated TRUE 2026-07-02** (RESEARCH-003 Addendum 4: the host natively
     attributes trigger-body edge sources to the trigger container node; fixture-pinned). **The reserved
     source-attribution contingency below is therefore discharged/moot.** The source for a body
-    reference is set from its enclosing scope (for a trigger body, the trigger container), confirmed by
-    the Addendum-4 probe and pinned by the §8 fixtures — no remediation route is held open.
+    reference is set from its enclosing scope (for a trigger body, the trigger container) — confirmed by
+    the Addendum-4 probe **for the exact-case-channel forms** (static call / ctor / static access) and
+    pinned by their §8 fixtures. The **instance-receiver trigger forms** (`h.process()`, `h.name` —
+    emitted by the receiver-bound pass once the bindings channel serves them) were red pre-hook, so their
+    edge-source attribution is a **residual [Gate-3 reliance]** (expected identical — same
+    enclosing-scope source resolution — but unobserved), covered by the §7(3b) committed-fallback class;
+    their §8 fixtures assert the trigger-container source and validate it.
     **[Gate-3 reliance]** that the host *resolves* the captured trigger-body reference end-to-end —
     specifically the **static type-name-receiver** shape where the receiver is a *type name*, not a typed
     variable. This covers **both** a static **call** (`Handler.handle()` → CALLS) **and a static field /
@@ -1166,8 +1171,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   **reliably excludes nested types** (a bare `Inner` reference cannot mis-bind to a nested type via the
   injection, §4). **The superseded v1 discriminant** (top-level iff `qualifiedName` has no `.`) was found
   structurally FALSE on the iterated data: the Apex scope query emits no `@declaration.qualified_name`
-  capture, so a nested type's resolution-side def carries a BARE `qualifiedName` (scope-extractor fallback,
-  `scope-extractor.ts:565`; corroborated by the Addendum-6 probe — both nested and top-level `Inner`
+  capture, so a nested type's resolution-side def carries a BARE `qualifiedName` (scope-extractor: capture read at
+  `scope-extractor.ts:565`, bare-name fallback lands at `:591`; corroborated by the Addendum-6 probe — both nested and top-level `Inner`
   indexed under one bare key — and recorded as RESEARCH-003 Addendum 7). The graph-side `Outer.Inner`
   qualified ids (`class-config.ts` `qualifiedNodeId`) are a parse-worker surface that does not feed
   `localDefs`. This injects **every genuine
@@ -1246,7 +1251,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   visibility filter to match the benchmark), a disclosed forward-dependency in the manner SDD-001 disclosed
   for the `Property` label. The §8 acceptance is the hard "resolves cross-file" of (a). **Injection algorithm (one procedure, no get-or-create-then-push):** first
   **group** the selected type defs by their `normalizeIdentifier`-folded simple name; then for each key
-  inject a binding into `workspaceFqnBindings` **iff the group has exactly one distinct `nodeId`** — a key
+  inject a binding into `workspaceFqnBindings` — the key is **`normalizeIdentifier(def.qualifiedName)`**
+  (the def's only name-bearing field; guaranteed BARE for the owning-scope-selected top-level defs by the
+  extractor fallback `qualifiedName: nameCap.text`, `scope-extractor.ts:591`) — **iff the group has
+  exactly one distinct `nodeId`** — a key
   with ≥2 distinct-`nodeId` defs injects **nothing** (it is never created). So a folded key carries **at most
   one** Apex binding by construction; the no-mis-bind safety property is **guaranteed Apex-locally at
   injection** (no 2-binding Apex bucket can ever form). **This forecloses the §2 / §7(4) "host treats a
@@ -1419,10 +1427,11 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   exact-case key stays unique, so pre-impl the exact-case channel binds `new Twist()` to the TRIGGER
   (probed, Addendum 8) — a REQ-004 breach / mis-bind on valid source. **Committed to fix (Architect,
   2026-07-02):** post-injection the folded workspace key `twist` holds the class (trigger excluded), and
-  the reference MUST bind the class — riding §7(11), whose committed fallback for this shape is
-  **safety-bearing and must intercept BEFORE the exact-case channel** (the workspace consult inside the
-  walk precedes the QualifiedNameIndex fallback, so a callsite fold — or the fallback's synthesis —
-  wins; a fold-retry-AFTER-miss remediation would not fire, since the exact-case channel HITS here).
+  the reference MUST bind the class — riding the §7(11) callsite-folding reliance — the class-wins outcome
+  holds iff the ctor callsite's folded lookup hits the workspace binding INSIDE the walk, which precedes
+  the QualifiedNameIndex fallback (a fold-retry-AFTER-miss shape would not fire, since the exact-case
+  channel HITS here); **if the fixture is red at Gate 3 the sole remediation is Phase-5 escalation**
+  (per §7(11): no workable Apex-local fallback exists at a ctor site).
   §8 fixture asserts class-wins for ctor and member forms. **The heritage arm of the twin**
   (`class Sub extends Twist`) is DIFFERENT: it resolves in the PRE-hook heritage pass (Addendum 9),
   where the injection can never intercept — the trigger binds (the Addendum-5 lone-trigger analog) —
@@ -1596,7 +1605,12 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   reference in the TRIGGER's case): if the ctor-arm fixture is red at Gate 3, the sole remediation is
   **Phase-5 escalation to the Architect** — stated here so a red fixture leaves nothing to improvise. (12) **Single-registry sufficiency** (§3 pin) — Apex declared-type/instance-receiver typing
   resolves injected names via `lookupBindingsAt` without the `workspaceTypeBindings` channel; committed
-  remediation: add that second write to the Apex hook. Gate 3 (tests vs the real host) validates
+  remediation: add that second write to the Apex hook. (13) **Qualified-outer folding** — whether the
+  `OUTER` segment of a qualified nested reference (`OUTER.Inner`) folds before reaching the workspace
+  key (the WI-2 seam folded the receiver-bound and declared-type keyspaces, not the dotted-name path;
+  distinct from (5), the member-lookup half) — committed fallback class: the §3 nested-type
+  member-resolution addition under `languages/apex/` (the same mechanism class as (5)'s), extended to
+  fold the outer segment. Gate 3 (tests vs the real host) validates
   all of these; the Gate-2 adversary validates the wiring (Seam-B registration, the injected def set, the
   collision guard, the folded key) and the split, not the behaviours.
 
@@ -1645,7 +1659,8 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
 - **nested-type qualified access** — `Outer.Inner` referenced from another file **resolves** (REQ-010 SHALL)
   via `Outer`'s global binding + nested-type member lookup; resolution is required (committed mechanism, not
   de-scoped), never a mis-bind; asserted for the exact-case AND the **case-varied** (`OUTER.Inner`)
-  qualified forms (the outer name reaching the folded key — the §7(11)-class completion for this form);
+  qualified forms (the outer name reaching the folded key — the §7(13) qualified-outer-folding reliance,
+  with its committed fallback);
 - **valid nested/top-level name share** — nested `Outer.Helper` + top-level `class Helper` (legal Apex) →
   the top-level `Helper` injects alone (owning-scope discriminant) and resolves cross-file; no false
   collision (REQ-010 on valid source);
@@ -1656,7 +1671,10 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   re-parented fragment colliding with a valid type) → **no member edge** through a typed receiver
   (`Dupe d; d.hit()` — the §3 inject-none guard; the REQ-015 record obligation is dischargeable
   host-internally per the SRS v1.7 plain-miss interpretation — the fixture asserts the observable, edge
-  ABSENCE, only). The ctor form (`new Dupe()`) binds exact-case-first via the §1 fallback channel — asserted as
+  ABSENCE, only). The **case-varied/mismatched forms to the colliding pair** (`new dupe()`, `dupe d;` —
+  the exact-case channel misses both keys, the folded key is guard-suppressed) emit nothing: asserted as
+  exactly ONE ctor edge from the caller to the pair (the exact-case v1.5-exception bind) and zero member
+  edges — the v1.5 scenario's second Then-clause. The ctor form (`new Dupe()`) binds exact-case-first via the §1 fallback channel — asserted as
   pinned host behaviour under the §3 parity-accepted limitation, NOT as a WI-3 resolution claim. The
   fragment-collision liveness loss for a colliding valid
   type is the documented §A.13 limitation (a black-box-observable absence of edge, not a mis-bind);
