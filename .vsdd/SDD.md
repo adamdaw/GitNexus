@@ -947,26 +947,22 @@ and resolved only within a single file; the missing piece is the **cross-file vi
 
 **Two host channels (validated against the real host, 2026-07-02, Architect-accepted).** The host
 resolves cross-file names through two distinct channels, and WI-3 controls only one of them:
-- **The exact-case single-match channel (pre-existing, hook-independent).** `findClassBindingInScope`
-  (`scope/walkers.ts:276-306`) falls back — when the lexical scope walk misses — to the
-  **`QualifiedNameIndex`**: `scopes.qualifiedNames.get(name)`, raw exact-case keys, **single-match-wins**
-  (binds iff the key indexes exactly one def AND that def is class-like — `qnames.length === 1`
-  precedes the `isClassLike` check, `walkers.ts:283-291`; any same-key duplicate binds NOTHING —
-  probe-verified, RESEARCH-003 Addendum 5). A **dotted-tail arm** (`walkers.ts:295-305`) retries a
-  dotted name's exact-case simple tail under the same single-match guard; the feared tail-collision
-  mis-bind (`OUTER.Inner` tail-binding an unrelated top-level `Inner`) is **foreclosed by the guard** —
-  probed 2026-07-02: with a same-tail decoy present, BOTH defs index under the tail key → nothing binds
-  (Addendum 6). It is reached by the constructor/free-call path, the
-  heritage pre-emit pass, and the static type-name-receiver path, for every language with no provider
-  hook; `isClassLike` admits trigger defs (`type=Class`). **Probed arm difference (Addendum 10):** the
-  ctor/free-call arm binds TOP-LEVEL types only (a bare reference to a nested def's bare key emits
-  nothing in both the single-candidate and decoy shapes), while the heritage pre-pass DOES bind any
-  unique class-like key including trigger defs (the lone-trigger and twin-heritage probes). **A third
-  surface exists in the heritage chain and is Apex-inert:** `resolveAmbiguousInheritanceBaseViaImports`
-  (`walkers.ts:338, 478-510`) disambiguates duplicate bases via the referencing file's finalized
-  `ImportEdge[]` — Apex emits no import edges (`resolveImportTarget: () => null`), so every tier leaves
-  >1 survivor and the refusal is preserved (the recorded ground for the duplicate-shape conservatism
-  probes, not an omission). Through this
+- **The pre-existing exact-case channel (hook-independent; BEHAVIOURALLY pinned, mechanism NOT
+  pinned).** The host resolves several cross-file reference forms with no provider hook, exact-case
+  only. **Its internal selection is host-interior and is not pinned** (Addendum 13 — successive
+  mechanism readings mispredicted probes: a class's explicit-ctor def shares its key yet heritage
+  binds; a same-named method def elsewhere does not defeat the class); it is not WI-3's design surface
+  (WI-3 only registers the hook). What the SDD pins is the channel's **probe-established shape table**
+  (RESEARCH-003 Addendum 13, consolidating Addenda 4–12): binds — top-level-class ctor/heritage/
+  static-Property/super (incl. ctor-declaring classes and class+member name shares), the unique
+  exact-case match of a case-variant duplicate pair, the lone trigger, the case-variant twin's ctor
+  (the trigger — the §4 committed-to-fix shape); binds nothing — same-case duplicates, the same-name
+  trigger+class twin, bare/nested references (± decoy), nested-parent heritage without a decoy, enum
+  constants, and EVERY case-varied form; mis-binds — nested-parent heritage onto a same-tail top-level
+  decoy (the v1.10(iv) limitation). Every limitation boundary and already-green justification below
+  keys on that table, not on a mechanism narrative. One heritage-chain surface IS read-pinned as
+  Apex-inert: `resolveAmbiguousInheritanceBaseViaImports` (`walkers.ts:338, 478-510`) keys on finalized
+  `ImportEdge[]`, which Apex never emits (`resolveImportTarget: () => null`). Through this
   channel the host already resolves, with no WI-3 code: cross-file **constructor calls** (`new B()`),
   **top-level `extends`/`implements`** (incl. the EXTENDS/IMPLEMENTS edge-label selection, §7(6)),
   **`super()`/`super.method()`** delegation to a cross-file parent, and **static type-name-receiver
@@ -1072,7 +1068,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     statement and no synthetic IMPORTS edge**. The match is case-insensitive (the
     folded global key) for every reference kind EXCEPT the heritage forms — for the ctor/free-call kind
     this rides the §7(11) [Gate-3 reliance] (committed fold-retry fallback for miss-shapes; Phase-5 for
-    the hit-shape), not a pinned host behaviour — the host's inheritance
+    the hit-shape), and for the qualified nested forms it rides §7(13) (outer segment) and §7(5)'s
+    fold-extended fallback (tail segment) — reliance-backed commitments, not pinned host behaviour — the host's inheritance
     pre-pass precedes the registration and suppresses retry, so case-varied `extends`/`implements` is
     the ratified SRS v1.8(i) bounded liveness limitation (exact-case heritage resolves via the host's
     own channel); the emitted target id is the case-preserving id. **[structural]** WI-3 registers
@@ -1177,7 +1174,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
 - **`languages/apex/namespace-siblings.ts`** (new) — `populateApexNamespaceSiblings(parsedFiles, indexes,
   ctx)`: iterate each **`parsedFile.scopes`**, mirroring the Java package-siblings iteration
   (`java/package-siblings.ts:95-105`): select the **class-kind scopes whose `parent` is the file's Module
-  scope** and take the class-like `SymbolDefinition` from each such scope's `ownedDefs` (the defs carry
+  scope** and take the FIRST class-like `SymbolDefinition` from each such scope's `ownedDefs` (one def per
+  scope, the Java precedent's take-first-and-break — a class-kind scope's `ownedDefs` also carries
+  Property/member defs, and a degenerate error-recovery scope could carry more than one class-like def;
+  each selected def is then guard-counted per folded key) (the defs carry
   `nodeId`, `type`, `filePath` — the discriminant fields below). All four Apex type-declaration kinds
   create class-kind scopes (`class`/`interface`/`enum`/`trigger_declaration` → `@scope.class`,
   `languages/apex/query.ts:38-41`), so the scope shape is total over the injectable kinds. This selects
@@ -1364,6 +1364,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   Both fixture-pinned as documented behaviour, never as correct resolution. (The nested-qualified
   RESOLUTION commitments — §7(5)/(13) — cover the post-hook reference kinds only: declared-type/member
   and constructor forms, NOT the heritage form.)
+- **Cross-file interface-typed declared variable (`Iface v; v.act()` — the Interface arm of
+  Predicate 1)** — an interface-typed declaration binds via the injected Interface entry and enables the
+  member resolution (exact AND case-varied forms) — the only acceptance that observes an Interface def's
+  workspace entry doing work (the heritage fixtures ride the pre-hook channel and cannot). §8 fixture.
 - **Cross-file member case-collision (ambiguity-reaches-resolver, REQ-015 two obligations)** — a
   cross-file typed receiver onto a class declaring case-colliding members (`class CaseColl { act; ACT; }`,
   cross-file `c.Act()`) → no edge AND a positive `suppressed` record (the WI-2-validated case-collision
@@ -1650,16 +1654,17 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   case): a red hit-shape fixture's sole remediation is **Phase-5 escalation to the Architect** — stated
   here so a red fixture leaves nothing to improvise. (12) **Single-registry sufficiency** (§3 pin) — Apex declared-type/instance-receiver typing
   resolves injected names via `lookupBindingsAt` without the `workspaceTypeBindings` channel; committed
-  remediation: add that second write to the Apex hook. (14) **plain-miss internal record** — whether the host's internal unresolved counter fires for a
-  pass-level typed-receiver guard-miss (§2; non-blocking for the black-box contract, whose observable is
-  edge absence per SRS v1.7). Validation vehicle: inspect the host's resolve stats/log output at Gate 3;
-  **if no internal record fires**, the disposition is a named escalation to re-ratify the SRS v1.7
-  interpretation as "no record exists for plain misses" — never a silent discharge. (13) **Qualified-outer folding** — whether the
+  remediation: add that second write to the Apex hook. (13) **Qualified-outer folding** — whether the
   `OUTER` segment of a qualified nested reference (`OUTER.Inner`) folds before reaching the workspace
   key (the WI-2 seam folded the receiver-bound and declared-type keyspaces, not the dotted-name path;
   distinct from (5), the member-lookup half) — committed fallback class: the §3 nested-type
   member-resolution addition under `languages/apex/` (the same mechanism class as (5)'s), extended to
-  fold the outer segment. Gate 3 (tests vs the real host) validates
+  fold the outer segment. (14) **Plain-miss internal record** — whether the host's internal unresolved
+  counter fires for a
+  pass-level typed-receiver guard-miss (§2; non-blocking for the black-box contract, whose observable is
+  edge absence per SRS v1.7). Validation vehicle: inspect the host's resolve stats/log output at Gate 3;
+  **if no internal record fires**, the disposition is a named escalation to re-ratify the SRS v1.7
+  interpretation as "no record exists for plain misses" — never a silent discharge. Gate 3 (tests vs the real host) validates
   all of these; the Gate-2 adversary validates the wiring (Seam-B registration, the injected def set, the
   collision guard, the folded key) and the split, not the behaviours.
 
@@ -1702,6 +1707,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   to the user-defined `Account.cls` node (the §4 precedence bullet's fixture);
 - **nested type not injected by bare simple name** — a cross-file bare `Inner` reference emits no edge and
   never mis-binds (the §4 no-mis-bind bullet's fixture);
+- **cross-file interface-typed declared variable** — `Iface v = new Derived(); v.act()` (and the
+  case-varied `IFACE` form) → CALLS to the interface member via the injected Interface entry (the
+  Predicate-1 Interface arm's observable);
 - **cross-file bare type-usage binding** — a bare declared-type usage of a cross-file type (`B b;`, B in
   another file) binds `b`'s static type (**no standalone edge**, REQ-005 v1.3), observably enabling
   `b.member` to resolve to B's member across files;

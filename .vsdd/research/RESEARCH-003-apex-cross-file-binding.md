@@ -415,3 +415,42 @@ fragment-collision limitation fires exactly as ratified (fragment injects; a fol
 a valid top-level type → inject-none → the valid type's bindings-channel forms unresolved). Also
 settles the WI-2 `new Broken()` watch item: the malformed outer yields NO def, so that WI-2 assertion
 cannot flip at Step 3b.
+
+## Addendum 13 (2026-07-02) — exact-case-channel mechanism RETRACTED as a pin; behavioural shape table
+
+**Two probes falsify the single-match mechanism model** (Addendum 5's `findClassBindingInScope`
+QualifiedNameIndex attribution, as a predictive pin):
+- A class WITH an explicit constructor puts TWO defs under its exact-case key
+  (`Class qualifiedName=Base` + `Constructor qualifiedName=Base` — dumped directly), yet exact-case
+  `extends Base` / `super()` resolve (Addendum 4). The model predicts refusal.
+- A top-level `class Validate` + a same-exact-case-named METHOD def in another file: `class ShareSub
+  extends Validate` → `EXTENDS ShareSub → Class:Validate.cls:Validate` resolves correctly. The model
+  predicts refusal.
+
+The host evidently filters or ranks by def kind somewhere the walk-reading missed. **Conclusion: the
+pre-existing exact-case channel's internal selection is HOST-INTERIOR and is not reliably
+read-pinnable; it is not WI-3's design surface (WI-3 only registers the hook). The SDD pins its
+BEHAVIOUR per probed shape and nothing more.** The probe-established shape table (all 2026-07-02):
+
+| Shape (cross-file, exact-case reference) | Outcome |
+|---|---|
+| top-level class: ctor / heritage / static-Property / super | binds (Add. 4) |
+| class WITH explicit ctor: heritage / super() | binds (Add. 4 + ctor-def dump) |
+| class + same-named METHOD def elsewhere: heritage | binds the class (this addendum) |
+| case-variant duplicate types (`Dupe`/`DUPE`): ctor | binds the unique exact-case match (Add. 4) |
+| same-case duplicate types (`Samey` ×2): all forms | binds nothing (Add. 5) |
+| same-name trigger+class twin (`Foo`): ctor/heritage | binds nothing (Add. 5) |
+| case-VARIANT trigger/class twin (`Twist`+`TWIST`): ctor | binds the TRIGGER (Add. 8) |
+| lone trigger (`T`): ctor / heritage | binds the trigger (Add. 5) |
+| nested type, bare reference (± decoy): ctor/member | binds nothing (Add. 6, 10) |
+| nested-parent heritage (`extends Outer.Inner`), no decoy | binds nothing (Add. 11) |
+| nested-parent heritage, same-tail top-level decoy | binds the DECOY (Add. 11) |
+| enum constant via type-name receiver (`Color.RED`) | binds nothing (Add. 4) |
+| ANY case-varied form (`new ENGINE()`, `e.STOP()`, `extends BASE`) | binds nothing (Add. 4) |
+
+Every SDD-003 limitation boundary and already-green justification keys on rows of this table, not on
+the retracted mechanism. The two read-verified ORDERING facts stand (they are pipeline structure, not
+channel interior): the heritage pre-emit pass runs pre-hook and suppresses retry (Addendum 9), and the
+post-hook passes consult `lookupBindingsAt` — where the injected workspace channel lives — during their
+resolution (Addendum 5; the folded-key REACHABILITY per callsite remains the §7(11)/(13) Gate-3
+reliances).

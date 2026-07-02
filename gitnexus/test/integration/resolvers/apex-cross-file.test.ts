@@ -314,6 +314,18 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toBeDefined();
   });
 
+  it('resolves a cross-file interface-typed declared variable (Iface v; v.act()) — the Interface injection arm (REQ-010/§3)', () => {
+    // The only acceptance observing an Interface def's workspace entry doing work (the
+    // heritage fixtures ride the pre-hook channel). Both exact and case-varied (IFACE)
+    // declarations bind; at least one act() call from IfaceUser must resolve to Derived's
+    // implementation via the interface-typed receiver.
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'act' && e.sourceFilePath.includes('IfaceUser'),
+      ),
+    ).toBeDefined();
+  });
+
   it('resolves a CASE-VARIED cross-file static field via a type-name receiver (CONSTS.FLOOR) (REQ-010/§7(3))', () => {
     // The §7(3) static-field arm's folded-key completion: the exact-case form is fallback-
     // channel already-green; the case-varied receiver resolves only via the bindings channel.
