@@ -447,7 +447,7 @@ SRS-001 as a versioned addendum (new REQ-NNN) re-entering Gate 1 — none requir
 
 No other CWE-backed surface exists for WI-1 (no auth/secrets/PII/financial) → no further SEC-NNN.
 
-## 7. Verification architecture (Step 2b — Builder proposal, Architect approval pending)
+## 7. Verification architecture (Step 2b — **APPROVED — Adam (Architect), 2026-07-02**)
 
 - **Provable-properties catalog:** **none are Prove-classified.** Per the §A.3 decision table, WI-1
   guards no security-boundary *correctness* invariant, no financial, data-integrity, safety/regulatory,
@@ -917,9 +917,10 @@ at WI-3.
 
 # SDD-003 — WI-3: Cross-file binding & trigger resolution
 
-- **Consumes:** SRS-001 (**v1.6**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
-  resolution), with REQ-015 as amended v1.5 (the bounded fallback-channel exception) and the REQ-010/REQ-004
-  v1.6 bounded misfile exceptions;
+- **Consumes:** SRS-001 (**v1.7**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
+  resolution), with REQ-015 as amended v1.5 (the bounded exact-case-channel exception, probe-corrected) and
+  v1.7 (the record-observability interpretation), and the REQ-010/REQ-004 v1.6 bounded misfile exceptions
+  (probe-corrected);
   the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
   Architect-approved 2026-06-30; addendum 4, 2026-07-02) — the cross-file-binding seam (A-3 confirmed;
   Seam B chosen) + the two-channel probe evidence.
@@ -1407,11 +1408,13 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   edge ever targets the trigger def** (REQ-004 non-referenceability, fulfilled on the bindings channel).
   Probed on the real host (2026-07-02): pre-injection the exact-case channel does NOT mis-bind the twin
   pair — it resolves neither (a pre-WI-3 liveness miss on valid source that the injection closes). **The
-  two arms differ:** `Foo f`/`f.run()` rides the folded declared-type keyspace (WI-2-validated fold) and
-  is asserted as the injection's outcome (genuinely red pre-impl); the `new Foo()` ctor edge cannot come
-  from the exact-case channel post-injection (the twin key still holds 2 defs → nothing) and reaches the
-  folded workspace key only via the §7(11) callsite-folding reliance — NOT asserted unconditionally; if
-  exercised, tagged §7(11) with its committed fallback class.
+  two arms differ mechanically but are BOTH asserted:** `Foo f`/`f.run()` rides the folded declared-type
+  keyspace (WI-2-validated fold) and is asserted as the injection's outcome (genuinely red pre-impl); the
+  `new Foo()` ctor edge cannot come from the exact-case channel post-injection (the twin key still holds
+  2 defs → nothing) and reaches the folded workspace key via the §7(11) callsite-folding reliance — an
+  unambiguous valid-source REQ-005/REQ-010 SHALL, so it is asserted under the SAME §7(11) reliance +
+  committed fallback class as the `new ENGINE()` fixture (consistent §8 assertion policy for the two
+  mechanically identical forms).
 - **Trigger misfiled in a `.cls` file (documented §A.13 limitation, the mirror case; ratified as the
   REQ-004 v1.6 bounded exception)** — a
   `trigger_declaration` saved in a `.cls` file passes the §3 predicates (`type=Class`, bare
@@ -1669,8 +1672,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   injected, so a (case-varied) reference to its name binds it (documented breach of REQ-004
   non-referenceability, invalid-source-only — asserted as the limitation, not as correct resolution);
 - **valid twin (trigger + class sharing a name)** — `Foo f = …; f.run()` from another file → resolves to
-  the **class** (the injected def, via the folded declared-type keyspace); the `new Foo()` ctor edge is a
-  §7(11)-reliance outcome, not asserted unconditionally; no resolution edge targets the trigger def
+  the **class** (the injected def, via the folded declared-type keyspace); the `new Foo()` ctor edge →
+  CALLS to the class, asserted under the §7(11) reliance + committed fallback (same policy as the
+  case-varied ctor fixture); no resolution edge targets the trigger def
   (REQ-004);
 - **non-existent type** — a cross-file reference to an undeclared type (`new Missing(); m.poke()`) →
   zero edges, run completes (REQ-015/NFR-001);

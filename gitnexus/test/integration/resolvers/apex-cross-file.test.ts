@@ -557,6 +557,13 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     const spin = getRelationships(result, 'CALLS').find((e) => e.target === 'spin');
     expect(spin, 't.spin() resolves to the class member').toBeDefined();
     expect(spin!.targetFilePath, 'declared in Twin.cls').toContain('Twin.cls');
+    // The ctor arm — asserted under the §7(11) callsite-folding reliance (same policy as
+    // the new ENGINE() fixture): an unambiguous valid-source REQ-005/REQ-010 SHALL.
+    const ctor = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'Twin' && e.sourceFilePath.includes('TwinCaller'),
+    );
+    expect(ctor, 'new Twin() binds the class (§7(11))').toBeDefined();
+    expect(ctor!.targetFilePath, 'the class, never the trigger').toContain('Twin.cls');
     // REQ-004 guard: no resolution edge ever targets the trigger def.
     for (const type of ['CALLS', 'ACCESSES', 'EXTENDS', 'IMPLEMENTS']) {
       expect(
