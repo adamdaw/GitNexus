@@ -2,6 +2,7 @@
 public class AccountHandler {
     public String name;
     public Integer size;
+    public AccountHandler next;
     public static final Integer MAX_SIZE = 5;
     public static void handle() {}
     public static void notify() {}

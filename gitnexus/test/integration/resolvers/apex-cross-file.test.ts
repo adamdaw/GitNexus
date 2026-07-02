@@ -784,6 +784,20 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
     expect(fromTrigger(access!)).toBe(true);
   });
 
+  it('resolves a trigger-body cross-file chain (h.next.name) per segment from the trigger (REQ-011 ∘ REQ-009)', () => {
+    // The field-access fixpoint operating from trigger scope (§7(3b) — not free fallout of
+    // WI-2). `next` is AccountHandler's self-typed field; both segments must resolve.
+    const accesses = getRelationships(result, 'ACCESSES');
+    const next = accesses.find((e) => e.target === 'next');
+    expect(next, 'h.next resolves').toBeDefined();
+    expect(fromTrigger(next!), 'chain root originates from the trigger container').toBe(true);
+    // second segment: (h.next).name — at least one ACCESSES 'name' beyond the direct h.name
+    expect(
+      accesses.filter((e) => e.target === 'name' && fromTrigger(e)).length,
+      'both name accesses (h.name and h.next.name) resolve from the trigger',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
   it('resolves a trigger-body enum-constant access (Level.HIGH) via ACCESSES from the trigger (REQ-011)', () => {
     const access = getRelationships(result, 'ACCESSES').find((e) => e.target === 'HIGH');
     expect(access).toBeDefined();

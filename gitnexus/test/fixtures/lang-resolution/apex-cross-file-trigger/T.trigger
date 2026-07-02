@@ -6,6 +6,7 @@ trigger T on Account (before insert) {
     AccountHandler h = new AccountHandler();
     h.process();
     String n = h.name;
+    String nm = h.next.name;
     Integer m = AccountHandler.MAX_SIZE;
     Level v = Level.HIGH;
     AccountHandler.log(7);

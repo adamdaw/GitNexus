@@ -925,8 +925,10 @@ at WI-3.
   (probe-corrected), the REQ-007/REQ-010 v1.8 heritage-form limitations (extended v1.10 to
   nested-parent heritage), and the REQ-010 v1.9 fragment-collision exception;
   the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
-  Architect-approved 2026-06-30; **addenda 4–10**, 2026-07-02 — note Addendum 5 corrects Addendum 4's
-  mechanism attribution and Addendum 7 supersedes the v1 discriminant) — the cross-file-binding seam
+  Architect-approved 2026-06-30; **addenda 4–14**, 2026-07-02 — note Addendum 5 corrects Addendum 4's
+  mechanism attribution, Addendum 7 supersedes the v1 discriminant, Addendum 12 retires the §7(8)
+  cross-language reliance, and Addendum 13 retracts the exact-case-channel mechanism pin in favour of
+  the behavioural shape table) — the cross-file-binding seam
   (A-3 confirmed; Seam B chosen) + the channel-model probe evidence.
 - **Constitution:** CONST-gitnexus-apex v1.1.1. **Security-critical = false** (operates on WI-1's safe-parsed
   output + WI-2's resolution model; introduces no new untrusted-source parse path — SECT-001 stays WI-1's).
@@ -1067,8 +1069,9 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     standalone edge, per REQ-005 v1.3 — observable via the member access it enables) — all with **no import
     statement and no synthetic IMPORTS edge**. The match is case-insensitive (the
     folded global key) for every reference kind EXCEPT the heritage forms — for the ctor/free-call kind
-    this rides the §7(11) [Gate-3 reliance] (committed fold-retry fallback for miss-shapes; Phase-5 for
-    the hit-shape), and for the qualified nested forms it rides §7(13) (outer segment) and §7(5)'s
+    this rides the §7(11) [Gate-3 reliance] (committed WI-2-machinery extension — the folding ctor path
+    reaching the workspace key; for the hit-shape the extension must precede the raw exact-case channel,
+    else Phase-5 escalation), and for the qualified nested forms it rides §7(13) (outer segment) and §7(5)'s
     fold-extended fallback (tail segment) — reliance-backed commitments, not pinned host behaviour — the host's inheritance
     pre-pass precedes the registration and suppresses retry, so case-varied `extends`/`implements` is
     the ratified SRS v1.8(i) bounded liveness limitation (exact-case heritage resolves via the host's
@@ -1174,10 +1177,12 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
 - **`languages/apex/namespace-siblings.ts`** (new) — `populateApexNamespaceSiblings(parsedFiles, indexes,
   ctx)`: iterate each **`parsedFile.scopes`**, mirroring the Java package-siblings iteration
   (`java/package-siblings.ts:95-105`): select the **class-kind scopes whose `parent` is the file's Module
-  scope** and take the FIRST class-like `SymbolDefinition` from each such scope's `ownedDefs` (one def per
-  scope, the Java precedent's take-first-and-break — a class-kind scope's `ownedDefs` also carries
-  Property/member defs, and a degenerate error-recovery scope could carry more than one class-like def;
-  each selected def is then guard-counted per folded key) (the defs carry
+  scope** and take the FIRST class-like `SymbolDefinition` from each such scope's `ownedDefs` as the
+  INJECTION candidate (the Java precedent's take-first — a class-kind scope's `ownedDefs` also carries
+  Property/member defs) while **guard-counting EVERY class-like def in the scope** (a degenerate
+  error-recovery scope can carry more than one): all class-like defs contribute their folded keys to
+  the collision count, only the first is injectable — so the §2 no-mis-bind guarantee holds per
+  EXISTING def, and a same-folded-name pair co-owned by one degenerate scope still trips inject-none (the defs carry
   `nodeId`, `type`, `filePath` — the discriminant fields below). All four Apex type-declaration kinds
   create class-kind scopes (`class`/`interface`/`enum`/`trigger_declaration` → `@scope.class`,
   `languages/apex/query.ts:38-41`), so the scope shape is total over the injectable kinds. This selects
@@ -1501,6 +1506,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   case-varied one via the folded key — binds the trigger def (a REQ-004 non-referenceability breach,
   bounded to invalid, uncompiled source; Architect-accepted 2026-07-02). Pinned by fixture as the
   documented behaviour, not asserted as correct resolution.
+- **Trigger-body cross-file chain (REQ-011 ∘ REQ-009)** — a multi-segment field chain rooted in a
+  trigger body (`h.next.name` — the field-access fixpoint operating from trigger scope): per-segment
+  ACCESSES from the trigger container. The §2(3b) not-free-fallout reasoning applies to the chain pass
+  as to the argument side — covered by the §7(3b) reliance class and its committed fallback. §8 fixture.
 - **Trigger-body overloaded call (REQ-011 ∘ REQ-008)** — a trigger body calls an overloaded user-defined
   static method (`Handler.log(7)` with `log(Integer)`/`log(String)` declared) → REQ-008 narrowing runs
   over the cross-file overload set from trigger scope: the exact-type match resolves (CALLS from the
@@ -1782,6 +1791,8 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   local-shadows-global fixture pins the **enclosing-scope shape** (§4): a nested type in the outer class,
   the reference in the outer's method body, a same-named top-level type injected from another file → the
   member edge targets the NESTED type's member, never the global's;
+- **trigger-body cross-file chain** — `h.next.name` from the trigger body → per-segment ACCESSES
+  (`next`, then `name`) from the trigger container (REQ-011 ∘ REQ-009, §7(3b));
 - **trigger-body external reference (REQ-011 invariant)** — `System.debug(...)` and `Trigger.new` in the
   trigger body → no edge, no Apex-specific defect record, run completes (the §2 invariant's acceptance);
 - **trigger-body overloaded call** — `Handler.log(7)` with `log(Integer)`/`log(String)` from a trigger body
