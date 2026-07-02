@@ -1390,7 +1390,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   outcome rides the §7(1) end-to-end [Gate-3 reliance] (the injected binding winning for the typed-receiver
   member form) — asserted by a §8 fixture, not pinned. No throw; the
   external case stays unresolved precisely when there is no user-defined type of that name.
-- **Nested-type cross-file qualified access** — `Outer.Inner` referenced from another file **resolves**
+- **Nested-type cross-file qualified access, all case dimensions** — `Outer.Inner`, outer-varied
+  `OUTER.Inner` (§7(13)), and tail-varied `Outer.INNER` (§7(5)'s fold-extended fallback) each referenced
+  from another file **resolve** — the REQ-010 case-insensitivity SHALL has no silent gap in the
+  qualified form. Base bullet: `Outer.Inner` referenced from another file **resolves**
   (REQ-010 SHALL — an unambiguous user-defined cross-file reference): `Outer` is globally visible (REQ-010)
   and `.Inner` resolves as a nested-type member lookup on it. **[Gate-3 reliance]** that the host resolves a
   nested *type* as a member of its outer's global binding (RESEARCH-003 validated simple-name visibility, not
@@ -1584,7 +1587,8 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   foreclosure — its exact-case first-match behaviour on duplicates is the §3 parity-accepted limitation
   (validated 2026-07-02). The only reachable multi-binding case on the bindings channel is (8); (5)
   qualified nested-type access (`Outer.Inner`) resolving via the outer's global binding + nested-type member
-  lookup; (6) the host edge-label selection (EXTENDS vs IMPLEMENTS by target kind) for a cross-file
+  lookup — incl. the TAIL-varied form (`Outer.INNER`): the committed nested-type member-resolution fallback
+  folds the member segment if the host lookup does not; (6) the host edge-label selection (EXTENDS vs IMPLEMENTS by target kind) for a cross-file
   interface-extends-interface source (the REQ-012-parity behaviour); (7) whether a non-exported top-level
   type so injected actually **resolves cross-file** — that the host global lookup does not visibility-filter.
   A non-exported type is a *user-defined* symbol, so a host filter blocking it is a **WI-3 REQ-010 resolution
@@ -1619,10 +1623,15 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   cannot reach the workspace keys; SRS v1.8). **The ctor arm is SAFETY-BEARING for the case-variant
   trigger/class twin's ctor form (§4):** there the exact-case channel HITS the trigger def, so only a
   folded lookup INSIDE the walk (before the QualifiedNameIndex fallback) can win — a
-  fold-retry-after-miss shape is insufficient. **No workable Apex-local fallback exists for this arm**
-  (a receiver-binding synthesis has no receiver at a ctor site; dual-key raw injection cannot match a
-  reference in the TRIGGER's case): if the ctor-arm fixture is red at Gate 3, the sole remediation is
-  **Phase-5 escalation to the Architect** — stated here so a red fixture leaves nothing to improvise. (12) **Single-registry sufficiency** (§3 pin) — Apex declared-type/instance-receiver typing
+  fold-retry-after-miss shape is insufficient. **Remediation splits by SHAPE:** for the MISS-shapes
+  (`new ENGINE()` — exact-case channel finds nothing; valid-twin `new Foo()` — two-def key, guard binds
+  nothing) a committed **Apex-local fold-retry pass addition** IS workable (the exact-case channel has
+  already missed, so a folded retry against the workspace key fires) and is the committed fallback; for
+  the HIT-shape (case-variant twin `new Twist()` — the exact-case channel BINDS the trigger first) no
+  Apex-local fallback exists (a receiver-binding synthesis has no receiver at a ctor site; a
+  fold-retry-after-miss never fires; dual-key raw injection cannot match a reference in the TRIGGER's
+  case): a red hit-shape fixture's sole remediation is **Phase-5 escalation to the Architect** — stated
+  here so a red fixture leaves nothing to improvise. (12) **Single-registry sufficiency** (§3 pin) — Apex declared-type/instance-receiver typing
   resolves injected names via `lookupBindingsAt` without the `workspaceTypeBindings` channel; committed
   remediation: add that second write to the Apex hook. (13) **Qualified-outer folding** — whether the
   `OUTER` segment of a qualified nested reference (`OUTER.Inner`) folds before reaching the workspace
@@ -1677,9 +1686,10 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   `b.member` to resolve to B's member across files;
 - **nested-type qualified access** — `Outer.Inner` referenced from another file **resolves** (REQ-010 SHALL)
   via `Outer`'s global binding + nested-type member lookup; resolution is required (committed mechanism, not
-  de-scoped), never a mis-bind; asserted for the exact-case AND the **case-varied** (`OUTER.Inner`)
-  qualified forms (the outer name reaching the folded key — the §7(13) qualified-outer-folding reliance,
-  with its committed fallback);
+  de-scoped), never a mis-bind; asserted for the exact-case, the **outer-varied** (`OUTER.Inner` — the §7(13)
+  qualified-outer-folding reliance) AND the **tail-varied** (`Outer.INNER` — the §7(5) nested-member
+  lookup's case dimension, its committed nested-type member-resolution fallback extended to fold the
+  member segment) qualified forms;
 - **valid nested/top-level name share** — nested `Outer.Helper` + top-level `class Helper` (legal Apex) →
   the top-level `Helper` injects alone (owning-scope discriminant) and resolves cross-file; no false
   collision (REQ-010 on valid source);

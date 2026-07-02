@@ -260,6 +260,16 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toEqual([]);
   });
 
+  it('resolves TAIL-VARIED qualified nested access (Outer.INNER → d.ping()) via the folded member segment (REQ-010/§7(5))', () => {
+    // The third case dimension of the qualified form: the outer is exact-case, the member
+    // segment case-varied — rides §7(5)'s fold-extended nested-member fallback.
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'ping' && e.sourceFilePath.includes('TailCase'),
+      ),
+    ).toBeDefined();
+  });
+
   it('does NOT inject a nested type by bare simple name — bare Inner stays unresolved (REQ-015)', () => {
     // [conservative-negative; see WI-3-red-gate.md] — never mis-binds; anchored red
     // by the qualified-access positive above.
