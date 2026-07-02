@@ -4,5 +4,6 @@ public class StaticReader {
         Integer l = Consts.MAX_SIZE;
         Integer f = CONSTS.FLOOR;
         Color c = Color.RED;
+        Color c2 = COLOR.BLUE;
     }
 }

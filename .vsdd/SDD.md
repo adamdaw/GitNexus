@@ -1280,12 +1280,19 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   matter; (b) *whether resolving it is parity-correct* — a **WI-4 REQ-012** question (WI-4 may add a
   visibility filter to match the benchmark), a disclosed forward-dependency in the manner SDD-001 disclosed
   for the `Property` label. The §8 acceptance is the hard "resolves cross-file" of (a). **Injection algorithm (one procedure, no get-or-create-then-push):** first
-  **group** the selected type defs by their `normalizeIdentifier`-folded simple name; then for each key
+  **group ALL guard-counted class-like defs** (every class-like def owned by a Module-parented
+  class-kind scope — not only the first-per-scope injection candidates) by their
+  `normalizeIdentifier`-folded simple name; then for each key
   inject a binding into `workspaceFqnBindings` — the key is **`normalizeIdentifier(def.qualifiedName)`**
   (the def's only name-bearing field; guaranteed BARE for the owning-scope-selected top-level defs by the
   extractor fallback `qualifiedName: nameCap.text`, `scope-extractor.ts:591`) — **iff the group has
-  exactly one distinct `nodeId`** — a key
-  with ≥2 distinct-`nodeId` defs injects **nothing** (it is never created). So a folded key carries **at most
+  exactly one distinct `nodeId` AND that def is a first-per-scope injection candidate** (a unique-keyed
+  NON-first def injects nothing — a residual invalid-source-only liveness loss of the v1.9 disposition
+  class, reachable only in a degenerate error-recovery scope owning >1 class-like def) — a key
+  with ≥2 distinct-`nodeId` defs injects **nothing** (it is never created). The injected value is
+  **`{ def, origin: 'namespace' }`** with no `via` — the csharp workspace-channel precedent
+  (`csharp/namespace-siblings.ts:688`; `origin` is required on `BindingRef` and at least one host
+  consumer discriminates on it). So a folded key carries **at most
   one** Apex binding by construction; the no-mis-bind safety property is **guaranteed Apex-locally at
   injection** (no 2-binding Apex bucket can ever form). **This forecloses the §2 / §7(4) "host treats a
   >1-bucket as ambiguous" reliance for Apex-internal duplicates** — a >1 Apex bucket can never reach the host
@@ -1704,7 +1711,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   own-scope MRO walk);
 - **cross-file mutual/cyclic chain** — `class A{B b;}` (file A) / `class B{A a;}` (file B), `a.b.a…` resolves
   the reachable segments and terminates (bounded fixpoint), no hang/throw;
-- **case-varied cross-file** — `ACCOUNT`/`account` resolving across files via the folded global key,
+- **case-varied cross-file** — `ACCOUNT`/`account` resolving across files via the folded global key —
+  including the **enum-constant receiver** (`COLOR.BLUE` with `enum Color` — the weakest arm's
+  case-dimension: the folded workspace key composed with the §2 enum-constant member-lookup fallback) —
   asserted for the instance-receiver form AND for the **static type-name-receiver forms** (a case-varied
   cross-file static field read `CONSTS.FLOOR` and a case-varied trigger-body static call
   `ACCOUNTHANDLER.notify()`) AND for the **constructor** (`new ENGINE()`) form — delivered by the WI-2 folding ctor path reaching
@@ -1793,6 +1802,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   member edge targets the NESTED type's member, never the global's;
 - **trigger-body cross-file chain** — `h.next.name` from the trigger body → per-segment ACCESSES
   (`next`, then `name`) from the trigger container (REQ-011 ∘ REQ-009, §7(3b));
+- **trigger-body nested-qualified** — `Kit.Part p = new Kit.Part(); p.snap()` in the trigger body →
+  CALLS from the trigger container (REQ-011 ∘ the §7(5)/(13) qualified resolution — the trigger-scope
+  composition is not assumed free, mirroring the chain/overload compositions);
 - **trigger-body external reference (REQ-011 invariant)** — `System.debug(...)` and `Trigger.new` in the
   trigger body → no edge, no Apex-specific defect record, run completes (the §2 invariant's acceptance);
 - **trigger-body overloaded call** — `Handler.log(7)` with `log(Integer)`/`log(String)` from a trigger body

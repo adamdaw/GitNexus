@@ -336,6 +336,16 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toBeDefined();
   });
 
+  it('resolves a CASE-VARIED enum-constant receiver (COLOR.BLUE) via the folded key (REQ-010/§2 enum arm)', () => {
+    // The weakest arm's case dimension: folded workspace key ∘ the enum-constant
+    // member-lookup fallback (§2 arm-specific disposition).
+    expect(
+      getRelationships(result, 'ACCESSES').find(
+        (e) => e.target === 'BLUE' && e.targetFilePath.includes('Color'),
+      ),
+    ).toBeDefined();
+  });
+
   it('resolves a cross-file enum constant via a type-name receiver (Color.RED) via ACCESSES (REQ-010)', () => {
     expect(
       getRelationships(result, 'ACCESSES').find(
@@ -782,6 +792,13 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
     const access = getRelationships(result, 'ACCESSES').find((e) => e.target === 'MAX_SIZE');
     expect(access).toBeDefined();
     expect(fromTrigger(access!)).toBe(true);
+  });
+
+  it('resolves trigger-body nested-qualified access (Kit.Part p; p.snap()) from the trigger (REQ-011 ∘ §7(5)/(13))', () => {
+    // The trigger-scope ∘ qualified-resolution composition — not assumed free.
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'snap');
+    expect(call).toBeDefined();
+    expect(fromTrigger(call!)).toBe(true);
   });
 
   it('resolves a trigger-body cross-file chain (h.next.name) per segment from the trigger (REQ-011 ∘ REQ-009)', () => {

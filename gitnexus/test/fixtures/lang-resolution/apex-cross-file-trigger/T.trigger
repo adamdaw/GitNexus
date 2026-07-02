@@ -9,6 +9,8 @@ trigger T on Account (before insert) {
     String nm = h.next.name;
     Integer m = AccountHandler.MAX_SIZE;
     Level v = Level.HIGH;
+    Kit.Part p = new Kit.Part();
+    p.snap();
     AccountHandler.log(7);
     AccountHandler.pick('x');
     AccountHandler d;
