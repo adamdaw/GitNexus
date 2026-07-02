@@ -4,4 +4,8 @@ public class AccountHandler {
     public static final Integer MAX_SIZE = 5;
     public static void handle() {}
     public void process() {}
+    public static void log(Integer n) {}
+    public static void log(String s) {}
+    public static void pick(AccountHandler h) {}
+    public static void pick(Level l) {}
 }

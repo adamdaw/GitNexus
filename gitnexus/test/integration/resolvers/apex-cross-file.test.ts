@@ -253,6 +253,23 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
   });
 
+  it('leaves a cross-file reference to a non-existent type unresolved, no throw (REQ-015/NFR-001)', () => {
+    // NoTarget references `Missing`, declared nowhere. [conservative-negative; see
+    // WI-3-red-gate.md] — value is no-throw + no phantom binding; anchored red by the
+    // resolving its in this describe.
+    expect(result).toBeDefined();
+    const calls = getRelationships(result, 'CALLS');
+    expect(calls.filter((e) => e.target === 'poke' && e.sourceFilePath.includes('NoTarget'))).toEqual([]);
+    expect(calls.filter((e) => e.target === 'Missing')).toEqual([]);
+  });
+
+  it('emits no synthetic IMPORTS edge for Apex cross-file resolution (REQ-010 Seam-B observable)', () => {
+    // The §2 postcondition "no import statement and no synthetic IMPORTS edge": Apex has no
+    // imports, so cross-file resolution must add zero import machinery to the graph.
+    // [conservative-negative; see WI-3-red-gate.md] — anchored red by the resolving its above.
+    expect(getRelationships(result, 'IMPORTS')).toEqual([]);
+  });
+
   it('leaves no dangling resolution edges', () => {
     expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
   });
@@ -419,6 +436,35 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     ).toBeDefined();
   });
 
+  it('resolves a valid same-name trigger+class twin to the CLASS, never the trigger (§4/REQ-004)', () => {
+    // Twin.trigger + Twin.cls are VALID Apex. The §3 exclusion keeps the trigger out of the
+    // injection, so `Twin t = new Twin(); t.spin()` resolves to the class (genuinely red
+    // pre-impl — probed 2026-07-02: the fallback channel resolves neither twin form).
+    const spin = getRelationships(result, 'CALLS').find((e) => e.target === 'spin');
+    expect(spin, 't.spin() resolves to the class member').toBeDefined();
+    expect(spin!.targetFilePath, 'declared in Twin.cls').toContain('Twin.cls');
+    // REQ-004 guard: no resolution edge ever targets the trigger def.
+    for (const type of ['CALLS', 'ACCESSES', 'EXTENDS', 'IMPLEMENTS']) {
+      expect(
+        getRelationships(result, type).filter((e) => e.targetFilePath.endsWith('Twin.trigger')),
+        `no ${type} edge into the trigger def`,
+      ).toEqual([]);
+    }
+  });
+
+  it('injects a trigger misfiled in a .cls file — a case-varied reference binds it (§4/§A.13 limitation)', () => {
+    // PINNED LIMITATION BEHAVIOUR (Architect-accepted 2026-07-02): the .cls extension is the
+    // only resolution-side discriminant, so the misfiled trigger def passes the §3 predicates
+    // and IS injected under its folded key — the case-varied `new PHANTOM()` resolves only via
+    // that injection (genuinely red pre-impl). Asserted as the documented limitation, not as
+    // correct resolution (REQ-004 non-referenceability breach, invalid-source-only).
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'Phantom' && e.sourceFilePath.includes('PhantomCaller'),
+      ),
+    ).toBeDefined();
+  });
+
   it('leaves no dangling resolution edges', () => {
     expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
   });
@@ -477,6 +523,35 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
     expect(fromTrigger(access!)).toBe(true);
   });
 
+  it('narrows a trigger-body overloaded static call (AccountHandler.log(7)) to log(Integer) (REQ-011 ∘ REQ-008)', () => {
+    // The §4 trigger-body overload composition: REQ-008 narrowing over a cross-file overload
+    // set, with the disambiguating argument typed in TRIGGER scope (§7(3b) — not free fallout
+    // of WI-2, which excluded triggers).
+    const logCalls = getRelationships(result, 'CALLS').filter((e) => e.target === 'log');
+    const exact = logCalls.find((e) => e.rel.targetId.includes('Integer'));
+    expect(exact, 'log(Integer) resolved from the trigger').toBeDefined();
+    expect(fromTrigger(exact!), 'edge originates from the trigger container node').toBe(true);
+    expect(
+      logCalls.find(
+        (e) => e.rel.targetId.includes('String') && !e.rel.targetId.includes('Integer'),
+      ),
+      'must not bind log(String)',
+    ).toBeUndefined();
+  });
+
+  it('leaves an undisambiguable trigger-body overload unresolved AND records it (REQ-011 ∘ REQ-015)', () => {
+    // pick(AccountHandler)/pick(Level) called with a String literal: equal arity, no exact
+    // match -> ambiguous. REQ-015's two obligations, from trigger scope.
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'pick').length,
+      'obligation 1: no binding edge',
+    ).toBe(0);
+    expect(
+      suppressed(result).some((o) => o.name === 'pick'),
+      'obligation 2: the undisambiguable pick call is recorded unresolved',
+    ).toBe(true);
+  });
+
   it('binds a bare declared-type usage in a trigger body with NO standalone edge (REQ-011 v1.4)', () => {
     // `AccountHandler h` / `Level v` bind (proven by h.process()/h.name/Level.HIGH
     // resolving above); the binding itself emits no USES edge (REQ-005 v1.3 parity).
@@ -492,8 +567,9 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
   });
 
   it('records no unresolved/suppressed outcome for the resolving trigger references (REQ-006)', () => {
+    // `pick` is excluded: its undisambiguable call is a REQ-015 reference the host records.
     const resolvingNames = new Set([
-      'handle', 'process', 'name', 'MAX_SIZE', 'HIGH', 'AccountHandler',
+      'handle', 'process', 'name', 'MAX_SIZE', 'HIGH', 'AccountHandler', 'log',
     ]);
     expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
   });

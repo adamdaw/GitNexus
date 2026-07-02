@@ -174,3 +174,50 @@ REQ-010 cross-file enabler, with the folded global-key injection, and treats REQ
 as a Gate-3-validated design obligation (not assumed-free).** Architect approval of the seam (Seam B) granted
 2026-06-30; this artifact records the verified basis. Architect approval of this conclusion + the SDD-003
 purity boundary gates Gate 2.
+
+## Addendum 4 (2026-07-02) — workspace fallback channel: pre-hook cross-file resolution (objective probe)
+
+**Method.** The WI-3 Step-3a suite (48 multi-file integration tests) was executed against the
+pre-implementation host (no Apex `populateNamespaceSiblings` registered, `workspaceFqnBindings` empty of
+Apex keys), followed by a direct pipeline probe dumping every CALLS/ACCESSES/EXTENDS/IMPLEMENTS edge for
+three fixtures (`apex-cross-file`, `apex-cross-file-collision`, `apex-cross-file-trigger`). Reproducible:
+run the suite at commit `08b804cf`; probe script recorded in the 2026-07-02 session log.
+
+**Observed — resolved with NO WI-3 code (exact-case forms only):**
+
+```
+IMPLEMENTS  SubIface (SubIface.cls) -> Iface (Iface.cls)
+EXTENDS     Derived (Derived.cls)   -> Base (Base.cls)
+IMPLEMENTS  Derived (Derived.cls)   -> Iface (Iface.cls)
+EXTENDS     Child (Child.cls)       -> Base (Base.cls)
+ACCESSES    read (StaticReader.cls) -> MAX_SIZE (Consts.cls)   [Property:Consts.cls:Consts.MAX_SIZE]
+CALLS       greet (Derived.cls)     -> greet (Base.cls)        [Method:Base.cls:Base.greet#0]
+CALLS       Derived (Derived.cls)   -> Base (Base.cls)         [Constructor:Base.cls:Base.Base#0]
+CALLS       run (App.cls)           -> Engine (Engine.cls)     [Class:Engine.cls:Engine]
+CALLS       go (DupCaller.cls)      -> Dupe (DupOne.cls)       [with class DUPE present in DupTwo.cls]
+CALLS       go (RogueCaller.cls)    -> Rogue (Rogue.trigger)   [class def misfiled in a .trigger file]
+CALLS       T (T.trigger)           -> handle (AccountHandler.cls)   [source = trigger container node]
+CALLS       T (T.trigger)           -> AccountHandler (AccountHandler.cls)
+ACCESSES    T (T.trigger)           -> MAX_SIZE (AccountHandler.cls)
+```
+
+**Observed — NOT resolved pre-hook (all red):** every instance-receiver member form (`e.start()`,
+`held.label`, chains, cross-file inherited member, `h.process()`/`h.name` in a trigger), every case-varied
+form (`new ENGINE()`, `e.STOP()`), enum-constant access (`Color.RED`, `Level.HIGH`), all overload narrowing
+(incl. static `Target.sf(7)`), and nested `Outer.Inner`.
+
+**Mechanism (read-verified).** `workspace-index.ts` precomputes a workspace-wide
+`simpleName → FIRST module-local callable def` table (its header names it "the workspace-wide fallback of
+`findExportedDefByName`"), and the heritage pass resolves parent/interface names workspace-wide. Both are
+exact-case, first-match, language-hook-independent, and do not consult `workspaceFqnBindings` — so the §3
+inject-none collision guard cannot govern them. This is the evidentiary basis for the SDD-003 §1
+two-channel model, the §2/§7(4) bindings-channel scoping of the no-mis-bind foreclosure, and the §3/§4
+fallback-channel §A.13 limitation (duplicate-name ctor/heritage/static-receiver references bind
+exact-case-first; a class misfiled in a `.trigger` file is bindable via this channel). Architect-accepted
+2026-07-02.
+
+**Validated-true reliances (early).** §7(3) static-call/static-field arms incl. the REQ-011
+edge-from-trigger source attribution (the host natively attributes trigger-body edge sources to the trigger
+container node); §7(6) EXTENDS/IMPLEMENTS edge-label selection for a cross-file interface-extends-interface
+source. The bindings-channel reliances (§7(1) instance-receiver arms, (2), (3b), (5), (7), (8), (9), (10))
+remain Gate-3-validated at Step 3b.

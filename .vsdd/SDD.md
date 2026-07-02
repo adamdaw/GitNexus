@@ -917,9 +917,11 @@ at WI-3.
 
 # SDD-003 — WI-3: Cross-file binding & trigger resolution
 
-- **Consumes:** SRS-001 **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body resolution);
+- **Consumes:** SRS-001 (**v1.5**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
+  resolution), with REQ-015 as amended v1.5 (the bounded fallback-channel exception);
   the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
-  Architect-approved 2026-06-30) — the cross-file-binding seam (A-3 confirmed; Seam B chosen).
+  Architect-approved 2026-06-30; addendum 4, 2026-07-02) — the cross-file-binding seam (A-3 confirmed;
+  Seam B chosen) + the two-channel probe evidence.
 - **Constitution:** CONST-gitnexus-apex v1.1.1. **Security-critical = false** (operates on WI-1's safe-parsed
   output + WI-2's resolution model; introduces no new untrusted-source parse path — SECT-001 stays WI-1's).
   No new SEC clause.
@@ -1045,7 +1047,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     (local-over-global).
   - *Invariant:* conservative skip is preserved **on the bindings channel** — a cross-file reference whose
     resolution flows through `lookupBindingsAt` and finds no unique global target (none, or two
-    folded-same-name top-level types) emits no edge and is recorded unresolved (REQ-015); cross-file does
+    folded-same-name top-level types) emits no edge and is recorded unresolved (REQ-015 — discharged via the host's internal unresolved
+    stats (`ResolveStats.unresolved`, logged, not exposed on the pipeline result); the **black-box
+    observable** for an injection-guard miss is edge ABSENCE, the WI-2 observability model — a
+    `suppressed` outcome exists only where an ambiguity reaches the host resolver); cross-file does
     not relax conservatism. **For Apex-internal duplicates this no-mis-bind property is guaranteed
     Apex-locally on that channel** by the §3 collision guard (it injects ≤1 binding per folded key), so it
     does **not** depend on the host's >1-bucket handling — that host reliance is **foreclosed** for Apex
@@ -1073,8 +1078,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     captured and the trigger participates as a scope like any container. The edge **originating from the trigger
     container node** is a **[structural obligation]** (REQ-011 *requirement text*, "from the trigger" — a
     target WI-3 must meet, the §8 fixture asserts it); whether the host's **default** edge-attribution already
-    puts the source on the trigger (vs an inner body scope) is an **Architect-accepted [Gate-3 reliance]**
-    (held for Gate-3 validation, 2026-06-30). Unlike the
+    puts the source on the trigger (vs an inner body scope) was an **Architect-accepted [Gate-3 reliance]**
+    (held 2026-06-30) — **validated TRUE 2026-07-02** (RESEARCH-003 Addendum 4: the host natively
+    attributes trigger-body edge sources to the trigger container node; fixture-pinned). **The reserved
+    source-attribution contingency below is therefore discharged/moot.** Unlike the
     static-receiver fallback (grounded in the existing `apexReceiverBinding` hook), no current hook is known
     to control edge *source* attribution and RESEARCH-003 did not probe it. **The satisfaction path is
     bounded (pre-authorised), not open-ended:** the source for a body reference is set from its **enclosing
@@ -1114,9 +1121,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
 
 - **`languages/apex/namespace-siblings.ts`** (new) — `populateApexNamespaceSiblings(parsedFiles, indexes,
   ctx)`: iterate each **`parsedFile.localDefs`** (these are `SymbolDefinition`s — the same shape the C#
-  precedent iterates — carrying `label`, `qualifiedName` and `filePath`, the discriminant fields below), and
+  precedent iterates — carrying `type`, `qualifiedName` and `filePath`, the discriminant fields below), and
   select the **top-level non-trigger user-defined type defs** (class / interface / enum) to inject.
-  **Predicate 1 — def kind:** `def.label ∈ {Class, Interface, Enum}` (inject **only type defs**, never a
+  **Predicate 1 — def kind:** `def.type ∈ {Class, Interface, Enum}` (`SymbolDefinition.type: NodeLabel`,
+  `gitnexus-shared/src/scope-resolution/symbol-definition.ts:30` — the def carries no `label` field) (inject **only type defs**, never a
   method/field/property/enum-constant member — a member must never enter `workspaceFqnBindings` as a global
   type binding, else `new foo()` could mis-bind to a method; **[structural]**). **Predicate 2 — top-level by
   qualified-name shape:** WI-1's Apex
@@ -1146,7 +1154,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   mis-bound). Triple-narrow (a malformed file + a re-parented fragment + an exact folded-name collision with a
   valid type), invalid-source-only, a **liveness** limitation only — safety (no mis-bind) is preserved
   unconditionally **on the bindings channel**.
-  **Fallback-channel limitation (§A.13, Architect-accepted 2026-07-02):** the guard governs only the
+  **Fallback-channel limitation (§A.13, Architect-accepted 2026-07-02; ratified at SRS level as the
+  v1.5 REQ-015 bounded exception — not an SDD-side-only narrowing):** the guard governs only the
   channel WI-3 writes. The pre-existing §1 fallback channel (exact-case first-match, all languages, no
   provider hook) resolves ctor / heritage / static-type-name-receiver references to a duplicate simple
   name by binding the exact-case (ties: first) match — verified on the real host (`new Dupe()` bound with
@@ -1165,6 +1174,15 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   declared only in `.trigger` files; classes/interfaces/enums only in `.cls` — so inject only `.cls`-sourced
   defs. (A trigger is a *referencing* container, never a *referenced* type; injecting one would let
   `new Foo()` / `Foo.x` mis-bind to a trigger — REQ-004 non-referenceability / REQ-015.)
+  **Mirror limitation — trigger misfiled in a `.cls` file (§A.13, Architect-accepted 2026-07-02):** the
+  extension is the only trigger discriminant available on the resolution-side def (triggers and classes
+  share `type=Class` on the resolution-side def; `apexConstruct` is graph-only, and re-deriving the declaration node kind in the
+  hook would require an AST re-walk with a worker-path fallback — beyond pure registration). So a
+  `trigger_declaration` *mis-declared* in a `.cls` file passes both predicates and **is injected** as a
+  referenceable global name: a reference to that name can bind the trigger def (for a correctly-filed
+  trigger the exclusion prevents exactly this). **Invalid Apex** (a trigger is declared only in a
+  `.trigger` file), uncompiled-source-only, bounded to the misfiled def's own name; symmetric with the
+  class-in-`.trigger` mirror (§4) and pinned by a §8 fixture.
   **Injection policy = inject-all (REQ-010 determinate, a deliberate *permissive* choice — NOT the
   Constitution §1.2 "conservatism" term):** WI-3 injects every top-level non-trigger type **irrespective of
   access modifier** (`public`/`global`/`private`) — the **denotational code-graph default** (GitNexus graphs
@@ -1199,8 +1217,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   shared-registry surface — it is asserted for the registration mechanics and Gate-3-validated for the
   cross-language key interaction. Mirrors `languages/csharp/namespace-siblings.ts` (the global-namespace
   path). **WI-3 is pure registration — no shared-code edit, no new seam** (the discriminant, the trigger
-  exclusion, and the collision guard are Apex-local). The hook is pure given `parsedFiles`; the write target
-  is the host's post-finalize append-only registry handed in by the hook contract.
+  exclusion, and the collision guard are Apex-local). **Purity boundary (restated):** the pure core is the def-selection + key-folding computation (a
+  standalone helper, unit-anchored per §7); the hook itself is the **effectful shell writer** — it
+  performs the sanctioned post-finalize append into `workspaceFqnBindings` via the localized
+  ReadonlyMap→Map cast, exactly as the csharp precedent does (`csharp/namespace-siblings.ts:639`).
 - **`languages/apex/scope-resolver.ts`** — register `populateNamespaceSiblings: populateApexNamespaceSiblings`
   on `apexScopeResolver`. (`resolveImportTarget` stays `() => null`; `propagatesReturnTypesAcrossImports`
   stays `false` — no imports.)
@@ -1263,7 +1283,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   trigger body → resolved edge (REQ-011).
 - **Cross-file reference to a non-existent or external type** — no unique user-defined global target →
   unresolved (REQ-015), no throw; an external sObject/stdlib reference is benign-unresolved (REQ-013/WI-4,
-  but no throw here).
+  but no throw here). Asserted by a dedicated §8 fixture reference (`new Missing()` / `m.poke()` with no
+  `Missing` declared anywhere → zero edges, run completes).
 - **Duplicate global simple name** — two top-level types folding to one global key → the §3 guard injects
   **nothing** for that key → the **member path** (typed-receiver resolution, e.g. `Dupe d; d.hit()`) is
   unresolved Apex-locally, never mis-bound (REQ-015), with **no reliance on the
@@ -1295,7 +1316,7 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   unresolved (REQ-015), never mis-binding to a nested type. (Nested types are reachable only as `Outer.Inner`,
   the bullet above.)
 - **Class misfiled in a `.trigger` file (documented limitation)** — the trigger exclusion keys on
-  the `.trigger` extension (triggers and classes share `label=Class`, and `apexConstruct` is graph-only, §3),
+  the `.trigger` extension (triggers and classes share `type=Class`, and `apexConstruct` is graph-only, §3),
   so a class/interface/enum *mis-declared* in a `.trigger` file is excluded from **injection**: its
   case-folded / typed-receiver-member forms stay cross-file-unresolved on the bindings channel. Its
   exact-case ctor/heritage/static-receiver forms still bind via the §1 fallback channel (verified:
@@ -1304,6 +1325,26 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   `.cls`), so it is an invalid-source-only limitation — symmetric in spirit to the `.cls`-misfile
   case (which *is* injected) but dropped from injection because the extension is the only available
   trigger discriminant. No throw.
+- **Valid same-name trigger + class (`Foo.trigger` + `Foo.cls`, the SDD-001 §4 valid pair)** — the §3
+  exclusion drops the trigger def from injection, so the **class alone** is injected under the folded key:
+  a cross-file reference (`Foo f = new Foo(); f.run()`) resolves to the **class**, and **no resolution
+  edge ever targets the trigger def** (REQ-004 non-referenceability, fulfilled on the bindings channel).
+  Probed on the real host (2026-07-02): pre-injection the fallback channel does NOT mis-bind the twin
+  pair — it resolves neither (a pre-WI-3 liveness miss on valid source that the injection closes); the
+  post-injection class-wins outcome is asserted by a §8 fixture (genuinely red pre-impl).
+- **Trigger misfiled in a `.cls` file (documented §A.13 limitation, the mirror case)** — a
+  `trigger_declaration` saved in a `.cls` file passes the §3 predicates (`type=Class`, bare
+  `qualifiedName`, `.cls` extension) and **is injected**: a reference to its name — including a
+  case-varied one via the folded key — binds the trigger def (a REQ-004 non-referenceability breach,
+  bounded to invalid, uncompiled source; Architect-accepted 2026-07-02). Pinned by fixture as the
+  documented behaviour, not asserted as correct resolution.
+- **Trigger-body overloaded call (REQ-011 ∘ REQ-008)** — a trigger body calls an overloaded user-defined
+  static method (`Handler.log(7)` with `log(Integer)`/`log(String)` declared) → REQ-008 narrowing runs
+  over the cross-file overload set from trigger scope: the exact-type match resolves (CALLS from the
+  trigger container); an undisambiguable same-arity call (argument's static type matching neither
+  overload exactly) → unresolved + recorded (REQ-015). **[Gate-3 reliance]** — trigger-scope
+  argument typing is not free fallout of WI-2 (the §2 3b reasoning applies to the argument side as it
+  does to the receiver side); covered by the §7(3b) reliance arm and its committed fallback class.
 - **Reference into a skipped/malformed sibling file** — NFR-001 cross-file slice: cross-file resolution
   completes, the reference is left unresolved, no throw.
 - **Duplicate / colliding folded key (incl. malformed re-parented fragment) → inject none (REQ-015)** — when
@@ -1318,7 +1359,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
 - **Trigger with a partial / error-recovery body** — conservative skip of the malformed reference, no throw
   (NFR-001).
 - **Single-file repo / no cross-file references** — the injection is a no-op for resolution outcomes; no
-  regression of WI-2's same-unit behaviour.
+  regression of WI-2's same-unit behaviour. **Evidence: the full WI-2 same-unit suite staying green**
+  (regression evidence, not a new fixture — the WI-2 fixtures ARE the single-unit corpus).
 
 ## 5. Non-functional requirements (baked in)
 
@@ -1354,11 +1396,11 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   safe-parsed output). It guards no security/financial/data-integrity/safety/concurrency invariant, so no
   Prove obligation arises. Gate 5 for WI-3 reduces to the resolution-slice no-crash fuzz + mutation over the
   new `languages/apex/` cross-file code (same calibration as WI-1/WI-2, reached by per-property reasoning).
-- **Purity boundary.** Pure core = `populateApexNamespaceSiblings`' def-selection + key-folding (a pure
-  function of `parsedFiles` — no I/O, no module state, deterministic). The **write into
-  `workspaceFqnBindings` is the host's sanctioned post-finalize append channel** handed to the hook by the
-  pipeline contract (the host owns the index and the mutation point; the Apex hook supplies the pure
-  def→key computation) — identical to the csharp/java precedent. Dependency direction is shell→core (the
+- **Purity boundary.** Pure core = the def-selection + key-folding **helper** (a pure function of
+  `parsedFiles` — no I/O, no module state, deterministic; the §7 unit-anchor target).
+  `populateApexNamespaceSiblings` itself is the **effectful shell writer**: it appends the computed
+  bindings into `workspaceFqnBindings`, the host's sanctioned post-finalize append channel, via the
+  localized ReadonlyMap→Map cast — identical to the csharp/java precedent. Dependency direction is shell→core (the
   host pipeline invokes the Apex hook). Any trigger-scope addition (REQ-011) is likewise a pure capture/
   binding computation under `languages/apex/`.
 - **Tooling.** Host test framework (vitest) — integration resolution tests over **multi-file fixtures**
@@ -1376,8 +1418,10 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   `Handler.handle()` (REQ-011) and a cross-file static call `B.f()` (the WI-3 design risk; capture is
   probe-confirmed [structural], the edge-from-trigger is a [structural obligation], the host's *default*
   edge-attribution (an **Architect-accepted** reliance, held for Gate-3) and the *resolution* are the
-  reliances — with one committed fallback each), **and (3b) trigger-body instance-receiver typing** (a
-  trigger-scope local `h = new …; h.x` getting its type binding — not free fallout of WI-2, §2); (4) **FORECLOSED
+  reliances — with one committed fallback each), **and (3b) trigger-scope typing** — instance-receiver
+  typing (a trigger-scope local `h = new …; h.x` getting its type binding — not free fallout of WI-2, §2)
+  AND overload-argument typing from trigger scope (the REQ-011 ∘ REQ-008 composition, §4 — the same
+  not-free-fallout reasoning on the argument side; same committed-fallback class); (4) **FORECLOSED
   for Apex-internal duplicates ON THE BINDINGS CHANNEL** — the §3 collision guard injects ≤1 binding per
   folded key, so a >1 *Apex*
   bucket never reaches the host lookup; the host's ">1-bucket → ambiguous, not first-match" behaviour is moot
@@ -1442,8 +1486,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   de-scoped), never a mis-bind;
 - **collision / non-poisoning (REQ-015)** — two defs folding to one key (duplicate-named types, or a
   re-parented fragment colliding with a valid type) → **no member edge** through a typed receiver
-  (`Dupe d; d.hit()` — the §3 inject-none guard; observable as edge absence, a plain bindings-channel
-  miss). The ctor form (`new Dupe()`) binds exact-case-first via the §1 fallback channel — asserted as
+  (`Dupe d; d.hit()` — the §3 inject-none guard; the REQ-015 record obligation is discharged via the
+  host's internal unresolved stats — the black-box observable is edge ABSENCE, per the §2 observability
+  model). The ctor form (`new Dupe()`) binds exact-case-first via the §1 fallback channel — asserted as
   pinned host behaviour under the §3 parity-accepted limitation, NOT as a WI-3 resolution claim. The
   fragment-collision liveness loss for a colliding valid
   type is the documented §A.13 limitation (a black-box-observable absence of edge, not a mis-bind);
@@ -1469,7 +1514,23 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   dispatch), each from the trigger — the trigger-scope local-variable type-binding case (§2 reliance), a
   distinct fixture from the static-receiver case;
 - **conservatism** — a duplicate/ambiguous global simple name and a local-shadows-global case → the local or
-  the conservative-unresolved outcome, never a mis-bind (REQ-015);
+  the conservative-unresolved outcome on the bindings channel, never a mis-bind there (REQ-015);
+- **trigger-body overloaded call** — `Handler.log(7)` with `log(Integer)`/`log(String)` from a trigger body
+  → resolves `log(Integer)` (CALLS from the trigger container), must not bind `log(String)`; an
+  undisambiguable same-arity trigger-body call → unresolved + recorded (REQ-015) — the REQ-011 ∘ REQ-008
+  composition (§4);
+- **trigger misfiled in a `.cls` file** — pinned §A.13 limitation behaviour: the misfiled trigger def is
+  injected, so a (case-varied) reference to its name binds it (documented breach of REQ-004
+  non-referenceability, invalid-source-only — asserted as the limitation, not as correct resolution);
+- **valid twin (trigger + class sharing a name)** — `Foo f = new Foo(); f.run()` from another file →
+  resolves to the **class** (the injected def); no resolution edge targets the trigger def (REQ-004);
+- **non-existent type** — a cross-file reference to an undeclared type (`new Missing(); m.poke()`) →
+  zero edges, run completes (REQ-015/NFR-001);
+- **single-file / no-op** — evidenced by the WI-2 same-unit suite staying green (regression), not a new
+  fixture;
+- **no synthetic IMPORTS edge** — the Apex cross-file fixtures' graphs contain **zero** Apex
+  file-to-file `IMPORTS` edges (the REQ-010 postcondition's Seam-B observable: cross-file resolution
+  with no import machinery);
 - **NFR-001** — cross-file/trigger resolution no-crash on a partial tree + a reference into a skipped sibling
   file; **NFR-002** — peer resolver suites green.
 

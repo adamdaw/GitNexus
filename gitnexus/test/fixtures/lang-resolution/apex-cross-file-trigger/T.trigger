@@ -7,5 +7,7 @@ trigger T on Account (before insert) {
     String n = h.name;
     Integer m = AccountHandler.MAX_SIZE;
     Level v = Level.HIGH;
+    AccountHandler.log(7);
+    AccountHandler.pick('x');
     System.debug(n);
 }

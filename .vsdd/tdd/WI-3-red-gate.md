@@ -10,7 +10,12 @@ against the tagged tests.*
 ## Suite state at authoring
 
 WI-1 and WI-2 are DONE and green, so the WI-3 tests **run** (they do not skip). Measured
-state on the pre-impl host: **31 red / 25 passed of 56**; the full pre-existing apex + peer
+state on the pre-impl host after the Gate-2 round-1 fixes (findings F1–F4, all
+Architect-dispositioned 2026-07-02 — SRS v1.5, the trigger-in-`.cls` limitation, the
+trigger-body overload composition, the IMPORTS-absence assertion) and round-2 fixes
+(SRS v1.6 misfile exceptions, the valid-twin fixture, the non-existent-type fixture,
+purity/field-name/observability corrections): **35 red / 27 passed of
+62** (54 integration + 8 unit); the full pre-existing apex + peer
 suites stay green (312/312 across apex.test, apex-resolution.test, apex-resolution-hardening,
 apex-resolution-unit, java.test). No **test scaffolding** (`// vsdd:scaffold`) was needed —
 grammar, provider, and registration all exist from WI-1/WI-2, so there is no scaffold ledger
@@ -48,6 +53,15 @@ All bindings-channel targets: no Apex `populateNamespaceSiblings` is registered,
   no-false-suppressed assertion for the overload fixture (red: asserts against outcomes that
   only exist once resolution runs — anchored by the resolving its).
 - REQ-011 trigger instance-receiver forms (§7(3b)): `h.process()`, `h.name`.
+- Trigger-body overload composition (REQ-011 ∘ REQ-008, Gate-2 F3): `AccountHandler.log(7)`
+  → log(Integer) narrowing fails pre-impl (red); the trigger fixture's scoped REQ-006
+  assertion is red WITH it (the host currently mis-records the resolvable `log` call as a
+  `suppressed` ambiguity — Step 3b must make trigger-scope argument typing narrow it).
+- Trigger-misfiled-in-`.cls` limitation pin (Gate-2 F2, SRS v1.6): case-varied `new PHANTOM()`
+  resolves only via the folded-key injection — red until the hook injects the misfiled trigger def.
+- Valid twin (Gate-2 R2-2): `t.spin()` resolves to Twin.cls with Twin.trigger present — red
+  until the class-only injection lands (probed: the fallback channel resolves neither twin
+  form pre-impl); its REQ-004 no-edge-into-the-trigger guard is the paired negative.
 - §7 unit anchors (`apex-cross-file-unit.test.ts`, coverage-attributable per dogfood #16):
   all 8 fail via dynamic-import rejection — `languages/apex/namespace-siblings.ts` does not
   exist. They pin the §3 [structural] selection/folding/guard behaviour directly.
@@ -75,6 +89,17 @@ behaviour; they are kept as acceptance + regression guards (Architect-approved 2
 - Fallback-channel limitation pins (authored post-disposition, green by design):
   duplicate-name ctor binds exact-case-first (`new Dupe()` → DupOne.cls); misfiled-class
   ctor binds into the `.trigger` file (`new Rogue()`).
+- Undisambiguable trigger-body overload (`AccountHandler.pick('x')` → 0 CALLS + a
+  `suppressed` outcome named `pick`): already green — the fallback-channel static receiver
+  reaches the host's overload-ambiguity path pre-hook, which records the suppression. Kept
+  as REQ-015 acceptance + regression guard (both obligations asserted); must stay green at
+  Step 3b.
+- IMPORTS-absence (Gate-2 F4): zero IMPORTS edges in the main cross-file fixture — a
+  conservative-negative guard (Apex has no import machinery to emit; fails if cross-file
+  support ever synthesizes one). Anchored red by the resolving its in its describe.
+- Non-existent type (Gate-2 R2-7): `new Missing(); m.poke()` → zero edges, run completes —
+  a conservative-negative (a miss pre- and post-impl); anchored red by its describe's
+  resolving its.
 
 ## Conservative-negative assertions (no-red justification — Principle 3 residual)
 
