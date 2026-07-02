@@ -7,6 +7,7 @@ public class AccountHandler extends BaseHandler {
     public static void handle() {}
     public static void notify() {}
     public void process() {}
+    public void wake() {}
     public void ilog(Integer n) {}
     public void ilog(String t) {}
     public static void log(Integer n) {}

@@ -7,6 +7,8 @@ trigger T on Account (before insert) {
     h.process();
     h.ilog(9);
     String tg = h.tag();
+    ACCOUNTHANDLER cv = new ACCOUNTHANDLER();
+    cv.wake();
     String n = h.name;
     String nm = h.next.name;
     Integer m = AccountHandler.MAX_SIZE;

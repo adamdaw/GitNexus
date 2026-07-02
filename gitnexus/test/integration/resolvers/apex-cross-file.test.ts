@@ -898,6 +898,13 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
     ).toBeUndefined();
   });
 
+  it('resolves a CASE-VARIED trigger-scope declared type (ACCOUNTHANDLER cv; cv.wake()) (REQ-011 ∘ §7(3b))', () => {
+    // Trigger-scope typing ∘ the folded workspace key — composed, not assumed free.
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'wake');
+    expect(call).toBeDefined();
+    expect(fromTrigger(call!)).toBe(true);
+  });
+
   it('resolves a trigger-body inherited member (h.tag()) to the cross-file parent (REQ-011 ∘ §7(10))', () => {
     // The MRO walk from trigger scope — composed, not assumed free.
     const call = getRelationships(result, 'CALLS').find((e) => e.target === 'tag');
@@ -940,7 +947,7 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
   it('records no unresolved/suppressed outcome for the resolving trigger references (REQ-006)', () => {
     // `pick` is excluded: its undisambiguable call is a REQ-015 reference the host records.
     const resolvingNames = new Set([
-      'handle', 'process', 'name', 'MAX_SIZE', 'HIGH', 'AccountHandler', 'log', 'notify', 'ilog', 'tag',
+      'handle', 'process', 'name', 'MAX_SIZE', 'HIGH', 'AccountHandler', 'log', 'notify', 'ilog', 'tag', 'wake',
     ]);
     expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
   });
