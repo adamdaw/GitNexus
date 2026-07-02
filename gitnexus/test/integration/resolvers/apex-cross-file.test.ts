@@ -270,6 +270,15 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toBeDefined();
   });
 
+  it('leaves nested-parent heritage (NestSub extends Outer.Inner) unresolved — SRS v1.10(iii) limitation', () => {
+    // The pre-hook heritage pass cannot reach the nested parent (bare-keyed index, no
+    // injection interception — Addendum 11). Pinned limitation, green pre- and post-impl.
+    // [conservative pin; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'EXTENDS').filter((e) => e.source === 'NestSub'),
+    ).toEqual([]);
+  });
+
   it('does NOT inject a nested type by bare simple name — bare Inner stays unresolved (REQ-015)', () => {
     // [conservative-negative; see WI-3-red-gate.md] — never mis-binds; anchored red
     // by the qualified-access positive above.
@@ -530,9 +539,22 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     expect(call!.targetFilePath, 'targets the nested type, not the decoy').toContain('TOuter.cls');
   });
 
+  it('pins nested-parent heritage mis-binding the same-tail decoy (SRS v1.10(iv) documented limitation)', () => {
+    // TailSub extends TOuter.TInner with top-level TInner present: the pre-hook pass binds
+    // the DECOY (probed, Addendum 11) — pinned as the ratified limitation, never as correct
+    // resolution. [already-green pin; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'EXTENDS').find(
+        (e) => e.source === 'TailSub' && e.targetFilePath.endsWith('TInner.cls'),
+      ),
+    ).toBeDefined();
+  });
+
   it('never tail-binds a dotted reference to the same-tail top-level decoy (§4 dotted-tail guard)', () => {
     // Probed 2026-07-02 (Addendum 6): both defs index under the tail key -> the single-match
-    // guard binds nothing into the decoy. [conservative-negative; see WI-3-red-gate.md]
+    // guard binds nothing into the decoy for the post-hook kinds. (The HERITAGE kind is the
+    // pinned v1.10(iv) mis-bind above — excluded here.)
+    // [conservative-negative; see WI-3-red-gate.md]
     for (const type of ['CALLS', 'ACCESSES']) {
       expect(
         getRelationships(result, type).filter(

@@ -917,11 +917,11 @@ at WI-3.
 
 # SDD-003 — WI-3: Cross-file binding & trigger resolution
 
-- **Consumes:** SRS-001 (**v1.9**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
+- **Consumes:** SRS-001 (**v1.10**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
   resolution), with REQ-015 as amended v1.5 (the bounded exact-case-channel exception, probe-corrected) and
   v1.7 (the record-observability interpretation), the REQ-010/REQ-004 v1.6 bounded misfile exceptions
-  (probe-corrected), the REQ-007/REQ-010 v1.8 heritage-form limitations, and the REQ-010 v1.9
-  fragment-collision exception;
+  (probe-corrected), the REQ-007/REQ-010 v1.8 heritage-form limitations (extended v1.10 to
+  nested-parent heritage), and the REQ-010 v1.9 fragment-collision exception;
   the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
   Architect-approved 2026-06-30; **addenda 4–10**, 2026-07-02 — note Addendum 5 corrects Addendum 4's
   mechanism attribution and Addendum 7 supersedes the v1 discriminant) — the cross-file-binding seam
@@ -1355,6 +1355,13 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   its §8 fixture is red:** a cross-file superclass member-walk addition under `languages/apex/` (the same
   class of Apex-local addition as the nested-type and static-receiver fallbacks) — **never** a silent
   conservative-unresolved, which would reduce a REQ-005/007 SHALL without an SRS amendment (Constitution §7).
+- **Nested-parent heritage (`class Sub extends Outer.Inner` — valid Apex, SRS v1.10)** — rides the
+  PRE-hook heritage pass (Addendum 9), unreachable by the injection and every WI-3 fallback; probed
+  (Addendum 11): no-decoy → **unresolved** (the v1.10(iii) liveness limitation); with an unrelated
+  same-named top-level type → the clause **mis-binds to that type** (the v1.10(iv) safety limitation).
+  Both fixture-pinned as documented behaviour, never as correct resolution. (The nested-qualified
+  RESOLUTION commitments — §7(5)/(13) — cover the post-hook reference kinds only: declared-type/member
+  and constructor forms, NOT the heritage form.)
 - **Cross-file member case-collision (ambiguity-reaches-resolver, REQ-015 two obligations)** — a
   cross-file typed receiver onto a class declaring case-colliding members (`class CaseColl { act; ACT; }`,
   cross-file `c.Act()`) → no edge AND a positive `suppressed` record (the WI-2-validated case-collision
@@ -1704,7 +1711,12 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   de-scoped), never a mis-bind; asserted for the exact-case, the **outer-varied** (`OUTER.Inner` — the §7(13)
   qualified-outer-folding reliance) AND the **tail-varied** (`Outer.INNER` — the §7(5) nested-member
   lookup's case dimension, its committed nested-type member-resolution fallback extended to fold the
-  member segment) qualified forms;
+  member segment) qualified forms — each fixture exercising BOTH the constructor form
+  (`new Outer.Inner()`) and the declared-type/instance-member form (`Outer.Inner v; v.ping()`), the two
+  post-hook reference kinds (a single-kind green does not discharge the others);
+- **nested-parent heritage (SRS v1.10 pins)** — `class Sub extends Outer.Inner`: no-decoy →
+  NO heritage edge (v1.10(iii)); with a same-named top-level decoy → EXTENDS into the decoy, pinned as
+  the v1.10(iv) documented limitation (never as correct resolution);
 - **dotted-tail decoy (both halves)** — nested `TOuter.TInner` + unrelated top-level `class TInner`:
   the qualified reference resolves to the NESTED type (post-injection, via the outer's binding) and
   ZERO edges ever land on the top-level decoy (pre-injection the tail arm binds nothing — Addendum 6);

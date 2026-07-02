@@ -1,5 +1,5 @@
-public class TOuter {
-    public class TInner {
+public virtual class TOuter {
+    public virtual class TInner {
         public void tping() {}
     }
 }

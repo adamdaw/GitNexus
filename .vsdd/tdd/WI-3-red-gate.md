@@ -44,7 +44,12 @@ edge-source discharge scoped; §7(13) qualified-outer arm; SRS v1.9 fragment-col
 promotion; Addendum 10 — nested bare qualifiedName DIRECTLY confirmed and the bare
 cross-file reference probed no-bind in BOTH shapes; cross-file member case-collision
 fixture (red); C# peer-ENTRY arm in the mixed fixture (green pin)) → final
-**49 red / 35 passed of 84** (74 integration + 10 unit); the full
+**49 red / 35 passed of 84**, then rounds 14–17 (twin-heritage §8 pin; tail-varied
+Outer.INNER fixture (red); §7(11) shape-split; enum-constant arm disposition; third
+heritage surface recorded; SRS v1.10 nested-parent heritage limitations — probed:
+no-decoy unresolved (iii, pin green), decoy MIS-BOUND (iv, pin green, Addendum 11);
+qualified fixtures enumerate both post-hook reference kinds) → final
+**50 red / 37 passed of 87** (77 integration + 10 unit); the full
 pre-existing apex + peer
 suites stay green (312/312 across apex.test, apex-resolution.test, apex-resolution-hardening,
 apex-resolution-unit, java.test). No **test scaffolding** (`// vsdd:scaffold`) was needed —

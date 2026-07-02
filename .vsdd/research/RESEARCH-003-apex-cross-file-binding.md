@@ -371,3 +371,18 @@ ctor/free-call arm binds TOP-LEVEL types only — a bare reference to a nested d
 nothing in both shapes (the internal reason is unpinned; the OUTCOME is fixture-pinned per shape).
 Contrast: the heritage pre-pass DOES bind any unique class-like key, including trigger defs
 (Addendum 5 lone-trigger, Addendum 8 twin-heritage).
+
+## Addendum 11 (2026-07-02) — nested-parent heritage probes + extension-classification ground
+
+**Nested-parent heritage (`class Sub extends Outer.Inner`, parent nested in another file — valid Apex):**
+(a) no-decoy repo → **no edges** (the dotted base misses the bare-keyed QualifiedNameIndex; the pre-hook
+pass leaves it unresolved); (b) with an unrelated top-level `class Inner` present → **EXTENDS Sub →
+`Class:Inner.cls:Inner`** — the clause mis-binds the same-named top-level DECOY on valid source. Both
+shapes ride the pre-hook heritage pass (Addendum 9), unreachable by the injection → ratified as the SRS
+v1.10 extensions of the v1.8 heritage limitations (Architect, 2026-07-02).
+
+**Extension classification (grounds the §3 case-folded extension pin, previously cited outside the
+gate-admissible source scope):** `getLanguageFromFilename` lowercases the filename before extension
+matching (`gitnexus-shared/src/language-detection.ts:88`, package `gitnexus-shared` — recorded here as
+admitted evidence), so `T.TRIGGER`/`H.CLS` classify as Apex and reach the hook with case-preserved
+`filePath`; the §3 discriminant therefore compares the extension case-folded.
