@@ -447,7 +447,7 @@ SRS-001 as a versioned addendum (new REQ-NNN) re-entering Gate 1 — none requir
 
 No other CWE-backed surface exists for WI-1 (no auth/secrets/PII/financial) → no further SEC-NNN.
 
-## 7. Verification architecture (Step 2b — **APPROVED — Adam (Architect), 2026-07-02**)
+## 7. Verification architecture (Step 2b — Builder proposal, Architect approval pending)
 
 - **Provable-properties catalog:** **none are Prove-classified.** Per the §A.3 decision table, WI-1
   guards no security-boundary *correctness* invariant, no financial, data-integrity, safety/regulatory,
@@ -963,12 +963,16 @@ resolves cross-file names through two distinct channels, and WI-3 controls only 
   REQ-011 edge-source obligation hold on the real host).
 - **The bindings channel (what WI-3 registers).** `lookupBindingsAt`'s local → finalized → augmented →
   namespace → `workspaceFqnBindings` lookup — the channel `populateNamespaceSiblings` feeds. **Channel
-  interaction (Addendum 5):** the exact-case-channel passes above run this same lookup BEFORE their
-  QualifiedNameIndex fallback, so WI-3's folded workspace keys are reachable by those passes too — iff
-  each callsite's lookup name is folded (the WI-2 §2.2 seam folded the receiver-bound-calls and
-  declared-type keyspaces; the ctor/free-call and heritage callsites' folding is a per-form
-  [Gate-3 reliance], §7(11)). The §3 inject-none guard governs everything the workspace channel
-  serves; the QualifiedNameIndex fallback is guard-independent but itself conservative on ties. The REQ-010 gap the
+  interaction (Addendum 5, ordering corrected Addendum 9):** the POST-HOOK exact-case-channel passes
+  (free-call/ctor `run.ts:753`, receiver-bound `run.ts:728` — both after the hook at `run.ts:636`) run
+  this same lookup BEFORE their QualifiedNameIndex fallback, so WI-3's folded workspace keys are
+  reachable by them — iff each callsite's lookup name is folded (the WI-2 §2.2 seam folded the
+  receiver-bound-calls and declared-type keyspaces; the ctor/free-call callsite's folding is a
+  [Gate-3 reliance], §7(11)). **The heritage pre-emit pass is PRE-hook** (`run.ts:573` < `:636`) and
+  suppresses every `inherits` site from downstream retry (`run.ts:155-163`) — the workspace keys are
+  structurally UNREACHABLE for heritage clauses, so the case-varied heritage forms are the ratified
+  SRS v1.8 limitations, not §7(11) arms. The §3 inject-none guard governs everything the workspace
+  channel serves; the QualifiedNameIndex fallback is guard-independent but itself conservative on ties. The REQ-010 gap the
   hook closes is exactly the forms the fallback channel does NOT provide: **declared-type bindings**
   (instance receivers — `B b; b.member()`, field/property chains, cross-file inherited-member lookup),
   every **case-varied** reference (the fallback is exact-case; the folded key lives here),
@@ -1051,7 +1055,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     **bare declared-type usage** (`B b;` where B is in another file) → the declared-type **binding** (no
     standalone edge, per REQ-005 v1.3 — observable via the member access it enables) — all with **no import
     statement and no synthetic IMPORTS edge**. The match is case-insensitive (the
-    folded global key); the emitted target id is the case-preserving id. **[structural]** WI-3 registers
+    folded global key) for every reference kind EXCEPT the heritage forms — the host's inheritance
+    pre-pass precedes the registration and suppresses retry, so case-varied `extends`/`implements` is
+    the ratified SRS v1.8(i) bounded liveness limitation (exact-case heritage resolves via the host's
+    own channel); the emitted target id is the case-preserving id. **[structural]** WI-3 registers
     `populateNamespaceSiblings`, which injects each top-level **non-trigger** user-defined type def
     (class/interface/enum; the §3 predicate — a host access-modifier visibility filter blocking resolution
     is the §7(7) REQ-010 [Gate-3 reliance] with its reserved remediation; whether resolving a
@@ -1416,7 +1423,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   **safety-bearing and must intercept BEFORE the exact-case channel** (the workspace consult inside the
   walk precedes the QualifiedNameIndex fallback, so a callsite fold — or the fallback's synthesis —
   wins; a fold-retry-AFTER-miss remediation would not fire, since the exact-case channel HITS here).
-  §8 fixture asserts class-wins for ctor and member forms; never an SRS exception.
+  §8 fixture asserts class-wins for ctor and member forms. **The heritage arm of the twin**
+  (`class Sub extends Twist`) is DIFFERENT: it resolves in the PRE-hook heritage pass (Addendum 9),
+  where the injection can never intercept — the trigger binds (the Addendum-5 lone-trigger analog) —
+  ratified as the SRS v1.8(ii) bounded safety limitation, fixture-pinned as documented behaviour.
 - **Valid same-name trigger + class (`Foo.trigger` + `Foo.cls`, the SDD-001 §4 valid pair)** — the §3
   exclusion drops the trigger def from injection, so the **class alone** is injected under the folded key:
   a cross-file reference (`Foo f = new Foo(); f.run()`) resolves to the **class**, and **no resolution
@@ -1491,7 +1501,7 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
 no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The conservative-skip default
 (REQ-015) holds across files: an unresolved cross-file reference degrades to no edge, never an unsafe binding.
 
-## 7. Verification architecture (Step 2b — Builder proposal, Architect approval pending)
+## 7. Verification architecture (Step 2b — **APPROVED — Adam (Architect), 2026-07-02**)
 
 - **Provable properties (§A.3): none** — but this is an **explicit per-property disposition, not a blanket
   denial** (matching SDD-001 §7). The one property that *reads* as a candidate is the **cross-file
@@ -1577,10 +1587,14 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   receiver-bound-calls and declared-type keyspaces; these two are unprobed), i.e. whether case-varied
   `new ENGINE()` / `extends BASE` reach WI-3's folded workspace keys — committed fallback class: an
   Apex-local pass addition (the static-receiver-synthesis class) or, if impossible Apex-locally, Phase-5
-  escalation. **This reliance is SAFETY-BEARING for the case-variant trigger/class twin (§4):** there
-  the exact-case channel HITS the trigger def, so the fallback must make the folded workspace binding
-  win BEFORE that channel (the walk's workspace consult precedes the QualifiedNameIndex fallback) — a
-  fold-retry-after-miss shape is insufficient and non-compliant for this case. (12) **Single-registry sufficiency** (§3 pin) — Apex declared-type/instance-receiver typing
+  escalation. **Scope (Addendum 9): the ctor/free-call arm only** — the heritage arm is moot (the pre-hook pass
+  cannot reach the workspace keys; SRS v1.8). **The ctor arm is SAFETY-BEARING for the case-variant
+  trigger/class twin's ctor form (§4):** there the exact-case channel HITS the trigger def, so only a
+  folded lookup INSIDE the walk (before the QualifiedNameIndex fallback) can win — a
+  fold-retry-after-miss shape is insufficient. **No workable Apex-local fallback exists for this arm**
+  (a receiver-binding synthesis has no receiver at a ctor site; dual-key raw injection cannot match a
+  reference in the TRIGGER's case): if the ctor-arm fixture is red at Gate 3, the sole remediation is
+  **Phase-5 escalation to the Architect** — stated here so a red fixture leaves nothing to improvise. (12) **Single-registry sufficiency** (§3 pin) — Apex declared-type/instance-receiver typing
   resolves injected names via `lookupBindingsAt` without the `workspaceTypeBindings` channel; committed
   remediation: add that second write to the Apex hook. Gate 3 (tests vs the real host) validates
   all of these; the Gate-2 adversary validates the wiring (Seam-B registration, the injected def set, the
@@ -1617,10 +1631,10 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
 - **case-varied cross-file** — `ACCOUNT`/`account` resolving across files via the folded global key,
   asserted for the instance-receiver form AND for the **static type-name-receiver forms** (a case-varied
   cross-file static field read `CONSTS.FLOOR` and a case-varied trigger-body static call
-  `ACCOUNTHANDLER.notify()`) AND for the **constructor** (`new ENGINE()`) and **heritage**
-  (`class CaseKid extends BASE implements IFACE`) forms — the §7(3)/§7(11) folded-key completions, red
-  until the injection lands (heritage/ctor greens additionally validate the §7(11) callsite-folding
-  reliance);
+  `ACCOUNTHANDLER.notify()`) AND for the **constructor** (`new ENGINE()`) form — §7(3)/§7(11) folded-key completions, red until
+  the injection lands (the ctor green additionally validates the §7(11) callsite-folding reliance).
+  The **heritage** forms (`class CaseKid extends BASE implements IFACE`) are the ratified SRS v1.8(i)
+  limitation — pinned as UNRESOLVED (the pre-hook pass, Addendum 9), not asserted as resolving;
 - **user-defined type shadows an external/sObject name** — `Account a = new Account(); a.save()` resolves
   to the user-defined `Account.cls` node (the §4 precedence bullet's fixture);
 - **nested type not injected by bare simple name** — a cross-file bare `Inner` reference emits no edge and

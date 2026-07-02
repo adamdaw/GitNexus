@@ -333,3 +333,16 @@ Drove: the SRS v1.6 boundary-wording correction ("same-EXACT-CASE-named", re-rat
 SDD-003 §4 committed-to-fix disposition — post-injection the folded workspace key holds the class alone
 and must win BEFORE the exact-case channel (the walk's workspace consult precedes the QualifiedNameIndex
 fallback; a fold-retry-after-miss remediation cannot fix this shape because the exact-case channel hits).
+
+## Addendum 9 (2026-07-02) — heritage pre-emit pass ordering (corrects the Addendum-5 channel-interaction scope)
+
+Read-verified: `preEmitInheritanceEdges` runs at `run.ts:573`, BEFORE `populateNamespaceSiblings` at
+`run.ts:636`, and unconditionally suppresses every `inherits` site from the downstream reference bridge
+(`run.ts:155-163` — "this pre-pass is the authoritative inheritance emitter"). Consequence: WI-3's
+workspace keys are structurally UNREACHABLE for heritage clauses — Addendum 5's "reachable by those
+passes too" holds only for the POST-hook passes (free-call/ctor `run.ts:753`, receiver-bound
+`run.ts:728`). Case-varied heritage (`extends BASE`) and the case-variant twin's heritage form
+(`extends Twist` → the trigger, per the Addendum-5 lone-trigger analog) cannot be served or corrected by
+pure registration → ratified as the SRS v1.8 bounded limitations (Architect, 2026-07-02). The generic
+pipeline reorder (hook before the pre-emit pass) is noted as a candidate upstream contribution / WI-4
+item, subject to its own §2.2 review.

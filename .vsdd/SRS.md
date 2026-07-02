@@ -64,6 +64,19 @@ detail. Derived from INTENT-001; reviewed against it and the Constitution at Gat
   existing SHALL, not a scope change. Driven by WI-3 Gate-2 re-review; Architect-approved (Adam,
   2026-07-02). Re-enters Gate 1 fidelity (verified by the fresh Gate 2 adversary reading SRS+SDD
   together).
+  **Amended v1.8 (2026-07-02)** — REQ-007/REQ-010 heritage-form bounded limitations: the host resolves
+  inheritance clauses in a pre-pass that runs BEFORE any per-language cross-file registration and
+  suppresses those sites from retry, so no pure-registration design can serve them. Ratified: (i) a
+  **case-varied** heritage clause (`class Sub extends BASE` — valid Apex) remains cross-file-unresolved
+  (a valid-source **liveness** limitation; exact-case heritage resolves via the host's own channel);
+  (ii) in the **case-variant trigger/class twin**, a heritage clause naming the trigger's exact case
+  (`extends Twist` with `Twist.trigger` + `class TWIST`) binds the trigger (a valid-source,
+  triple-narrow **safety** limitation — trigger + case-variant class + heritage reference in the
+  trigger's case). Both parity-grounded (the pre-pass ordering is host-uniform across languages);
+  the constructor and member forms of the twin remain committed to resolve to the class. Deliberate
+  bounded scope reductions; the generic pipeline reorder is noted as a candidate upstream/WI-4 item.
+  Driven by WI-3 Gate-2 re-review round 11; Architect-approved (Adam, 2026-07-02). Re-enters Gate 1
+  fidelity (verified by the fresh Gate 2 adversary reading SRS+SDD together).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope
@@ -134,7 +147,8 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   language's cross-file visibility channel (it is never registered there), and whenever a
   same-EXACT-CASE-named class-like def exists (the host's single-match guard keys exact-case — corrected
   2026-07-02 after the case-variant-twin probe, re-ratified: a CASE-VARIANT same-named class does not
-  suppress the exact-case channel, and that shape is committed to resolve to the CLASS, not excepted).)
+  suppress the exact-case channel; the twin's constructor and member forms are committed to resolve to
+  the CLASS, while its heritage form is the v1.8(ii) bounded limitation).)
 
 **Reference resolution (user-defined)**
 - **REQ-005** *(type-usage sub-clause clarified v1.3)* — The system SHALL resolve a reference that
@@ -169,6 +183,10 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   an ambiguity reaches the resolver.)
 - **REQ-007** — The system SHALL resolve Apex class inheritance (`extends`) and interface implementation
   (`implements`) between user-defined Apex types as edges in the knowledge graph.
+  (**Amended v1.8 — bounded exceptions:** the host's inheritance pre-pass precedes per-language
+  cross-file registration, so (i) a case-varied cross-file heritage clause remains unresolved (liveness)
+  and (ii) the case-variant trigger/class twin's heritage form can bind the trigger (triple-narrow
+  safety) — both documented limitations; exact-case heritage between classes resolves.)
 - **REQ-008** *(head reworded v1.2)* — The system SHALL resolve an overloaded user-defined Apex method at
   a call site to the unique overload remaining after narrowing by parameter count, then — among any
   equal-arity overloads — by exact declared parameter types: the unique equal-arity overload **every** one

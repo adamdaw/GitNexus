@@ -209,20 +209,17 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toBeDefined();
   });
 
-  it('resolves CASE-VARIED top-level heritage (CaseKid extends BASE implements IFACE) (REQ-007/§7(11))', () => {
-    // The heritage callsite-folding reliance — a distinct host surface from the ctor path.
+  it('leaves CASE-VARIED heritage (CaseKid extends BASE implements IFACE) unresolved — SRS v1.8(i) limitation', () => {
+    // The heritage pre-emit pass runs BEFORE the hook and suppresses retry (Addendum 9):
+    // the workspace keys are unreachable for heritage clauses, so the case-varied forms
+    // stay unresolved — ratified valid-source liveness limitation, pinned here.
+    // [conservative pin — green pre- and post-impl; see WI-3-red-gate.md]
     expect(
-      getRelationships(result, 'EXTENDS').find(
-        (e) => e.source === 'CaseKid' && e.target === 'Base',
-      ),
-      'extends BASE folds to the Base key',
-    ).toBeDefined();
+      getRelationships(result, 'EXTENDS').filter((e) => e.source === 'CaseKid'),
+    ).toEqual([]);
     expect(
-      getRelationships(result, 'IMPLEMENTS').find(
-        (e) => e.source === 'CaseKid' && e.target === 'Iface',
-      ),
-      'implements IFACE folds to the Iface key',
-    ).toBeDefined();
+      getRelationships(result, 'IMPLEMENTS').filter((e) => e.source === 'CaseKid'),
+    ).toEqual([]);
   });
 
   // nested-type qualified access (REQ-010 SHALL) ─────────────────────────────
@@ -562,12 +559,26 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     );
     expect(ctor, 'new Twist() binds the class').toBeDefined();
     expect(ctor!.targetFilePath, 'never the trigger').toContain('TWIST.cls');
-    for (const type of ['CALLS', 'ACCESSES', 'EXTENDS', 'IMPLEMENTS']) {
+    // ctor/member forms only: the HERITAGE arm is the ratified v1.8(ii) limitation (below),
+    // so the no-edge-into-the-trigger sweep here is scoped to CALLS/ACCESSES.
+    for (const type of ['CALLS', 'ACCESSES']) {
       expect(
         getRelationships(result, type).filter((e) => e.targetFilePath.endsWith('Twist.trigger')),
         `no ${type} edge into the trigger def`,
       ).toEqual([]);
     }
+  });
+
+  it('pins the twin HERITAGE arm binding the trigger (SRS v1.8(ii) documented limitation)', () => {
+    // TwistSub extends Twist: the PRE-hook heritage pass binds the trigger's unique
+    // exact-case key (Addendum 9; the Addendum-5 lone-trigger analog) — pinned as the
+    // ratified valid-source safety limitation, NOT as correct resolution.
+    // [already-green pin; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'EXTENDS').find(
+        (e) => e.source === 'TwistSub' && e.targetFilePath.endsWith('Twist.trigger'),
+      ),
+    ).toBeDefined();
   });
 
   it('resolves a valid same-name trigger+class twin to the CLASS, never the trigger (§4/REQ-004)', () => {

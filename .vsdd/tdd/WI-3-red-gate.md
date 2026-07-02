@@ -34,8 +34,12 @@ varied nested-qualified fixture; mixed-language §7(8) fixture — Apex 'Motor' 
 'motor', Apex ref red / Python-unchanged pin green; §1/§3-vs-§7(7) contradiction
 qualified) and round-9/10 fixes (header v1.7 pin; §7 approval recorded; twin-ctor
 assertion policy; case-variant trigger/class twin — probed TRIGGER-bind on valid source,
-committed-to-fix, v1.6 boundary wording corrected to exact-case, Addendum 8):
-**49 red / 32 passed of 81** (71 integration + 10 unit); the full
+committed-to-fix, v1.6 boundary wording corrected to exact-case, Addendum 8) and round-11
+fixes (heritage pre-emit pass is PRE-hook — Addendum 9; SRS v1.8 heritage limitations
+ratified: case-varied heritage pinned UNRESOLVED (i), twin heritage arm pinned
+trigger-bind (ii); §7(11) rescoped to the ctor arm with escalation-only remediation;
+SDD-003 §7 approval recorded on the correct section):
+**48 red / 34 passed of 82** (72 integration + 10 unit); the full
 pre-existing apex + peer
 suites stay green (312/312 across apex.test, apex-resolution.test, apex-resolution-hardening,
 apex-resolution-unit, java.test). No **test scaffolding** (`// vsdd:scaffold`) was needed —
