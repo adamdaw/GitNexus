@@ -260,3 +260,17 @@ seam folded the receiver-bound-calls and declared-type keyspaces; the free-call/
 callsites' folding is unprobed → per-form [Gate-3 reliance]). The §3 inject-none guard therefore governs
 everything the workspace channel serves; the QualifiedNameIndex fallback remains guard-independent but is
 itself conservative on ties (single-match-wins).
+
+## Addendum 6 (2026-07-02) — dotted-tail arm probe + erratum
+
+**Dotted-tail arm.** `findClassBindingInScope`'s second fallback (`walkers.ts:295-305`) retries a dotted
+name's exact-case simple tail (single-match-wins). Probe (nested `Outer.Inner` + unrelated top-level
+`class Inner` decoy + qualified callers, both exact-case and case-varied): **nothing binds** — both defs
+index under the tail key, so the single-match guard forecloses the tail-collision mis-bind. No edge into
+the decoy; conservative miss pre-injection.
+
+**Erratum (field name).** The earlier top-level-discriminant addendum described iterated defs as carrying
+"`label`, `qualifiedName`, `filePath`". The kind field on `SymbolDefinition` is **`type: NodeLabel`**
+(`gitnexus-shared/src/scope-resolution/symbol-definition.ts:27-30`); there is no `label` field. SDD-003
+§3 Predicate 1 (`def.type ∈ {Class, Interface, Enum}`) is the corrected, authoritative statement and
+supersedes the addendum's field description.

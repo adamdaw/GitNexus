@@ -947,7 +947,11 @@ resolves cross-file names through two distinct channels, and WI-3 controls only 
   **`QualifiedNameIndex`**: `scopes.qualifiedNames.get(name)`, raw exact-case keys, **single-match-wins**
   (binds iff the key indexes exactly one def AND that def is class-like — `qnames.length === 1`
   precedes the `isClassLike` check, `walkers.ts:283-291`; any same-key duplicate binds NOTHING —
-  probe-verified, RESEARCH-003 Addendum 5). It is reached by the constructor/free-call path, the
+  probe-verified, RESEARCH-003 Addendum 5). A **dotted-tail arm** (`walkers.ts:295-305`) retries a
+  dotted name's exact-case simple tail under the same single-match guard; the feared tail-collision
+  mis-bind (`OUTER.Inner` tail-binding an unrelated top-level `Inner`) is **foreclosed by the guard** —
+  probed 2026-07-02: with a same-tail decoy present, BOTH defs index under the tail key → nothing binds
+  (Addendum 6). It is reached by the constructor/free-call path, the
   heritage pre-emit pass, and the static type-name-receiver path, for every language with no provider
   hook; `isClassLike` admits trigger defs (`type=Class`). Through this
   channel the host already resolves, with no WI-3 code: cross-file **constructor calls** (`new B()`),
@@ -1062,8 +1066,12 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     restated once here; §8 aligns to it):** a positive `suppressed` outcome on the pipeline result is
     assertable **iff the ambiguity reaches the host resolver** (overload-ambiguity among live candidates,
     case-collision member ambiguity); a **guard-miss** (the §3 inject-none guard never creates the key, so
-    the lookup plain-misses) is recorded only in the host's internal unresolved stats
-    (`ResolveStats.unresolved`, logged, not exposed) and its black-box observable is edge ABSENCE. So the
+    the lookup plain-misses) has edge ABSENCE as its black-box observable — the epic's established
+    REQ-015 observability interpretation (WI-2, Gate-3-accepted): a plain miss's record is
+    host-internal, not exposed on the pipeline result. Whether the host's internal unresolved counter
+    fires for a pass-level typed-receiver miss is unprobed — a non-blocking **[Gate-3 reliance]** on the
+    record's internal mechanism; the *observable* contract (edge absence, no mis-bind) is what §8
+    asserts. So the
     §8 collision fixture asserts edge absence (guard-miss shape) while the §8 trigger-overload
     undisambiguable fixture asserts edge absence AND the `suppressed` record (ambiguity-reaches-resolver
     shape) — consistent, not divergent. Cross-file does
@@ -1340,6 +1348,11 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   nested-type member-resolution addition** under `languages/apex/` (the "commit a mechanism to satisfy the
   SHALL" pattern, §3), NOT a silent conservative-unresolved (which would reduce REQ-010 without an SRS
   amendment — Constitution §7). §8 asserts resolution.
+- **Dotted-tail collision (nested `TOuter.TInner` + unrelated top-level `class TInner`)** — the
+  exact-case channel's dotted-tail arm retries the tail under the single-match guard, so with both defs
+  indexed under the tail key nothing binds (probed 2026-07-02, Addendum 6 — no mis-bind into the decoy);
+  post-injection the qualified reference resolves to the NESTED type via the outer's global binding +
+  member lookup (§7(5)), never to the same-named top-level decoy. Fixture asserts both halves.
 - **Nested type not injected by bare simple name (no mis-bind)** — a nested type's `qualifiedName` is
   `Outer.Inner` (has a `.`), so the §3 top-level discriminant **excludes** it from the global injection; a
   bare `Inner` reference from another file therefore finds no global `Inner` binding and stays conservatively
@@ -1591,9 +1604,12 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   usage in a trigger body follows REQ-005 v1.3 (binds the variable's type — **no standalone edge**, not a
   "resolved edge"); no unresolved record for any reference that resolves;
 - **trigger-body instance receiver** — in a trigger body `AccountHandler h = new AccountHandler();` then both
-  `h.name` → `ACCESSES` to `name` **and** `h.handle()` → `CALLS` to `handle` (the canonical instance method
+  `h.name` → `ACCESSES` to `name` **and** `h.process()` → `CALLS` (the canonical instance method
   dispatch), each from the trigger — the trigger-scope local-variable type-binding case (§2 reliance), a
-  distinct fixture from the static-receiver case;
+  distinct fixture from the static-receiver case; **plus a declaration-only typed variable**
+  (`AccountHandler d;` with no initializer, then `d.size`) so the trigger-scope DECLARED-type binding via
+  `interpretApexTypeBinding` is isolated from constructor-type inference (REQ-011 v1.4's bare
+  declared-type arm, discriminating acceptance);
 - **conservatism** — a duplicate/ambiguous global simple name and a local-shadows-global case → the local or
   the conservative-unresolved outcome on the bindings channel, never a mis-bind there (REQ-015). The
   local-shadows-global fixture pins the **enclosing-scope shape** (§4): a nested type in the outer class,

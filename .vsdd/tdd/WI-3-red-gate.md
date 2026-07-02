@@ -21,8 +21,11 @@ discharged source-attribution contingency excised) and round-4 fixes (Addendum-5
 correction — the exact-case channel is `findClassBindingInScope`'s QualifiedNameIndex
 single-match fallback; SRS v1.5/v1.6 probe-driven text corrections re-ratified; single-registry
 pin §7(12); callsite-folding reliance §7(11) with case-varied ctor/heritage fixtures;
-implicit-this inherited-member form; same-case-duplicate + lone-trigger pins):
-**40 red / 29 passed of 69** (61 integration + 8 unit); the full pre-existing apex + peer
+implicit-this inherited-member form; same-case-duplicate + lone-trigger pins) and round-5/6
+fixes (trigger externals incl. Trigger.new; declaration-only typed trigger variable
+`d.size`; dotted-tail-decoy fixture — probed no-mis-bind, Addendum 6; observability
+honest-wording): **42 red / 30 passed of 72** (64 integration + 8 unit); the full
+pre-existing apex + peer
 suites stay green (312/312 across apex.test, apex-resolution.test, apex-resolution-hardening,
 apex-resolution-unit, java.test). No **test scaffolding** (`// vsdd:scaffold`) was needed —
 grammar, provider, and registration all exist from WI-1/WI-2, so there is no scaffold ledger

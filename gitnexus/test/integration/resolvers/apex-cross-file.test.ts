@@ -482,6 +482,29 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     ).toBeDefined();
   });
 
+  it('resolves qualified nested access to the NESTED type despite a same-tail top-level decoy (§4/§7(5))', () => {
+    // TOuter.TInner referenced qualified; an unrelated top-level TInner exists. Post-impl
+    // the outer's global binding + member lookup targets the NESTED type (red pre-impl).
+    const call = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'tping' && e.sourceFilePath.includes('TailCaller'),
+    );
+    expect(call, 'TOuter.TInner resolves via the outer binding').toBeDefined();
+    expect(call!.targetFilePath, 'targets the nested type, not the decoy').toContain('TOuter.cls');
+  });
+
+  it('never tail-binds a dotted reference to the same-tail top-level decoy (§4 dotted-tail guard)', () => {
+    // Probed 2026-07-02 (Addendum 6): both defs index under the tail key -> the single-match
+    // guard binds nothing into the decoy. [conservative-negative; see WI-3-red-gate.md]
+    for (const type of ['CALLS', 'ACCESSES']) {
+      expect(
+        getRelationships(result, type).filter(
+          (e) => e.targetFilePath.endsWith('TInner.cls') && e.sourceFilePath.includes('TailCaller'),
+        ),
+        `no ${type} edge into the decoy`,
+      ).toEqual([]);
+    }
+  });
+
   it('resolves a valid same-name trigger+class twin to the CLASS, never the trigger (§4/REQ-004)', () => {
     // Twin.trigger + Twin.cls are VALID Apex. The §3 exclusion keeps the trigger out of the
     // injection, so `Twin t = new Twin(); t.spin()` resolves to the class (genuinely red
@@ -572,6 +595,14 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
     const call = getRelationships(result, 'CALLS').find((e) => e.target === 'process');
     expect(call).toBeDefined();
     expect(fromTrigger(call!)).toBe(true);
+  });
+
+  it('resolves a member via a DECLARATION-ONLY typed trigger variable (AccountHandler d; d.size) (REQ-011 v1.4)', () => {
+    // Isolates trigger-scope DECLARED-type binding (interpretApexTypeBinding) from
+    // constructor-type inference — d has no initializer (§8 discriminating acceptance).
+    const access = getRelationships(result, 'ACCESSES').find((e) => e.target === 'size');
+    expect(access).toBeDefined();
+    expect(fromTrigger(access!)).toBe(true);
   });
 
   it('resolves a trigger-body instance field access (h.name) via ACCESSES from the trigger (REQ-011)', () => {
