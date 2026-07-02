@@ -33,8 +33,11 @@ detail. Derived from INTENT-001; reviewed against it and the Constitution at Gat
   validation against the real host found that channel resolves constructor, inheritance, and static
   type-name-receiver references workspace-wide (exact-case, first-match) independently of any
   per-language hook; on duplicate user-defined top-level type names — invalid Apex, reachable only in
-  uncompiled source — it binds the exact-case (ties: first-indexed) match instead of leaving the
-  reference unresolved. Suppressing it for Apex would require an Apex-specific edit to shared host
+  uncompiled source — it binds the exact-case match **only when that exact-case key is unique** (a
+  case-variant duplicate); a same-case duplicate resolves **nothing** (the host's single-match guard —
+  conservative). *(Text corrected 2026-07-02 after a same-case-tie probe: the originally ratified
+  "ties: first-indexed" wording was empirically wrong in the unsafe direction; the host binds no tie.
+  Correction re-ratified by the Architect same day.)* Suppressing it for Apex would require an Apex-specific edit to shared host
   machinery (Constitution §1 parity / §2.2). A **deliberate, bounded scope reduction**, NOT a
   clarification. Driven by WI-3 Step-3a findings (`.vsdd/tdd/WI-3-step3a-findings.md`);
   Architect-approved (Adam, 2026-07-02). Re-enters Gate 1 fidelity (verified by the fresh Gate 2
@@ -45,8 +48,11 @@ detail. Derived from INTENT-001; reviewed against it and the Constitution at Gat
   available trigger discriminant is the source-file extension — so its typed-receiver and case-varied
   cross-file forms remain unresolved (a REQ-010 liveness reduction). (ii) A trigger *mis-declared in a
   `.cls` file* passes that same discriminant and becomes globally referenceable — a reference to its name
-  can bind the trigger (a REQ-004 non-referenceability breach). Both are reachable only in invalid,
-  uncompiled Apex source; both are deliberate bounded scope reductions, NOT clarifications. Driven by WI-3
+  can bind the trigger (a REQ-004 non-referenceability breach); additionally (probe-corrected and
+  re-ratified 2026-07-02) a *correctly-filed* trigger whose name is referenced as a type from invalid
+  referencing source binds via the host's exact-case single-match channel when no same-named class
+  exists. All are reachable only in invalid,
+  uncompiled Apex source; all are deliberate bounded scope reductions, NOT clarifications. Driven by WI-3
   Gate-2 re-review findings; Architect-approved (Adam, 2026-07-02). Re-enters Gate 1 fidelity (verified by
   the fresh Gate 2 adversary reading SRS+SDD together).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
@@ -109,10 +115,15 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   its declaring type.
 - **REQ-004** — WHEN the system analyses a repository containing Apex triggers, the system SHALL
   represent each trigger as a container node in the knowledge graph.
-  (**Amended v1.6 — bounded exception:** WHERE a trigger is mis-declared in a `.cls` file — invalid Apex,
-  reachable only in uncompiled source — it is indistinguishable from a class by the available
-  discriminant and becomes globally referenceable: a reference to its name can bind the trigger. A
-  documented limitation; a correctly-filed trigger remains non-referenceable.)
+  (**Amended v1.6 — bounded exception (text corrected 2026-07-02 after a lone-trigger probe,
+  re-ratified same day):** WHERE a trigger is mis-declared in a `.cls` file — invalid Apex, reachable
+  only in uncompiled source — it is indistinguishable from a class by the available discriminant and
+  becomes globally referenceable: a reference to its name can bind the trigger. AND WHERE a
+  correctly-filed trigger's name is referenced as a type (`new T()`, `extends T` — itself invalid
+  Apex) and no same-named class exists, the host's exact-case single-match channel binds the trigger
+  def — a documented limitation. A correctly-filed trigger remains non-referenceable on the
+  language's cross-file visibility channel (it is never registered there), and whenever a same-named
+  class-like def exists (the single-match guard binds nothing).)
 
 **Reference resolution (user-defined)**
 - **REQ-005** *(type-usage sub-clause clarified v1.3)* — The system SHALL resolve a reference that
@@ -136,7 +147,9 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   (**Amended v1.5 — bounded exception:** WHERE the ambiguity arises solely from duplicate user-defined
   top-level Apex type names — invalid Apex, reachable only in uncompiled source — a constructor,
   inheritance, or static type-name reference resolved by the host's language-uniform exact-case fallback
-  channel binds the exact-case match rather than being left unresolved: a documented limitation. Every
+  channel binds the exact-case match **when that key is unique** (a case-variant duplicate) rather than
+  being left unresolved — a same-case duplicate resolves nothing (single-match guard, conservative;
+  probe-corrected and re-ratified 2026-07-02): a documented limitation. Every
   reference resolved through the per-language bindings channel — all typed-receiver member forms and all
   case-varied forms — retains the full conservative SHALL.)
 - **REQ-007** — The system SHALL resolve Apex class inheritance (`extends`) and interface implementation
@@ -252,12 +265,14 @@ Scenario: An ambiguous in-repository reference is left unresolved, not mis-bound
   And the reference is recorded as unresolved rather than bound to a wrong target
 
 # REQ-015 (amended v1.5 — the bounded fallback-channel exception)
-Scenario: Duplicate-named types referenced via the host's exact-case fallback channel (documented limitation)
-  Given two user-defined top-level Apex types whose names collide (invalid Apex, uncompiled source)
+Scenario: Case-variant duplicate types referenced via the host's exact-case channel (documented limitation)
+  Given two user-defined top-level Apex types whose names differ only by case (invalid Apex, uncompiled source)
   And a constructor, inheritance, or static type-name reference matching one of them exactly by case
   When GitNexus analyses the repository
-  Then that reference binds the exact-case match via the host's language-uniform channel (documented limitation)
+  Then that reference binds its unique exact-case match via the host's language-uniform channel (documented limitation)
   And every other reference form to the colliding name emits no binding and is recorded unresolved
+  # A SAME-case duplicate has no unique key: the host's single-match guard binds nothing — the main
+  # REQ-015 scenario above governs it unchanged (probe-verified 2026-07-02).
 
 # REQ-007
 Scenario: Inheritance and interface implementation resolve

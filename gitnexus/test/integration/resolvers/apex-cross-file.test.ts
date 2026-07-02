@@ -182,10 +182,46 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     expect(call, 'the MRO walks the cross-file parent').toBeDefined();
   });
 
+  it('resolves an implicit-this inherited member (inherited() inside Child) to the cross-file parent (REQ-005/007)', () => {
+    // The unqualified own-scope-MRO form — a materially different path from the
+    // typed-receiver form asserted above (§8 names both).
+    const call = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'inherited' && e.sourceFilePath.includes('Child.cls'),
+    );
+    expect(call, 'callUp() -> Base.inherited across files').toBeDefined();
+    expect(call!.targetFilePath, 'declared on the cross-file parent').toContain('Base');
+  });
+
   // case-varied cross-file (§2.2 seam ∘ REQ-010) ─────────────────────────────
   it('resolves a case-varied cross-file reference (ENGINE e; e.STOP()) via the folded global key (REQ-010)', () => {
     expect(
       getRelationships(result, 'CALLS').find((e) => e.target === 'stop'),
+    ).toBeDefined();
+  });
+
+  it('resolves a CASE-VARIED cross-file constructor (new ENGINE()) via the folded key (REQ-010/§7(11))', () => {
+    // The ctor callsite-folding reliance: red until the injection lands AND the free-call
+    // path reaches the folded workspace key.
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'Engine' && e.sourceFilePath.includes('CaseRef'),
+      ),
+    ).toBeDefined();
+  });
+
+  it('resolves CASE-VARIED top-level heritage (CaseKid extends BASE implements IFACE) (REQ-007/§7(11))', () => {
+    // The heritage callsite-folding reliance — a distinct host surface from the ctor path.
+    expect(
+      getRelationships(result, 'EXTENDS').find(
+        (e) => e.source === 'CaseKid' && e.target === 'Base',
+      ),
+      'extends BASE folds to the Base key',
+    ).toBeDefined();
+    expect(
+      getRelationships(result, 'IMPLEMENTS').find(
+        (e) => e.source === 'CaseKid' && e.target === 'Iface',
+      ),
+      'implements IFACE folds to the Iface key',
     ).toBeDefined();
   });
 
@@ -460,6 +496,30 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
         `no ${type} edge into the trigger def`,
       ).toEqual([]);
     }
+  });
+
+  it('binds NOTHING for a SAME-case duplicate (class Samey ×2) — single-match guard + inject-none (§4/REQ-015)', () => {
+    // Probed 2026-07-02: the exact-case channel's single-match guard binds nothing on a true
+    // tie, and the §3 guard keeps the folded key out of the bindings channel. The v1.5
+    // exception does NOT fire here — the main REQ-015 scenario governs.
+    // [conservative-negative; see WI-3-red-gate.md] — anchored red by s.ok().
+    const calls = getRelationships(result, 'CALLS');
+    expect(
+      calls.filter((e) => e.target === 'Samey' && e.sourceFilePath.includes('SameCaller')),
+      'no constructor edge to either duplicate',
+    ).toEqual([]);
+    expect(calls.filter((e) => e.target === 'hitA' || e.target === 'hitB')).toEqual([]);
+  });
+
+  it('binds a LONE correctly-filed trigger referenced as a type (§4/REQ-004 v1.6 corrected exception)', () => {
+    // PINNED LIMITATION BEHAVIOUR (probed + re-ratified 2026-07-02): only Lone.trigger
+    // declares `Lone`, so the exact-case channel's unique key admits the trigger def.
+    // [already-green; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'Lone' && e.targetFilePath.endsWith('Lone.trigger'),
+      ),
+    ).toBeDefined();
   });
 
   it('injects a trigger misfiled in a .cls file — a case-varied reference binds it (§4/§A.13 limitation)', () => {

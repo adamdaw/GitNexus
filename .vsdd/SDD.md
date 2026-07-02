@@ -942,18 +942,27 @@ and resolved only within a single file; the missing piece is the **cross-file vi
 
 **Two host channels (validated against the real host, 2026-07-02, Architect-accepted).** The host
 resolves cross-file names through two distinct channels, and WI-3 controls only one of them:
-- **The fallback channel (pre-existing, hook-independent).** `workspace-index.ts` precomputes
-  `simpleName → FIRST module-local callable def` workspace-wide (the fallback of
-  `findExportedDefByName`), and the heritage pass resolves parent/interface names workspace-wide.
-  Both are **exact-case, first-match**, and run for every language with no provider hook. Through this
+- **The exact-case single-match channel (pre-existing, hook-independent).** `findClassBindingInScope`
+  (`scope/walkers.ts:276-306`) falls back — when the lexical scope walk misses — to the
+  **`QualifiedNameIndex`**: `scopes.qualifiedNames.get(name)`, raw exact-case keys, **single-match-wins**
+  (binds iff exactly one class-like def carries the key; a same-key duplicate binds NOTHING —
+  probe-verified, RESEARCH-003 Addendum 5). It is reached by the constructor/free-call path, the
+  heritage pre-emit pass, and the static type-name-receiver path, for every language with no provider
+  hook; `isClassLike` admits trigger defs (`type=Class`). Through this
   channel the host already resolves, with no WI-3 code: cross-file **constructor calls** (`new B()`),
   **top-level `extends`/`implements`** (incl. the EXTENDS/IMPLEMENTS edge-label selection, §7(6)),
   **`super()`/`super.method()`** delegation to a cross-file parent, and **static type-name-receiver
   member access** (`B.FIELD` → ACCESSES for a static Property; also the trigger static call/field
   forms, with the edge source natively attributed to the trigger container — §7(3) static arms and the
   REQ-011 edge-source obligation hold on the real host).
-- **The bindings channel (what WI-3 registers).** `lookupBindingsAt`'s finalized → augmented →
-  `workspaceFqnBindings` lookup — the channel `populateNamespaceSiblings` feeds. The REQ-010 gap the
+- **The bindings channel (what WI-3 registers).** `lookupBindingsAt`'s local → finalized → augmented →
+  namespace → `workspaceFqnBindings` lookup — the channel `populateNamespaceSiblings` feeds. **Channel
+  interaction (Addendum 5):** the exact-case-channel passes above run this same lookup BEFORE their
+  QualifiedNameIndex fallback, so WI-3's folded workspace keys are reachable by those passes too — iff
+  each callsite's lookup name is folded (the WI-2 §2.2 seam folded the receiver-bound-calls and
+  declared-type keyspaces; the ctor/free-call and heritage callsites' folding is a per-form
+  [Gate-3 reliance], §7(11)). The §3 inject-none guard governs everything the workspace channel
+  serves; the QualifiedNameIndex fallback is guard-independent but itself conservative on ties. The REQ-010 gap the
   hook closes is exactly the forms the fallback channel does NOT provide: **declared-type bindings**
   (instance receivers — `B b; b.member()`, field/property chains, cross-file inherited-member lookup),
   every **case-varied** reference (the fallback is exact-case; the folded key lives here),
@@ -1061,9 +1070,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     does **not** depend on the host's >1-bucket handling — that host reliance is **foreclosed** for Apex
     (§3, §7(4)). The only residual multi-binding case on the channel is the *cross-language* one (a peer
     entry sharing an Apex folded key), a [Gate-3 reliance] bearing on NFR-002 (§7(8)). **The invariant does
-    NOT extend to the §1 fallback channel** (ctor/heritage/static-receiver forms): on a duplicate simple
-    name that channel binds exact-case-first for every language — the documented §3 fallback-channel
-    limitation (invalid-source-only, Architect-accepted 2026-07-02), not a WI-3-controllable outcome.
+    NOT extend to the §1 exact-case single-match channel** (ctor/heritage/static-receiver forms): a
+    case-variant duplicate binds its unique exact-case key there; a same-case duplicate binds nothing
+    (single-match guard) — the documented §3 limitation (invalid-source-only, Architect-accepted +
+    probe-corrected 2026-07-02), not a WI-3-controllable outcome.
 - **REQ-011 (trigger body references a user-defined type/method/field → resolved edge).**
   - *Precondition:* a user-defined Apex trigger whose body references a user-defined Apex type, method, or
     field (canonically a static-style call on a user-defined handler type, or `new Handler()`).
@@ -1151,19 +1161,22 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   mis-bound). Triple-narrow (a malformed file + a re-parented fragment + an exact folded-name collision with a
   valid type), invalid-source-only, a **liveness** limitation only — safety (no mis-bind) is preserved
   unconditionally **on the bindings channel**.
-  **Fallback-channel limitation (§A.13, Architect-accepted 2026-07-02; ratified at SRS level as the
-  v1.5 REQ-015 bounded exception — not an SDD-side-only narrowing):** the guard governs only the
-  channel WI-3 writes. The pre-existing §1 fallback channel (exact-case first-match, all languages, no
-  provider hook) resolves ctor / heritage / static-type-name-receiver references to a duplicate simple
-  name by binding the exact-case (ties: first) match — verified on the real host (`new Dupe()` bound with
-  `DUPE` present). Suppressing it for Apex would require a shared-code edit or a new §2.2 seam — an
-  Apex-specific deviation from parity of exactly the kind the Gate-2 tiebreaker revert removed — so the
-  behaviour is **parity-accepted and documented**: a case-variant (or same-case) duplicate type name —
-  **invalid Apex, uncompiled-source-only** — can mis-bind those three reference forms via the host's
-  language-uniform channel. Member resolution through a typed receiver stays guarded (the declared-type
-  binding comes from the bindings channel, where inject-none holds). Same disposition for the `.trigger`
-  exclusion below: it governs injection only; the fallback channel binds a class def wherever it parses,
-  including one misfiled in a `.trigger` file.
+  **Exact-case-channel limitation (§A.13, Architect-accepted 2026-07-02; ratified at SRS level as the
+  v1.5 REQ-015 bounded exception, text probe-corrected + re-ratified same day):** the guard governs only
+  the channel WI-3 writes. The pre-existing §1 exact-case single-match channel (all languages, no
+  provider hook) resolves a ctor / heritage / static-type-name-receiver reference to a duplicate simple
+  name by binding the unique exact-case key when the duplicates are case-variants (`new Dupe()` bound
+  with `DUPE` present — distinct keys); a SAME-case duplicate binds **nothing** (single-match guard,
+  conservative — probe-verified). Suppressing the channel for Apex would require a shared-code edit or a
+  new §2.2 seam — an Apex-specific deviation from parity of exactly the kind the Gate-2 tiebreaker
+  revert removed — so the behaviour is **parity-accepted and documented**: a case-variant duplicate type
+  name — **invalid Apex, uncompiled-source-only** — can mis-bind those three reference forms via the
+  host's language-uniform channel. Member resolution through a typed receiver stays guarded (the
+  declared-type binding comes from the bindings channel, where inject-none holds). Same disposition for
+  the `.trigger` exclusion below: it governs injection only; the exact-case channel binds a class-like
+  def wherever it parses — one misfiled in a `.trigger` file, and (REQ-004 v1.6 corrected exception) a
+  correctly-filed LONE trigger referenced as a type from invalid source (`new T()` → the trigger def;
+  probe-verified) — while a trigger twinned with a same-named class binds nothing (single-match).
   **Exclude triggers by source-file extension `.trigger`** — a trigger's `qualifiedName` is also bare (no
   `.`), so the predicate above does not exclude it; the discriminant is the def's **`filePath` ending in
   `.trigger`** (read-verifiable on `SymbolDefinition.filePath`, `model/symbol-table.ts:268` — NOT the
@@ -1213,8 +1226,15 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   language/file-scoped (so an Apex reference binds only Apex defs, and a peer reference never retrieves an Apex
   binding) is **unprobed and Gate-3-validated**; accordingly **NFR-002 safety is not pinned outright** for the
   shared-registry surface — it is asserted for the registration mechanics and Gate-3-validated for the
-  cross-language key interaction. Mirrors `languages/csharp/namespace-siblings.ts` (the global-namespace
-  path). **WI-3 is pure registration — no shared-code edit, no new seam** (the discriminant, the trigger
+  cross-language key interaction. **Single-registry pin (R4-2, Architect-approved 2026-07-02):** WI-3 writes `workspaceFqnBindings`
+  ONLY. The csharp global-namespace precedent additionally writes `workspaceTypeBindings`
+  (`csharp/namespace-siblings.ts:484-493`, the receiver-type walker's final fallback); WI-3 deliberately
+  omits that second write — **[Gate-3 reliance]** (§7(12)) that Apex declared-type/instance-receiver
+  typing resolves the injected type names through `lookupBindingsAt` (the WI-2 `interpretApexTypeBinding`
+  path with folded names) without the `workspaceTypeBindings` channel; **committed remediation surface if
+  a receiver-typing fixture is red:** add the `workspaceTypeBindings` write to the same Apex hook (an
+  Apex-local addition, no new seam). Mirrors `languages/csharp/namespace-siblings.ts` (the
+  global-namespace path) in mechanism, scoped to the single registry. **WI-3 is pure registration — no shared-code edit, no new seam** (the discriminant, the trigger
   exclusion, and the collision guard are Apex-local). **Purity boundary (restated):** the pure core is the def-selection + key-folding computation (a
   standalone helper, unit-anchored per §7); the hook itself is the **effectful shell writer** — it
   performs the sanctioned post-finalize append into `workspaceFqnBindings` via the localized
@@ -1287,8 +1307,9 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   **nothing** for that key → the **member path** (typed-receiver resolution, e.g. `Dupe d; d.hit()`) is
   unresolved Apex-locally, never mis-bound (REQ-015), with **no reliance on the
   host's >1-bucket handling** (foreclosed, §3/§7(4)). The **ctor/heritage/static-receiver forms** flow
-  through the §1 fallback channel, which binds the exact-case-first match — the documented §3
-  fallback-channel limitation (parity-accepted 2026-07-02), pinned by fixture as host behaviour, not a
+  through the §1 exact-case single-match channel: a case-variant duplicate binds its unique exact-case
+  key; a SAME-case duplicate binds nothing (single-match guard — probed) — the documented §3
+  limitation (parity-accepted 2026-07-02), pinned by fixture as host behaviour, not a
   WI-3 outcome. Reachable because GitNexus graphs **uncompiled** source
   (SDD-001 §4) — Apex *compilation* would forbid a duplicate type name, but the analyser must not.
 - **Local shadows global** — a same-unit declaration of a name that also names a top-level type elsewhere →
@@ -1326,6 +1347,16 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   `.cls`), so it is an invalid-source-only limitation — symmetric in spirit to the `.cls`-misfile
   case (which *is* injected) but dropped from injection because the extension is the only available
   trigger discriminant. No throw.
+- **Same-case duplicate type name (`class Samey` in two files)** — the exact-case channel's
+  single-match guard binds **nothing** (2 defs under one key — probed 2026-07-02), and the §3
+  inject-none guard keeps the bindings channel empty for the folded key → all forms conservatively
+  unresolved; pinned by fixture (the REQ-015 main scenario governs, no v1.5 exception fires).
+- **Lone correctly-filed trigger referenced as a type (`new T()`/`extends T`, only `T.trigger` in the
+  repo)** — invalid referencing source; the exact-case channel's key is unique and `isClassLike` admits
+  the trigger def → the reference **binds the trigger** (probed: CALLS/EXTENDS into `Class:T.trigger:T`)
+  — the REQ-004 v1.6 corrected exception, pinned by fixture as documented-limitation behaviour. The
+  bindings channel never serves it (the §3 exclusion), and a same-named class flips it to the twin case
+  below.
 - **Valid same-name trigger + class (`Foo.trigger` + `Foo.cls`, the SDD-001 §4 valid pair)** — the §3
   exclusion drops the trigger def from injection, so the **class alone** is injected under the folded key:
   a cross-file reference (`Foo f = new Foo(); f.run()`) resolves to the **class**, and **no resolution
@@ -1417,8 +1448,14 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   obligations, genuinely red, with their own §8 fixtures. The corresponding acceptance tests
   are already-green with committed no-red justifications (`.vsdd/tdd/WI-3-red-gate.md`); the bindings-
   channel arms below remain genuinely red and Gate-3-validated at Step 3b.* (1) end-to-end cross-file
-  resolution of each WI-2 mechanic once `workspaceFqnBindings` is populated; (2) the local-over-global
-  precedence shadowing; (3) **static type-name-receiver resolution** — the shape SHARED by a trigger call
+  resolution of each WI-2 mechanic once `workspaceFqnBindings` is populated — **committed remediation
+  class if any arm's fixture is red:** an Apex-local addition to the hook (the `workspaceTypeBindings`
+  write of §7(12), a `bindingAugmentations` append, or the named §3 fallbacks), never a silent
+  de-scope (Constitution §7); (2) the local-over-global
+  precedence shadowing — structurally grounded (`walkScopeChain` checks `scope.bindings` local-first,
+  `walkers.ts:629-634`, and `lookupBindingsAt` ranks `workspaceFqnBindings` last, `walkers.ts:84-94`),
+  fixture-asserted; a red fixture here is a mis-bind on valid source → Phase-5 escalation to the
+  Architect (no Apex-local knob exists over the shared rank order); (3) **static type-name-receiver resolution** — the shape SHARED by a trigger call
   `Handler.handle()` (REQ-011) and a cross-file static call `B.f()` (the WI-3 design risk; capture is
   probe-confirmed [structural], the edge-from-trigger is a [structural obligation], the host's *default*
   edge-attribution (an **Architect-accepted** reliance, held for Gate-3) and the *resolution* are the
@@ -1454,7 +1491,14 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   member declared on a parent type in another file once the parent is globally visible; expected to be fallout
   of (1) + the host `buildMro`, with a **committed Apex-local fallback** (a cross-file superclass member-walk
   addition) if its fixture is red — not a silent de-scope (symmetric with the nested-type/static-receiver
-  reliances). Gate 3 (tests vs the real host) validates
+  reliances). (11) **Exact-case-channel callsite folding** — whether the ctor/free-call and heritage
+  callsites fold their lookup name before `lookupBindingsAt` (the WI-2 seam folded the
+  receiver-bound-calls and declared-type keyspaces; these two are unprobed), i.e. whether case-varied
+  `new ENGINE()` / `extends BASE` reach WI-3's folded workspace keys — committed fallback class: an
+  Apex-local pass addition (the static-receiver-synthesis class) or, if impossible Apex-locally, Phase-5
+  escalation. (12) **Single-registry sufficiency** (§3 pin) — Apex declared-type/instance-receiver typing
+  resolves injected names via `lookupBindingsAt` without the `workspaceTypeBindings` channel; committed
+  remediation: add that second write to the Apex hook. Gate 3 (tests vs the real host) validates
   all of these; the Gate-2 adversary validates the wiring (Seam-B registration, the injected def set, the
   collision guard, the folded key) and the split, not the behaviours.
 
@@ -1471,20 +1515,28 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   another file;
 - **REQ-005 top-level `super`** — `super()` / `super.method()` to a top-level parent in another file;
 - **cross-file overloaded call** (the dominant real-world case) — B (file B) has `f(Integer)`/`f(String)`,
-  `arg` statically `Integer` → resolves `f(Integer)`, must not bind `f(String)`; undisambiguable → unresolved
+  `arg` statically `Integer` → resolves `f(Integer)`, must not bind `f(String)`; undisambiguable →
+  unresolved **+ recorded (a `suppressed` outcome — the ambiguity reaches the resolver, so the §2
+  observability rule licenses the positive record assertion, matching the trigger-overload bullet)**
   (REQ-015 ∘ REQ-010). Asserted for **both** receiver forms: an **instance** receiver (`new B().f(arg)` /
   typed variable, the validated path) and a **static type-name** receiver (`B.f(arg)`, carrying the
   static-receiver reliance + fallback); and the disambiguating argument is exercised across WI-2's supported
   kinds — a **field-typed** argument (`this.acct` of a user-defined field type) as well as
   local/literal/constructor — reached cross-file (the method-parameter kind stays WI-4);
 - **cross-file inherited member** — child (file C) `extends` parent (file B), member declared on the parent
-  → the call resolves to the parent member across files;
+  → the call resolves to the parent member across files, asserted for BOTH call forms (materially
+  different paths): the **typed-receiver** form (`Child c = …; c.inherited()` — receiver-typing ∘ member
+  lookup) and the **unqualified implicit-`this`** form (`inherited()` inside Child's own body — the
+  own-scope MRO walk);
 - **cross-file mutual/cyclic chain** — `class A{B b;}` (file A) / `class B{A a;}` (file B), `a.b.a…` resolves
   the reachable segments and terminates (bounded fixpoint), no hang/throw;
 - **case-varied cross-file** — `ACCOUNT`/`account` resolving across files via the folded global key,
   asserted for the instance-receiver form AND for the **static type-name-receiver forms** (a case-varied
   cross-file static field read `CONSTS.FLOOR` and a case-varied trigger-body static call
-  `ACCOUNTHANDLER.notify()`) — the §7(3) arms' folded-key completion, red until the injection lands;
+  `ACCOUNTHANDLER.notify()`) AND for the **constructor** (`new ENGINE()`) and **heritage**
+  (`class CaseKid extends BASE implements IFACE`) forms — the §7(3)/§7(11) folded-key completions, red
+  until the injection lands (heritage/ctor greens additionally validate the §7(11) callsite-folding
+  reliance);
 - **user-defined type shadows an external/sObject name** — `Account a = new Account(); a.save()` resolves
   to the user-defined `Account.cls` node (the §4 precedence bullet's fixture);
 - **nested type not injected by bare simple name** — a cross-file bare `Inner` reference emits no edge and
@@ -1530,6 +1582,10 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   → resolves `log(Integer)` (CALLS from the trigger container), must not bind `log(String)`; an
   undisambiguable same-arity trigger-body call → unresolved + recorded (REQ-015) — the REQ-011 ∘ REQ-008
   composition (§4);
+- **same-case duplicate** — two `class Samey` files → all reference forms conservatively unresolved
+  (the exact-case channel's single-match guard + the §3 inject-none guard), never a bind;
+- **lone-trigger reference** — `new Lone()` with only `Lone.trigger` present → binds the trigger def via
+  the exact-case channel (pinned REQ-004 v1.6 corrected-exception behaviour, not correct resolution);
 - **trigger misfiled in a `.cls` file** — pinned §A.13 limitation behaviour (the REQ-004 v1.6 bounded
   exception): the misfiled trigger def is
   injected, so a (case-varied) reference to its name binds it (documented breach of REQ-004

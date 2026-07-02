@@ -17,8 +17,12 @@ trigger-body overload composition, the IMPORTS-absence assertion) and round-2 fi
 purity/field-name/observability corrections) and round-3 fixes (case-varied static
 type-name-receiver fixtures — CONSTS.FLOOR, ACCOUNTHANDLER.notify(); §8 bullets for the
 sObject-shadow and bare-Inner fixtures; the single record-observability rule; the
-discharged source-attribution contingency excised): **37 red / 27 passed of
-64** (56 integration + 8 unit); the full pre-existing apex + peer
+discharged source-attribution contingency excised) and round-4 fixes (Addendum-5 mechanism
+correction — the exact-case channel is `findClassBindingInScope`'s QualifiedNameIndex
+single-match fallback; SRS v1.5/v1.6 probe-driven text corrections re-ratified; single-registry
+pin §7(12); callsite-folding reliance §7(11) with case-varied ctor/heritage fixtures;
+implicit-this inherited-member form; same-case-duplicate + lone-trigger pins):
+**40 red / 29 passed of 69** (61 integration + 8 unit); the full pre-existing apex + peer
 suites stay green (312/312 across apex.test, apex-resolution.test, apex-resolution-hardening,
 apex-resolution-unit, java.test). No **test scaffolding** (`// vsdd:scaffold`) was needed —
 grammar, provider, and registration all exist from WI-1/WI-2, so there is no scaffold ledger
@@ -45,9 +49,13 @@ All bindings-channel targets: no Apex `populateNamespaceSiblings` is registered,
   `x.b.a.b` (§7(9) — the no-hang half is enforced by the 120s timeout).
 - REQ-005/007 cross-file inherited member `c.inherited()` (§7(10) — the MRO walk needs the
   parent's binding).
-- Case-varied forms (the fallback channel is exact-case): `ENGINE e; e.STOP()`; the
+- Case-varied forms (the exact-case channel does not fold): `ENGINE e; e.STOP()`; the
   case-varied static type-name receivers `CONSTS.FLOOR` (cross-file field) and
-  `ACCOUNTHANDLER.notify()` (trigger-body call) — the §7(3) arms' folded-key completion.
+  `ACCOUNTHANDLER.notify()` (trigger-body call) — the §7(3) arms' folded-key completion;
+  the case-varied constructor `new ENGINE()` and heritage `CaseKid extends BASE implements
+  IFACE` — the §7(11) callsite-folding reliance arms.
+- Implicit-this inherited member (`inherited()` inside Child, the own-scope-MRO form) —
+  red alongside the typed-receiver form `c.inherited()`.
 - Enum-constant access via type-name receiver: `Color.RED`, trigger `Level.HIGH` (unlike
   static Property access, which the fallback channel provides).
 - Nested-type qualified access `Outer.Inner → i.ping()` (§7(5)).
@@ -105,6 +113,13 @@ behaviour; they are kept as acceptance + regression guards (Architect-approved 2
 - Non-existent type (Gate-2 R2-7): `new Missing(); m.poke()` → zero edges, run completes —
   a conservative-negative (a miss pre- and post-impl); anchored red by its describe's
   resolving its.
+- Same-case duplicate (`class Samey` ×2, R4): zero edges — the exact-case channel's
+  single-match guard (probed) + the §3 inject-none guard; a conservative-negative pin that
+  must STAY green at Step 3b (the injection must not create a bindable key for the tie).
+- Lone-trigger reference (`new Lone()`, R4): binds the trigger def via the exact-case
+  channel's unique key — already-green pin of the REQ-004 v1.6 corrected-exception
+  behaviour (probed + re-ratified 2026-07-02); must stay green at Step 3b (the exclusion
+  keeps it off the bindings channel; the exact-case channel is untouched).
 
 ## Conservative-negative assertions (no-red justification — Principle 3 residual)
 

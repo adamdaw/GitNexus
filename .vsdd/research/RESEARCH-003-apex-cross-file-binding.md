@@ -221,3 +221,42 @@ edge-from-trigger source attribution (the host natively attributes trigger-body 
 container node); §7(6) EXTENDS/IMPLEMENTS edge-label selection for a cross-file interface-extends-interface
 source. The bindings-channel reliances (§7(1) instance-receiver arms, (2), (3b), (5), (7), (8), (9), (10))
 remain Gate-3-validated at Step 3b.
+
+## Addendum 5 (2026-07-02) — mechanism correction: the exact-case channel is the class-binding walk's QualifiedNameIndex single-match fallback (supersedes Addendum 4's mechanism attribution; Addendum 4's OBSERVATIONS stand)
+
+**Correction.** Addendum 4 attributed the pre-hook cross-file resolutions to `workspace-index.ts`'s
+`simpleName → first module-local callable def` table. Read-verification shows that table admits only
+module-scope `Function`/`Method`/`Constructor` defs with `origin==='local'` (`workspace-index.ts:143-152`)
+— empty for pure-Apex input — so it cannot be the mechanism. The actual surface, traced through the code:
+
+- **`findClassBindingInScope` (`scope/walkers.ts:276-306`)**: first a `walkScopeChain` lexical walk, then —
+  when the walk misses — the **`QualifiedNameIndex` fallback**: `scopes.qualifiedNames.get(name)` with
+  **single-match-wins** (`qnames.length === 1`, `walkers.ts:287-291`). Keys are raw (exact-case)
+  qualified names; the only def filter is `isClassLike(def.type)` — **trigger defs (type=Class) are
+  admitted**.
+- Reached from: the constructor/free-call path (`passes/free-call-fallback.ts` →
+  `resolveInheritanceBaseInScope`), the heritage pre-emit pass (`pipeline/run.ts:133-195`), and the
+  static type-name-receiver path (`passes/receiver-bound-calls.ts:734`); the member half of a static
+  access resolves via the SemanticModel owner-keyed lookups (folded by the WI-2 §2.2 seam).
+
+**Behavioural consequences (probe-verified 2026-07-02):**
+- Same-case duplicate (`class Samey` in two files): `qualifiedNames.get('Samey')` → 2 → **binds nothing**
+  (conservative). The "ties: first-indexed" wording in the originally ratified SRS v1.5 text was wrong in
+  the unsafe direction; corrected + re-ratified.
+- Case-variant duplicate (`Dupe`/`DUPE`): distinct exact-case keys → each unique → the exact-case
+  reference binds its match (Addendum 4's observation, mechanism now correct).
+- Valid twin (`Foo.trigger` + `Foo.cls`): 2 same-key class-like defs → **binds nothing** (Addendum 4 ✓).
+- **Lone trigger** (`T.trigger` only): unique key, `isClassLike` admits the trigger def → `new T()` →
+  CALLS `Class:T.trigger:T` and `class LoneSub extends T` → EXTENDS into the trigger def — a
+  correctly-filed trigger IS bindable from (invalid) referencing source when no same-named class exists.
+  Drove the SRS v1.6 REQ-004 text correction (re-ratified 2026-07-02).
+
+**Channel interaction (corrects Addendum 4's "does not consult `workspaceFqnBindings`").** Every one of
+these passes runs `walkScopeChain` → `lookupBindingsAt` (`walkers.ts:56-96`) BEFORE the QualifiedNameIndex
+fallback, and `lookupBindingsAt` consults `workspaceFqnBindings` as its fourth channel (local scope
+bindings → finalized → augmented → namespace → workspace). So WI-3's folded workspace keys ARE reachable
+by the ctor/heritage/static-receiver passes — **iff each callsite's lookup NAME is folded** (the WI-2 §2.2
+seam folded the receiver-bound-calls and declared-type keyspaces; the free-call/ctor and heritage
+callsites' folding is unprobed → per-form [Gate-3 reliance]). The §3 inject-none guard therefore governs
+everything the workspace channel serves; the QualifiedNameIndex fallback remains guard-independent but is
+itself conservative on ties (single-match-wins).
