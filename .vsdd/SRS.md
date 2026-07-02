@@ -55,6 +55,15 @@ detail. Derived from INTENT-001; reviewed against it and the Constitution at Gat
   uncompiled Apex source; all are deliberate bounded scope reductions, NOT clarifications. Driven by WI-3
   Gate-2 re-review findings; Architect-approved (Adam, 2026-07-02). Re-enters Gate 1 fidelity (verified by
   the fresh Gate 2 adversary reading SRS+SDD together).
+  **Amended v1.7 (2026-07-02)** — REQ-015 observability interpretation ratified: the "recorded as
+  unresolved" obligation is dischargeable by a host-internal record for **plain-miss** shapes (no unique
+  target exists or the name is simply absent); the externally-observable acceptance for a plain miss is
+  the ABSENCE of any binding edge. A positive unresolved record on the analysis result is required —
+  and asserted — wherever an **ambiguity reaches the resolver** (competing live candidates: overload
+  ambiguity, case-collision among members). An interpretation note fixing the observable form of an
+  existing SHALL, not a scope change. Driven by WI-3 Gate-2 re-review; Architect-approved (Adam,
+  2026-07-02). Re-enters Gate 1 fidelity (verified by the fresh Gate 2 adversary reading SRS+SDD
+  together).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope
@@ -152,6 +161,10 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   probe-corrected and re-ratified 2026-07-02): a documented limitation. Every
   reference resolved through the per-language bindings channel — all typed-receiver member forms and all
   case-varied forms — retains the full conservative SHALL.)
+  (**Amended v1.7 — observability interpretation:** the "recorded as unresolved" obligation is
+  dischargeable by a host-internal record for plain-miss shapes; the externally-observable acceptance for
+  a plain miss is edge absence. A positive unresolved record on the analysis result is required wherever
+  an ambiguity reaches the resolver.)
 - **REQ-007** — The system SHALL resolve Apex class inheritance (`extends`) and interface implementation
   (`implements`) between user-defined Apex types as edges in the knowledge graph.
 - **REQ-008** *(head reworded v1.2)* — The system SHALL resolve an overloaded user-defined Apex method at

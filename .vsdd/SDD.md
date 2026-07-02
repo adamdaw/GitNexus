@@ -1062,8 +1062,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     (local-over-global).
   - *Invariant:* conservative skip is preserved **on the bindings channel** — a cross-file reference whose
     resolution flows through `lookupBindingsAt` and finds no unique global target (none, or two
-    folded-same-name top-level types) emits no edge and is recorded unresolved (REQ-015). **The single record-observability rule (WI-2 model,
-    restated once here; §8 aligns to it):** a positive `suppressed` outcome on the pipeline result is
+    folded-same-name top-level types) emits no edge and is recorded unresolved (REQ-015). **The single record-observability rule (ratified as the SRS
+    v1.7 REQ-015 observability interpretation; §8 aligns to it):** a positive `suppressed` outcome on the pipeline result is
     assertable **iff the ambiguity reaches the host resolver** (overload-ambiguity among live candidates,
     case-collision member ambiguity); a **guard-miss** (the §3 inject-none guard never creates the key, so
     the lookup plain-misses) has edge ABSENCE as its black-box observable — the epic's established
@@ -1187,9 +1187,13 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   def wherever it parses — one misfiled in a `.trigger` file, and (REQ-004 v1.6 corrected exception) a
   correctly-filed LONE trigger referenced as a type from invalid source (`new T()` → the trigger def;
   probe-verified) — while a trigger twinned with a same-named class binds nothing (single-match).
-  **Exclude triggers by source-file extension `.trigger`** — a trigger's `qualifiedName` is also bare (no
+  **Exclude triggers by source-file extension `.trigger`, compared case-folded** — a trigger's
+  `qualifiedName` is also bare (no
   `.`), so the predicate above does not exclude it; the discriminant is the def's **`filePath` ending in
-  `.trigger`** (read-verifiable on `SymbolDefinition.filePath`, `model/symbol-table.ts:268` — NOT the
+  `.trigger` under a case-insensitive comparison** (the host classifies extensions case-insensitively —
+  `getLanguageFromFilename` lowercases, `gitnexus-shared/src/language-detection.ts:88` — so `T.TRIGGER` /
+  `H.CLS` are Apex files whose defs reach the hook with case-preserved `filePath`; a literal
+  `endsWith('.trigger')` would mis-classify both) (read-verifiable on `SymbolDefinition.filePath`, `model/symbol-table.ts:268` — NOT the
   graph-only `apexConstruct`, which lives on the `ParsedNode`, not the resolution-side def). Triggers are
   declared only in `.trigger` files; classes/interfaces/enums only in `.cls` — so inject only `.cls`-sourced
   defs. (A trigger is a *referencing* container, never a *referenced* type; injecting one would let
@@ -1404,6 +1408,13 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   overload exactly) → unresolved + recorded (REQ-015). **[Gate-3 reliance]** — trigger-scope
   argument typing is not free fallout of WI-2 (the §2 3b reasoning applies to the argument side as it
   does to the receiver side); covered by the §7(3b) reliance arm and its committed fallback class.
+- **Case-varied source-file extension (`Handler.CLS`, `T.TRIGGER`)** — the host classifies extensions
+  case-insensitively, so both reach the hook; the §3 case-folded extension comparison keeps the
+  behaviour identical to the lowercase forms: a `.CLS`-filed class **is injected** (a literal
+  case-sensitive check would silently reduce REQ-010), a `.TRIGGER`-filed trigger **is excluded** (a
+  literal check would inject it — a REQ-004 breach on source whose only oddity is filename case, which
+  is not an Apex validity condition and so sits OUTSIDE the v1.6 invalid-source bound). §8 fixtures pin
+  both.
 - **Reference into a skipped/malformed sibling file** — NFR-001 cross-file slice: cross-file resolution
   completes, the reference is left unresolved, no throw.
 - **Duplicate / colliding folded key (incl. malformed re-parented fragment) → inject none (REQ-015)** — when
@@ -1637,6 +1648,8 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   zero edges, run completes (REQ-015/NFR-001);
 - **single-file / no-op** — evidenced by the WI-2 same-unit suite staying green (regression), not a new
   fixture;
+- **case-varied extensions** — a class in a `.CLS` file resolves cross-file (injected); a trigger in a
+  `.TRIGGER` file stays un-injected (its case-varied-name reference finds nothing);
 - **no synthetic IMPORTS edge** — the Apex cross-file fixtures' graphs contain **zero** Apex
   file-to-file `IMPORTS` edges (the REQ-010 postcondition's Seam-B observable: cross-file resolution
   with no import machinery);

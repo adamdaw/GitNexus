@@ -24,7 +24,10 @@ pin §7(12); callsite-folding reliance §7(11) with case-varied ctor/heritage fi
 implicit-this inherited-member form; same-case-duplicate + lone-trigger pins) and round-5/6
 fixes (trigger externals incl. Trigger.new; declaration-only typed trigger variable
 `d.size`; dotted-tail-decoy fixture — probed no-mis-bind, Addendum 6; observability
-honest-wording): **42 red / 30 passed of 72** (64 integration + 8 unit); the full
+honest-wording) and round-7 fixes (SRS v1.7 REQ-015 observability interpretation
+ratified; case-folded extension discriminant — .CLS injected / .TRIGGER excluded,
+fixtures + unit anchor; coverage-map completion notes; RESEARCH-003 made
+self-contained): **44 red / 31 passed of 75** (66 integration + 9 unit); the full
 pre-existing apex + peer
 suites stay green (312/312 across apex.test, apex-resolution.test, apex-resolution-hardening,
 apex-resolution-unit, java.test). No **test scaffolding** (`// vsdd:scaffold`) was needed —

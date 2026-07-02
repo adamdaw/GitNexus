@@ -112,6 +112,17 @@ describe('Apex namespace-siblings injection (SDD-003 §3, pure def-selection + k
     expect(ws.size).toBe(0);
   });
 
+  it('compares the extension case-folded: .TRIGGER excluded, .CLS injected (§3)', async () => {
+    // The host classifies extensions case-insensitively (language-detection lowercases),
+    // so the discriminant must too — a literal endsWith would mis-classify both.
+    const ws = await run([
+      parsedFile('/repo/Boom.TRIGGER', [def('n12', 'Class', 'Boom', '/repo/Boom.TRIGGER')]),
+      parsedFile('/repo/Loud.CLS', [def('n13', 'Class', 'Loud', '/repo/Loud.CLS')]),
+    ]);
+    expect(ws.get('boom'), 'the .TRIGGER-filed trigger stays excluded').toBeUndefined();
+    expect(ws.get('loud'), 'the .CLS-filed class is injected').toBeDefined();
+  });
+
   it('injects NOTHING for a folded key with >1 distinct nodeId — the inject-none collision guard (§3)', async () => {
     const ws = await run([
       parsedFile('/repo/DupOne.cls', [def('n8', 'Class', 'Dupe', '/repo/DupOne.cls')]),

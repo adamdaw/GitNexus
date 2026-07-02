@@ -181,7 +181,27 @@ purity boundary gates Gate 2.
 pre-implementation host (no Apex `populateNamespaceSiblings` registered, `workspaceFqnBindings` empty of
 Apex keys), followed by a direct pipeline probe dumping every CALLS/ACCESSES/EXTENDS/IMPLEMENTS edge for
 three fixtures (`apex-cross-file`, `apex-cross-file-collision`, `apex-cross-file-trigger`). Reproducible:
-run the suite at commit `08b804cf`; probe script recorded in the 2026-07-02 session log.
+run the suite at commit `08b804cf`; the probe script is inlined below (self-contained — the fixtures are
+the committed `test/fixtures/lang-resolution/apex-cross-file*` directories at that commit; the follow-up
+probes in Addenda 5/6 used ad-hoc three-file variants of the same shape, described in their entries):
+
+```js
+// probe.mjs — run with: npx tsx probe.mjs <fixture-dir>   (cwd: gitnexus/gitnexus)
+import { runPipelineFromRepo } from '<repo>/gitnexus/src/core/ingestion/pipeline.js';
+const r = await runPipelineFromRepo(process.argv[2], () => {});
+for (const rel of r.graph.iterRelationships()) {
+  if (!['CALLS','EXTENDS','IMPLEMENTS','ACCESSES'].includes(rel.type)) continue;
+  const s = r.graph.getNode(rel.sourceId), t = r.graph.getNode(rel.targetId);
+  console.log(rel.type, s?.properties.name, s?.properties.filePath, '->',
+              t?.properties.name, t?.properties.filePath, rel.targetId);
+}
+```
+
+Addendum-5 probes: (a) same-case pair — `SameA.cls`/`SameB.cls` both declaring `class Samey` + a caller
+`Samey s = new Samey();` → no edges; (b) lone trigger — `T.trigger` (trigger T) + `LoneCaller.cls`
+(`T t = new T();`) + `LoneSub.cls` (`class LoneSub extends T {}`) → CALLS and EXTENDS into
+`Class:T.trigger:T`. Addendum-6 probe: `Outer.cls` (nested `Inner`), decoy `Inner.cls` (top-level
+`class Inner`), `TailCaller.cls` (`Outer.Inner`/`OUTER.Inner` qualified ctor + member calls) → no edges.
 
 **Observed — resolved with NO WI-3 code (exact-case forms only):**
 

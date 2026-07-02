@@ -505,6 +505,22 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     }
   });
 
+  it('injects a class from a case-varied .CLS file — l.shout() resolves (§4 case-folded extension)', () => {
+    // The host classifies extensions case-insensitively; the §3 comparison must too, or a
+    // .CLS-filed class silently loses REQ-010. Red until the injection lands.
+    expect(getRelationships(result, 'CALLS').find((e) => e.target === 'shout')).toBeDefined();
+  });
+
+  it('excludes a trigger in a case-varied .TRIGGER file from injection (§4 case-folded extension)', () => {
+    // BOOM (case-varied) resolves only via the folded key, which must never contain the
+    // .TRIGGER-filed trigger. [conservative-negative; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'Boom' && e.sourceFilePath.includes('BoomCaller'),
+      ),
+    ).toEqual([]);
+  });
+
   it('resolves a valid same-name trigger+class twin to the CLASS, never the trigger (§4/REQ-004)', () => {
     // Twin.trigger + Twin.cls are VALID Apex. The §3 exclusion keeps the trigger out of the
     // injection, so `Twin t = new Twin(); t.spin()` resolves to the class (genuinely red

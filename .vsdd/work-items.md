@@ -45,6 +45,13 @@ foundation, then WI-2…4 follow in order.
 | REQ-008 (overload resolution) | WI-2 | | REQ-007 (extends/implements edges) | WI-2 |
 | NFR-004 (resolution test) | WI-4 | | | |
 
+**REQ-015 v1.5/v1.7 and REQ-004 v1.6 exception acceptances complete at WI-3** (recorded 2026-07-02,
+Architect-approved): the SRS v1.5 fallback-channel exception, the v1.6 misfile/lone-trigger exceptions,
+and the v1.7 observability interpretation are ratified epic-level amendments whose pinning fixtures
+(duplicate-name ctor, same-case duplicate, lone-trigger, misfiled-class/trigger, collision observability)
+ship in WI-3's Gate-3 suite — WI-3 completes these exception acceptances without re-owning REQ-015 (WI-2)
+or REQ-004 (WI-1), mirroring the REQ-008 cross-file-receiver completion entry.
+
 **REQ-009 is owned solely by WI-2** (the resolution *mechanic*). WI-3 owns **REQ-010**, the cross-file
 *binding enabler* — the implicit-namespace mechanism that lets every WI-2 mechanic (calls, types,
 chains, …) reach across files. WI-3 co-owns no WI-2 mechanic REQ; it owns the one enabler that
