@@ -324,16 +324,14 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toBeDefined();
   });
 
-  it('resolves a cross-file interface-typed declared variable (Iface v; v.act()) — the Interface injection arm (REQ-010/§3)', () => {
-    // The only acceptance observing an Interface def's workspace entry doing work (the
-    // heritage fixtures ride the pre-hook channel). Both exact and case-varied (IFACE)
-    // declarations bind; at least one act() call from IfaceUser must resolve to Derived's
-    // implementation via the interface-typed receiver.
-    expect(
-      getRelationships(result, 'CALLS').find(
-        (e) => e.target === 'act' && e.sourceFilePath.includes('IfaceUser'),
-      ),
-    ).toBeDefined();
+  it('resolves a DECLARATION-ONLY interface-typed variable (Iface v; v.act()) to Iface.act (REQ-010/§3)', () => {
+    // Declaration-only isolates the Interface workspace entry from constructor-type
+    // inference; the CALLS edge must target the interface's OWN member declaration.
+    const call = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'act' && e.sourceFilePath.includes('IfaceUser'),
+    );
+    expect(call, 'v.act() resolves via the injected Interface entry').toBeDefined();
+    expect(call!.targetFilePath, 'targets Iface.cls, not an implementation').toContain('Iface.cls');
   });
 
   it('resolves a CASE-VARIED cross-file static field via a type-name receiver (CONSTS.FLOOR) (REQ-010/§7(3))', () => {
@@ -725,14 +723,21 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     expect(calls.filter((e) => e.target === 'hitA' || e.target === 'hitB')).toEqual([]);
   });
 
-  it('binds a LONE correctly-filed trigger referenced as a type (§4/REQ-004 v1.6 corrected exception)', () => {
+  it('binds a LONE correctly-filed trigger referenced as a type — ctor AND extends arms (§4/REQ-004 v1.6)', () => {
     // PINNED LIMITATION BEHAVIOUR (probed + re-ratified 2026-07-02): only Lone.trigger
-    // declares `Lone`, so the exact-case channel's unique key admits the trigger def.
+    // declares `Lone`. Both arms fixtured (different passes — the Addendum-15 policy).
     // [already-green; see WI-3-red-gate.md]
     expect(
       getRelationships(result, 'CALLS').find(
         (e) => e.target === 'Lone' && e.targetFilePath.endsWith('Lone.trigger'),
       ),
+      'ctor arm binds the trigger',
+    ).toBeDefined();
+    expect(
+      getRelationships(result, 'EXTENDS').find(
+        (e) => e.source === 'LoneSub2' && e.targetFilePath.endsWith('Lone.trigger'),
+      ),
+      'extends arm binds the trigger (Addendum 5)',
     ).toBeDefined();
   });
 
@@ -863,6 +868,13 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
 
   it('resolves a trigger-body enum-constant access (Level.HIGH) via ACCESSES from the trigger (REQ-011)', () => {
     const access = getRelationships(result, 'ACCESSES').find((e) => e.target === 'HIGH');
+    expect(access).toBeDefined();
+    expect(fromTrigger(access!)).toBe(true);
+  });
+
+  it('resolves a CASE-VARIED trigger-body enum-constant read (LEVEL.LOW) from the trigger (REQ-011 ∘ §2 enum arm)', () => {
+    // Trigger scope ∘ folded key ∘ the enum-constant member-lookup arm — composed.
+    const access = getRelationships(result, 'ACCESSES').find((e) => e.target === 'LOW');
     expect(access).toBeDefined();
     expect(fromTrigger(access!)).toBe(true);
   });

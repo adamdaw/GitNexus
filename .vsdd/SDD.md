@@ -1149,7 +1149,9 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     reference is set from its enclosing scope (for a trigger body, the trigger container) — confirmed by
     the Addendum-4 probe **for the exact-case-channel forms** (static call / ctor / static access) and
     pinned by their §8 fixtures. The **instance-receiver trigger forms** (`h.process()`, `h.name` —
-    emitted by the receiver-bound pass once the bindings channel serves them) were red pre-hook, so their
+    emitted by the receiver-bound pass once the bindings channel serves them) were red pre-hook — as was
+    every other bindings-channel trigger form, incl. the case-varied static type-name form
+    (`ACCOUNTHANDLER.notify()`, outside Addendum 4's exact-case validation) — so their
     edge-source attribution is a **residual [Gate-3 reliance]** (expected identical — same
     enclosing-scope source resolution — but unobserved), with its OWN disposition split from §7(3b)'s
     typing half: the typing fallback cannot correct a wrong-source edge (source attribution lives in the
@@ -1279,7 +1281,7 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   **Mirror limitation — trigger misfiled in a `.cls` file (§A.13, Architect-accepted 2026-07-02; ratified
   at SRS level as the REQ-004 v1.6 bounded exception; ground corrected + re-affirmed same day):** the
   extension discriminant is a **deliberate, Architect-owned trade-off**, not an impossibility: the hook
-  ctx's `treeCache` (`scope-resolver.ts:906-912`) would permit a registration-conformant
+  ctx's `treeCache` (`scope-resolver.ts:902-913` — the hook signature; the `treeCache` field at `:913`) would permit a registration-conformant
   declaration-node-kind check, but it costs a cache-miss re-parse fallback + worker-path complexity to
   fix INVALID-SOURCE-ONLY corner shapes (triggers and classes share `type=Class` on the resolution-side
   def; `apexConstruct` is graph-only) — rejected on cost/complexity grounds, re-affirmed by the
@@ -1704,18 +1706,18 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   key (the WI-2 seam folded the receiver-bound and declared-type keyspaces, not the dotted-name path;
   distinct from (5), the member-lookup half) — committed fallback class: the §3 nested-type
   member-resolution addition under `languages/apex/` (the same mechanism class as (5)'s), extended to
-  fold the outer segment. (15) **Receiver-bound static-type-name-member workspace reach** — whether the WI-2 folded
-  receiver-bound path resolves a static member through a workspace-injected type binding
-  (`Twist.buzz()`, `Foo.stat2()` — the twin static-member arms; distinct from (11)'s ctor/free-call
-  arm and from (3)'s single-segment reliance): **one committed fallback — §7(3)'s static-receiver
-  type-binding synthesis** (the same mechanism family), extended to consult the workspace key; if the
-  hit-shape ordering (the raw exact-case channel claiming first) defeats it, Phase-5 escalation.
-  (14) **Plain-miss internal record** — whether the host's internal unresolved
+  fold the outer segment. (14) **Plain-miss internal record** — whether the host's internal unresolved
   counter fires for a
   pass-level typed-receiver guard-miss (§2; non-blocking for the black-box contract, whose observable is
   edge absence per SRS v1.7). Validation vehicle: inspect the host's resolve stats/log output at Gate 3;
   **if no internal record fires**, the disposition is a named escalation to re-ratify the SRS v1.7
-  interpretation as "no record exists for plain misses" — never a silent discharge. Gate 3 (tests vs the real host) validates
+  interpretation as "no record exists for plain misses" — never a silent discharge. (15) **Receiver-bound
+  static-type-name-member workspace reach** — whether the WI-2 folded receiver-bound path resolves a
+  static member through a workspace-injected type binding (`Twist.buzz()`, `Foo.stat2()` — the twin
+  static-member arms; distinct from (11)'s ctor/free-call arm and from (3)'s single-segment reliance):
+  **one committed fallback — §7(3)'s static-receiver type-binding synthesis** (the same mechanism
+  family), extended to consult the workspace key; if the hit-shape ordering (the raw exact-case channel
+  claiming first) defeats it, Phase-5 escalation. Gate 3 (tests vs the real host) validates
   all of these; the Gate-2 adversary validates the wiring (Seam-B registration, the injected def set, the
   collision guard, the folded key) and the split, not the behaviours.
 
@@ -1762,9 +1764,11 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   to the user-defined `Account.cls` node (the §4 precedence bullet's fixture);
 - **nested type not injected by bare simple name** — a cross-file bare `Inner` reference emits no edge and
   never mis-binds (the §4 no-mis-bind bullet's fixture);
-- **cross-file interface-typed declared variable** — `Iface v = new Derived(); v.act()` (and the
-  case-varied `IFACE` form) → CALLS to the interface member via the injected Interface entry (the
-  Predicate-1 Interface arm's observable);
+- **cross-file interface-typed declared variable (declaration-only — isolated from constructor-type
+  inference, the same discipline as the trigger `AccountHandler d;` fixture)** — `Iface v; v.act()`
+  (and the case-varied `IFACE` form) → CALLS **targeting the interface's own member declaration**
+  (`Iface.act` in Iface.cls) via the injected Interface entry — the discriminated Predicate-1
+  Interface-arm observable;
 - **cross-file bare type-usage binding** — a bare declared-type usage of a cross-file type (`B b;`, B in
   another file) binds `b`'s static type (**no standalone edge**, REQ-005 v1.3), observably enabling
   `b.member` to resolve to B's member across files;
@@ -1833,8 +1837,11 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   / `MyEnum.VALUE` → `ACCESSES` to the user-defined field/constant (the static-receiver field arm, §2 — same
   reliance + fallback as the static call);
 - **REQ-011 trigger** — a trigger body's static call on a user-defined handler → `CALLS`, and `new Handler()`
-  → `CALLS`; a trigger body field/property access → `ACCESSES` — **each edge asserted as originating from the
-  trigger container node** (REQ-011 v1.4 "from the trigger", for CALLS *and* ACCESSES); a bare declared-**type**
+  → `CALLS`; a trigger body field/property access → `ACCESSES`, incl. the trigger-body **enum-constant** read
+  (`Level.HIGH`) and its case-varied form (`LEVEL.LOW` — trigger scope ∘ the folded key ∘ the §2
+  enum-constant arm, composed) — **each edge asserted as originating from the
+  trigger container node** (REQ-011 v1.4 "from the trigger", for CALLS *and* ACCESSES — incl. the
+  case-varied bindings-channel forms, whose source attribution is the §2 residual reliance); a bare declared-**type**
   usage in a trigger body follows REQ-005 v1.3 (binds the variable's type — **no standalone edge**, not a
   "resolved edge"); no unresolved record for any reference that resolves;
 - **trigger-body instance receiver** — in a trigger body `AccountHandler h = new AccountHandler();` then both
@@ -1870,9 +1877,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   (the Addendum-13 same-case-duplicate row + the §3 inject-none guard), never a bind;
 - **lone-trigger reference** — `new Lone()` with only `Lone.trigger` present → binds the trigger def via
   the exact-case channel (pinned REQ-004 v1.6 corrected-exception behaviour, not correct resolution);
-  the ctor form is the REPRESENTATIVE fixture for the v1.6 lone-trigger family — the `extends` arm rides
-  the same channel with the same probed outcome (Addendum 5: EXTENDS into `Class:T.trigger:T`) and
-  carries the same disposition (the §8 v1.10 representativeness practice);
+  BOTH arms are fixtured (the two arms ride different passes, so representativeness was not assumed —
+  the Addendum-15 policy): the ctor form and the `extends` arm (`class LoneSub extends Lone` → EXTENDS
+  into the trigger def, per the Addendum-5 probe) each pinned as documented-limitation behaviour;
 - **case-variant trigger/class twin** — `Twist.trigger` + `class TWIST`, reference `new Twist()` /
   `w.turn()` → binds the CLASS, never the trigger (the committed-to-fix §7(11) safety case — red
   pre-impl, the probe shows the trigger bound); its **heritage arm** (`class Sub extends Twist`) →

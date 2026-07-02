@@ -1,10 +1,10 @@
-// Interface-typed declared variable: the Predicate-1 Interface arm's observable — the
-// injected Iface entry binds v's static type, enabling the member resolution.
+// Interface-typed DECLARATION-ONLY variables: isolates the Interface workspace entry
+// from constructor-type inference (the discriminated Predicate-1 Interface observable).
 public class IfaceUser {
+    public Iface v;
+    public IFACE w;
     public void go() {
-        Iface v = new Derived();
         v.act();
-        IFACE w = new Derived();
         w.act();
     }
 }

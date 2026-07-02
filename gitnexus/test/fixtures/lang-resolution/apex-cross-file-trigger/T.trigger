@@ -13,6 +13,7 @@ trigger T on Account (before insert) {
     String nm = h.next.name;
     Integer m = AccountHandler.MAX_SIZE;
     Level v = Level.HIGH;
+    Level y = LEVEL.LOW;
     Kit.Part p = new Kit.Part();
     p.snap();
     AccountHandler.log(7);
