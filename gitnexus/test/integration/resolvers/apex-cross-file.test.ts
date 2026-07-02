@@ -539,6 +539,18 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     expect(call!.targetFilePath, 'targets the nested type, not the decoy').toContain('TOuter.cls');
   });
 
+  it('pins the fragment-collision limitation — the valid Frag stays unresolved (SRS v1.9)', () => {
+    // FragBroken's error-recovery re-parents nested Frag to Module scope (Addendum 12), so
+    // the injection sees two 'frag' defs and registers neither: the VALID top-level Frag's
+    // typed-receiver form stays unresolved — liveness-only, no mis-bind (the ratified v1.9
+    // exception). [conservative pin; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => (e.target === 'real' || e.target === 'fake') && e.sourceFilePath.includes('FragCaller'),
+      ),
+    ).toEqual([]);
+  });
+
   it('pins the same-case twin heritage clause unresolved (SRS v1.10(v) documented limitation)', () => {
     // TwinSub extends Twin with Twin.trigger + Twin.cls present: the pre-hook pass sees two
     // defs under the exact-case key and refuses — liveness-only, no mis-bind.
@@ -834,8 +846,10 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
   });
 });
 
-// ── NFR-002 / §7(8) — cross-language folded-key share in one repo ────────────
-describe.skipIf(!apexAvailable)('Apex cross-language registry partitioning (NFR-002, §7(8))', () => {
+// ── NFR-002 — cross-language folded-key share: REGRESSION PIN (the former §7(8)
+// reliance is retired — workspaceFqnBindings is a per-language-run instance,
+// Addendum 12; this guards the structurally foreclosed surface, it validates no reliance) ──
+describe.skipIf(!apexAvailable)('Apex cross-language registry partitioning (NFR-002 regression pin)', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {

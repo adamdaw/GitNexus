@@ -49,7 +49,13 @@ Outer.INNER fixture (red); §7(11) shape-split; enum-constant arm disposition; t
 heritage surface recorded; SRS v1.10 nested-parent heritage limitations — probed:
 no-decoy unresolved (iii, pin green), decoy MIS-BOUND (iv, pin green, Addendum 11);
 qualified fixtures enumerate both post-hook reference kinds) → final
-**50 red / 37 passed of 87** (77 integration + 10 unit); the full
+**50 red / 37 passed of 87**, then rounds 18–19 (SRS v1.10(v) same-case-twin heritage
+pin; §7(8) RETIRED — workspaceFqnBindings is a per-language-run instance, Addendum 12,
+mixed fixture downgraded to an NFR-002 regression pin; v1.9 fragment-collision mechanism
+re-derived on the owning-scope discriminant and probe-confirmed, fixture pinned green;
+§7(14) plain-miss-record reliance enumerated; WI-2 Broken.cls watch item settled — the
+malformed outer yields no def) → final
+**50 red / 39 passed of 89** (79 integration + 10 unit); the full
 pre-existing apex + peer
 suites stay green (312/312 across apex.test, apex-resolution.test, apex-resolution-hardening,
 apex-resolution-unit, java.test). No **test scaffolding** (`// vsdd:scaffold`) was needed —

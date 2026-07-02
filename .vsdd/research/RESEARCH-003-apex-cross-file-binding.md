@@ -386,3 +386,32 @@ gate-admissible source scope):** `getLanguageFromFilename` lowercases the filena
 matching (`gitnexus-shared/src/language-detection.ts:88`, package `gitnexus-shared` — recorded here as
 admitted evidence), so `T.TRIGGER`/`H.CLS` classify as Apex and reach the hook with case-preserved
 `filePath`; the §3 discriminant therefore compares the extension case-folded.
+
+## Addendum 12 (2026-07-02) — per-language registry (corrects the shared-registry interpretation) + fragment scope probe
+
+**Per-language registry (read-verified; corrects this file's earlier "single flat map shared across all
+languages" interpretation and retires SDD-003 §7(8)):** `finalizeScopeModel` constructs a FRESH
+`workspaceFqnBindings: new Map()` per call (`finalize-orchestrator.ts:155`), and the scope-resolution
+phase runs `runScopeResolution(input, provider)` once per registered language over extension-partitioned
+files (`phase.ts:306,425`). The `scope-resolution-indexes.ts:90` doc's "shared" means shared ACROSS
+SCOPES (one entry instead of per-scope duplication), not across languages. A peer-language entry and an
+Apex reference can never meet in one map — **cross-language non-interference is structurally foreclosed**,
+a stronger fact than the previously held Architect-accepted reliance. The mixed-language fixture remains
+as an ordinary NFR-002 regression pin.
+
+**Error-recovery fragment scope shape (probe — grounds the SRS v1.9 limitation under the owning-scope
+discriminant):** `extractParsedFile` on a malformed outer class containing a nested type
+(`public class Broken { public class Frag {...} public void oops( Integer`) yields:
+
+```
+scope Module (parent=null)                    owned=[]
+scope Class  (parent=Module)                  owned=[Class:Frag]   <- the FRAGMENT, Module-parented
+scope Function (parent=Class-Frag)            owned=[Method:f]
+```
+
+The outer `Broken` scope and def VANISH; the nested fragment's Class scope re-parents to the Module
+scope on the resolution side — so the §3 owning-scope discriminant SELECTS it, and the v1.9
+fragment-collision limitation fires exactly as ratified (fragment injects; a folded-name collision with
+a valid top-level type → inject-none → the valid type's bindings-channel forms unresolved). Also
+settles the WI-2 `new Broken()` watch item: the malformed outer yields NO def, so that WI-2 assertion
+cannot flip at Step 3b.

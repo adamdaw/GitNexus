@@ -1211,9 +1211,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   conservatism — no winner is picked, no Apex-specific liveness heuristic, no benchmark-anchorless invention
   (Constitution §1). In **valid** Apex this never fires (one type per file, name = filename, no duplicate type
   names). **Documented limitation (§A.13, Architect-accepted 2026-06-30; promoted to the SRS v1.9 REQ-010
-  bounded exception, 2026-07-02):** a re-parented error-recovery
-  fragment (SDD-001 NFR-001 re-parents a malformed nested type to file scope, owner erased) is
-  indistinguishable from a top-level type and is injected; if its folded name collides with a legitimate
+  bounded exception, 2026-07-02; mechanism re-derived on the owning-scope discriminant and
+  probe-confirmed, Addendum 12):** in the error-recovery parse the malformed outer's scope and def
+  VANISH and the nested fragment's Class scope re-parents to the MODULE scope on the resolution side —
+  so the §3 owning-scope discriminant selects it and it is injected; if its folded name collides with a legitimate
   top-level type's, the key injects nothing → that **valid** type is left cross-file-**unresolved** (never
   mis-bound). Triple-narrow (a malformed file + a re-parented fragment + an exact folded-name collision with a
   valid type), invalid-source-only, a **liveness** limitation only — safety (no mis-bind) is preserved
@@ -1285,17 +1286,14 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   >1-bucket as ambiguous" reliance for Apex-internal duplicates** — a >1 Apex bucket can never reach the host
   lookup (the guard injects ≤1 per key), so that reliance is moot for Apex; the only reachable multi-binding
   case is the cross-language one (next).
-  **Cross-language registry collision is an Architect-accepted [Gate-3 reliance] (§7(8)) that bears on
-  NFR-002** (held for Gate-3 validation, 2026-06-30): `workspaceFqnBindings` is a *shared* flat
-  `Map<string, BindingRef[]>` across all languages (`model/scope-resolution-indexes.ts:90`, evidenced in the
-  RESEARCH-003 addendum), whose design relies on per-language keys "never colliding". Apex injects
-  **lower-cased simple names**; case-sensitive peers insert exact-case keys and most peers leave the workspace
-  channel empty, so the case-fold gives **de-facto partitioning** in the common case. But a peer with a
-  genuinely lower-case identifier could share an Apex folded key — so whether the host lookup is
-  language/file-scoped (so an Apex reference binds only Apex defs, and a peer reference never retrieves an Apex
-  binding) is **unprobed and Gate-3-validated**; accordingly **NFR-002 safety is not pinned outright** for the
-  shared-registry surface — it is asserted for the registration mechanics and Gate-3-validated for the
-  cross-language key interaction. **Single-registry pin (R4-2, Architect-approved 2026-07-02):** WI-3 writes `workspaceFqnBindings`
+  **Cross-language registry non-interference is structurally FORECLOSED (read-verified 2026-07-02,
+  Addendum 12 — retires the formerly Architect-accepted §7(8) reliance):** `workspaceFqnBindings` is a
+  FRESH per-language-run map (`finalizeScopeModel` constructs `new Map()` per call,
+  `finalize-orchestrator.ts:155`; the phase runs `runScopeResolution` once per registered language over
+  extension-partitioned files, `phase.ts:306,425`) — the `scope-resolution-indexes.ts:90` doc's "shared"
+  means shared across SCOPES, not languages. A peer entry and an Apex reference can never meet in one
+  map, so NFR-002 safety on this surface is **pinned structurally**; the §8 mixed-language fixture is an
+  ordinary NFR-002 regression pin, not a reliance vehicle. **Single-registry pin (R4-2, Architect-approved 2026-07-02):** WI-3 writes `workspaceFqnBindings`
   ONLY. The csharp global-namespace precedent additionally writes `workspaceTypeBindings`
   (`csharp/namespace-siblings.ts:484-493`, the receiver-type walker's final fallback); WI-3 deliberately
   omits that second write — **[Gate-3 reliance]** (§7(12)) that Apex declared-type/instance-receiver
@@ -1538,12 +1536,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
 - **NFR-002.** No peer regression — `populateNamespaceSiblings` is registered **only** on the Apex resolver;
   every other language is untouched (it registers or omits its own hook). The folded global key uses the §2.2
   `normalizeIdentifier` seam, identity for case-sensitive peers. WI-3 adds no new shared seam (pure
-  registration), so there is no new peer-facing behaviour from the wiring. **One NFR-002 surface is NOT pinned
-  safe outright** (an Architect-accepted [Gate-3 reliance], §7(8)): because Apex writes into the *shared*
-  `workspaceFqnBindings`, whether a peer reference could retrieve an Apex lower-cased key (or vice-versa)
-  depends on the host lookup's language-scoping; the case-fold partitions in the common case, but
-  cross-language non-interference is **held for Gate-3 validation, not asserted**. Measured by peer resolver
-  suites green.
+  registration), so there is no new peer-facing behaviour from the wiring. Cross-language non-interference on the registry surface is **structurally
+  foreclosed** (per-language-run map instances — Addendum 12; the formerly held §7(8) reliance is
+  retired as moot). Measured by peer resolver
+  suites green + the §8 mixed-language regression pin.
 - **Performance:** one O(scopes) selection traversal at finalize (the owning-scope discriminant visits
   each file's class-kind scopes) producing an O(top-level-type-defs) injected set; no new per-reference
   cost (the global lookup already runs). The injection is a bounded map population.
@@ -1621,19 +1617,12 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   other REQ-010/011 reliances: an Apex-local adjustment or, failing that, a reserved §2.2 lookup-visibility
   seam (subject to §2.2 review at selection) to make WI-3's injected user-defined bindings resolve. (Distinct
   from the *parity* question — whether a private type *should* resolve — which is WI-4's REQ-012.); (8)
-  **cross-language registry partitioning** (an **Architect-accepted**
-  reliance, held for Gate-3) — that a peer-language entry in the shared `workspaceFqnBindings` cannot occupy
-  an Apex lower-cased-simple-name key (and that the lookup binds Apex references only to Apex defs) — the
-  host's "keys never collide" assumption, bearing on NFR-002; the Apex collision guard covers only
-  Apex-internal duplicates. **Validation vehicle (§8): a mixed-language fixture with BOTH directions** — (i) an Apex type and a
-  Python symbol sharing one folded key (Python registers no workspace hook, so this arm validates the
-  peer-REFERENCE direction: the peer resolves unchanged, the Apex reference binds only the Apex def);
-  (ii) a **C# global-namespace type** sharing the folded key (C# DOES write `workspaceFqnBindings` via
-  its own hook — the peer-ENTRY direction: a peer entry occupying an Apex folded key must not be
-  retrieved by the Apex reference, nor the Apex entry by the C# reference). **Red-fixture disposition:
-  Phase-5 escalation to the Architect** — the shared lookup's language-scoping has no Apex-local knob
-  (injection-side filtering cannot stop a peer reference retrieving an Apex key), matching the §7(2)
-  pattern; (9) **cross-file cyclic-chain fixpoint termination** (§4) — that the host
+  **RETIRED (2026-07-02, Addendum 12)** — the formerly Architect-accepted cross-language registry
+  partitioning reliance is moot: `workspaceFqnBindings` is a per-language-run instance (fresh map per
+  `finalizeScopeModel` call; one `runScopeResolution` per language over extension-partitioned files), so
+  a peer entry and an Apex reference can never meet — non-interference is a pinned structural fact, a
+  strictly stronger position than the held reliance. The §8 mixed-language fixture (Apex + Python + C#
+  sharing one folded key) remains as an ordinary NFR-002 regression pin; (9) **cross-file cyclic-chain fixpoint termination** (§4) — that the host
   field-access fixpoint terminates (no hang/throw) on a *cross-file* mutual/cyclic receiver-type graph
   (`class A{B b;}`/`class B{A a;}`), an NFR-001 robustness reliance; the remediation if it does not is the
   host fixpoint's existing bounded-iteration cap (the same mechanism that bounds the WI-2 in-unit cyclic
@@ -1661,7 +1650,11 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   case): a red hit-shape fixture's sole remediation is **Phase-5 escalation to the Architect** — stated
   here so a red fixture leaves nothing to improvise. (12) **Single-registry sufficiency** (§3 pin) — Apex declared-type/instance-receiver typing
   resolves injected names via `lookupBindingsAt` without the `workspaceTypeBindings` channel; committed
-  remediation: add that second write to the Apex hook. (13) **Qualified-outer folding** — whether the
+  remediation: add that second write to the Apex hook. (14) **plain-miss internal record** — whether the host's internal unresolved counter fires for a
+  pass-level typed-receiver guard-miss (§2; non-blocking for the black-box contract, whose observable is
+  edge absence per SRS v1.7). Validation vehicle: inspect the host's resolve stats/log output at Gate 3;
+  **if no internal record fires**, the disposition is a named escalation to re-ratify the SRS v1.7
+  interpretation as "no record exists for plain misses" — never a silent discharge. (13) **Qualified-outer folding** — whether the
   `OUTER` segment of a qualified nested reference (`OUTER.Inner`) folds before reaching the workspace
   key (the WI-2 seam folded the receiver-bound and declared-type keyspaces, not the dotted-name path;
   distinct from (5), the member-lookup half) — committed fallback class: the §3 nested-type
@@ -1724,17 +1717,19 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   NO heritage edge (v1.10(iii)); with a same-named top-level decoy → EXTENDS into the decoy, pinned as
   the v1.10(iv) documented limitation (never as correct resolution); the SAME-case valid twin's
   heritage clause (`class Twin2 extends Foo` shape, trigger + class both present) → NO heritage edge
-  (v1.10(v), conservative refusal pinned);
+  (v1.10(v), conservative refusal pinned). The `extends` form is the REPRESENTATIVE heritage fixture for
+  the v1.10 family; the `implements` nested-parent/twin arms ride the SAME pre-hook pass and carry the
+  same v1.10 dispositions (pinned by the family, not separately fixtured);
 - **dotted-tail decoy (both halves)** — nested `TOuter.TInner` + unrelated top-level `class TInner`:
   the qualified reference resolves to the NESTED type (post-injection, via the outer's binding) and
   ZERO edges ever land on the top-level decoy (pre-injection the tail arm binds nothing — Addendum 6);
 - **valid nested/top-level name share** — nested `Outer.Helper` + top-level `class Helper` (legal Apex) →
   the top-level `Helper` injects alone (owning-scope discriminant) and resolves cross-file; no false
   collision (REQ-010 on valid source);
-- **cross-language folded-key share (NFR-002 / §7(8), both directions)** — an Apex type, a Python
-  symbol, and a C# global-namespace type sharing one folded key in one repo → each language's reference
-  resolves only to its own def (Python: reference direction; C#: entry direction — its hook writes the
-  shared registry);
+- **cross-language folded-key share (NFR-002 regression pin; the §7(8) reliance is retired —
+  per-language registry, Addendum 12)** — an Apex type, a Python symbol, and a C# global-namespace type
+  sharing one folded key in one repo → each language's reference resolves only to its own def (a
+  regression guard over the structurally foreclosed surface, not a reliance vehicle);
 - **cross-file member case-collision** — `CaseColl c = …; c.Act()` with `act`/`ACT` declared on the
   cross-file target → no edge + a positive `suppressed` record (REQ-015 two obligations,
   ambiguity-reaches-resolver);
