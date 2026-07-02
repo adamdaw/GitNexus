@@ -934,8 +934,29 @@ at WI-3.
 
 Apex has **no imports and no packages**: each top-level user-defined type is its own file and is visible
 **globally by its simple name** across the analysed repository. WI-2 set `resolveImportTarget: () => null`
-and resolved only within a single file; the gap is purely the **absence of a cross-file visibility hook**
+and resolved only within a single file; the missing piece is the **cross-file visibility hook**
 (RESEARCH-003 finding 5) — the host's name-lookup is already global-aware.
+
+**Two host channels (validated against the real host, 2026-07-02, Architect-accepted).** The host
+resolves cross-file names through two distinct channels, and WI-3 controls only one of them:
+- **The fallback channel (pre-existing, hook-independent).** `workspace-index.ts` precomputes
+  `simpleName → FIRST module-local callable def` workspace-wide (the fallback of
+  `findExportedDefByName`), and the heritage pass resolves parent/interface names workspace-wide.
+  Both are **exact-case, first-match**, and run for every language with no provider hook. Through this
+  channel the host already resolves, with no WI-3 code: cross-file **constructor calls** (`new B()`),
+  **top-level `extends`/`implements`** (incl. the EXTENDS/IMPLEMENTS edge-label selection, §7(6)),
+  **`super()`/`super.method()`** delegation to a cross-file parent, and **static type-name-receiver
+  member access** (`B.FIELD` → ACCESSES for a static Property; also the trigger static call/field
+  forms, with the edge source natively attributed to the trigger container — §7(3) static arms and the
+  REQ-011 edge-source obligation hold on the real host).
+- **The bindings channel (what WI-3 registers).** `lookupBindingsAt`'s finalized → augmented →
+  `workspaceFqnBindings` lookup — the channel `populateNamespaceSiblings` feeds. The REQ-010 gap the
+  hook closes is exactly the forms the fallback channel does NOT provide: **declared-type bindings**
+  (instance receivers — `B b; b.member()`, field/property chains, cross-file inherited-member lookup),
+  every **case-varied** reference (the fallback is exact-case; the folded key lives here),
+  **enum-constant access** (`MyEnum.VALUE`, unlike static Property access), **overload narrowing**
+  (all argument kinds and both receiver forms), **nested-type qualified access** (`Outer.Inner`), and
+  **trigger-scope instance receivers**.
 
 **REQ-010 — the cross-file enabler (Seam B, `populateNamespaceSiblings`).** WI-3 registers the host's
 per-language `populateNamespaceSiblings` hook (contract `scope-resolver.ts:902`) on the Apex resolver. The
@@ -1022,13 +1043,17 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     REQ-007, top-level-parent `super` delegation, and qualified nested-type access `Outer.Inner` via the
     outer's global binding), and that the `workspaceFqnBindings` precedence shadows correctly
     (local-over-global).
-  - *Invariant:* conservative skip is preserved — a cross-file reference with no unique global target (none,
-    or two folded-same-name top-level types) emits no edge and is recorded unresolved (REQ-015); cross-file
-    does not relax conservatism. **For Apex-internal duplicates this no-mis-bind property is guaranteed
-    Apex-locally** by the §3 collision guard (it injects ≤1 binding per folded key), so it does **not** depend
-    on the host's >1-bucket handling — that host reliance is **foreclosed** for Apex (§3, §7(4)). The only
-    residual multi-binding case is the *cross-language* one (a peer entry sharing an Apex folded key), a
-    [Gate-3 reliance] bearing on NFR-002 (§7(8)).
+  - *Invariant:* conservative skip is preserved **on the bindings channel** — a cross-file reference whose
+    resolution flows through `lookupBindingsAt` and finds no unique global target (none, or two
+    folded-same-name top-level types) emits no edge and is recorded unresolved (REQ-015); cross-file does
+    not relax conservatism. **For Apex-internal duplicates this no-mis-bind property is guaranteed
+    Apex-locally on that channel** by the §3 collision guard (it injects ≤1 binding per folded key), so it
+    does **not** depend on the host's >1-bucket handling — that host reliance is **foreclosed** for Apex
+    (§3, §7(4)). The only residual multi-binding case on the channel is the *cross-language* one (a peer
+    entry sharing an Apex folded key), a [Gate-3 reliance] bearing on NFR-002 (§7(8)). **The invariant does
+    NOT extend to the §1 fallback channel** (ctor/heritage/static-receiver forms): on a duplicate simple
+    name that channel binds exact-case-first for every language — the documented §3 fallback-channel
+    limitation (invalid-source-only, Architect-accepted 2026-07-02), not a WI-3-controllable outcome.
 - **REQ-011 (trigger body references a user-defined type/method/field → resolved edge).**
   - *Precondition:* a user-defined Apex trigger whose body references a user-defined Apex type, method, or
     field (canonically a static-style call on a user-defined handler type, or `new Handler()`).
@@ -1110,7 +1135,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   nested type the same `File→DEFINES` edge as a top-level one, so `DEFINES` is non-discriminating.
   **Collision handling — conservative inject-none (REQ-015, parity, no invention):** when **>1
   distinct-`nodeId` def folds to one key** the injection emits **nothing** for that key (the key is absent →
-  the reference falls through to REQ-015-unresolved, **no mis-bind**, no sentinel node). This is pure REQ-015
+  the reference falls through to REQ-015-unresolved on the bindings channel, **no mis-bind**, no sentinel
+  node). This is pure REQ-015
   conservatism — no winner is picked, no Apex-specific liveness heuristic, no benchmark-anchorless invention
   (Constitution §1). In **valid** Apex this never fires (one type per file, name = filename, no duplicate type
   names). **Documented limitation (§A.13, Architect-accepted 2026-06-30):** a re-parented error-recovery
@@ -1119,7 +1145,19 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   top-level type's, the key injects nothing → that **valid** type is left cross-file-**unresolved** (never
   mis-bound). Triple-narrow (a malformed file + a re-parented fragment + an exact folded-name collision with a
   valid type), invalid-source-only, a **liveness** limitation only — safety (no mis-bind) is preserved
-  unconditionally.
+  unconditionally **on the bindings channel**.
+  **Fallback-channel limitation (§A.13, Architect-accepted 2026-07-02):** the guard governs only the
+  channel WI-3 writes. The pre-existing §1 fallback channel (exact-case first-match, all languages, no
+  provider hook) resolves ctor / heritage / static-type-name-receiver references to a duplicate simple
+  name by binding the exact-case (ties: first) match — verified on the real host (`new Dupe()` bound with
+  `DUPE` present). Suppressing it for Apex would require a shared-code edit or a new §2.2 seam — an
+  Apex-specific deviation from parity of exactly the kind the Gate-2 tiebreaker revert removed — so the
+  behaviour is **parity-accepted and documented**: a case-variant (or same-case) duplicate type name —
+  **invalid Apex, uncompiled-source-only** — can mis-bind those three reference forms via the host's
+  language-uniform channel. Member resolution through a typed receiver stays guarded (the declared-type
+  binding comes from the bindings channel, where inject-none holds). Same disposition for the `.trigger`
+  exclusion below: it governs injection only; the fallback channel binds a class def wherever it parses,
+  including one misfiled in a `.trigger` file.
   **Exclude triggers by source-file extension `.trigger`** — a trigger's `qualifiedName` is also bare (no
   `.`), so the predicate above does not exclude it; the discriminant is the def's **`filePath` ending in
   `.trigger`** (read-verifiable on `SymbolDefinition.filePath`, `model/symbol-table.ts:268` — NOT the
@@ -1227,8 +1265,12 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   unresolved (REQ-015), no throw; an external sObject/stdlib reference is benign-unresolved (REQ-013/WI-4,
   but no throw here).
 - **Duplicate global simple name** — two top-level types folding to one global key → the §3 guard injects
-  **nothing** for that key → unresolved Apex-locally, never mis-bound (REQ-015), with **no reliance on the
-  host's >1-bucket handling** (foreclosed, §3/§7(4)). Reachable because GitNexus graphs **uncompiled** source
+  **nothing** for that key → the **member path** (typed-receiver resolution, e.g. `Dupe d; d.hit()`) is
+  unresolved Apex-locally, never mis-bound (REQ-015), with **no reliance on the
+  host's >1-bucket handling** (foreclosed, §3/§7(4)). The **ctor/heritage/static-receiver forms** flow
+  through the §1 fallback channel, which binds the exact-case-first match — the documented §3
+  fallback-channel limitation (parity-accepted 2026-07-02), pinned by fixture as host behaviour, not a
+  WI-3 outcome. Reachable because GitNexus graphs **uncompiled** source
   (SDD-001 §4) — Apex *compilation* would forbid a duplicate type name, but the analyser must not.
 - **Local shadows global** — a same-unit declaration of a name that also names a top-level type elsewhere →
   the local binding wins (`lookupBindingsAt` ranks local above `workspaceFqnBindings`); the global is not
@@ -1252,22 +1294,27 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   bare `Inner` reference from another file therefore finds no global `Inner` binding and stays conservatively
   unresolved (REQ-015), never mis-binding to a nested type. (Nested types are reachable only as `Outer.Inner`,
   the bullet above.)
-- **Class misfiled in a `.trigger` file (documented liveness limitation)** — the trigger exclusion keys on
+- **Class misfiled in a `.trigger` file (documented limitation)** — the trigger exclusion keys on
   the `.trigger` extension (triggers and classes share `label=Class`, and `apexConstruct` is graph-only, §3),
-  so a class/interface/enum *mis-declared* in a `.trigger` file is excluded from injection and left
-  cross-file-unresolved. This is **invalid Apex** (a `.trigger` file holds exactly one trigger; types go in
-  `.cls`), so it is an invalid-source-only **liveness** limitation — symmetric in spirit to the `.cls`-misfile
-  case (which *is* injected) but conservatively dropped here because the extension is the only available
-  trigger discriminant. Safety preserved (no mis-bind); no throw.
+  so a class/interface/enum *mis-declared* in a `.trigger` file is excluded from **injection**: its
+  case-folded / typed-receiver-member forms stay cross-file-unresolved on the bindings channel. Its
+  exact-case ctor/heritage/static-receiver forms still bind via the §1 fallback channel (verified:
+  `new Rogue()` binds the misfiled class) — the same parity-accepted fallback-channel disposition as the
+  duplicate case (§3). This is **invalid Apex** (a `.trigger` file holds exactly one trigger; types go in
+  `.cls`), so it is an invalid-source-only limitation — symmetric in spirit to the `.cls`-misfile
+  case (which *is* injected) but dropped from injection because the extension is the only available
+  trigger discriminant. No throw.
 - **Reference into a skipped/malformed sibling file** — NFR-001 cross-file slice: cross-file resolution
   completes, the reference is left unresolved, no throw.
 - **Duplicate / colliding folded key (incl. malformed re-parented fragment) → inject none (REQ-015)** — when
   >1 def folds to one key (two duplicate-named valid types, or a re-parented fragment colliding with a valid
-  type), the §3 guard injects **nothing** → the reference is left unresolved Apex-locally, **never mis-bound**,
+  type), the §3 guard injects **nothing** → the bindings-channel reference (typed-receiver member forms) is
+  left unresolved Apex-locally, **never mis-bound**,
   no reliance on the host's >1-bucket handling. **Documented §A.13 limitation (Architect-accepted):** in the
   fragment-collision case the valid same-folded-name type is left cross-file-unresolved (a malformed file
   causes a triple-narrow, invalid-source-only **liveness** loss for a colliding valid peer — safety
-  preserved). No throw, no mis-bind.
+  preserved on the channel). No throw. (Ctor/heritage/static-receiver forms: the §3 fallback-channel
+  limitation applies as in the duplicate bullet above.)
 - **Trigger with a partial / error-recovery body** — conservative skip of the malformed reference, no throw
   (NFR-001).
 - **Single-file repo / no cross-file references** — the injection is a no-op for resolution outcomes; no
@@ -1318,7 +1365,12 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   (≥2 top-level types in separate files; a trigger file), plus main-thread unit anchors for the new pure
   function(s) so the cross-file logic is coverage-attributable (dogfood #16 — the hook runs in the
   resolution phase, but the def-selection helper is unit-testable on the main thread).
-- **Gate-3 reliances (finding #13 — the explicit list to FLAG, not pin):** (1) end-to-end cross-file
+- **Gate-3 reliances (finding #13 — the explicit list to FLAG, not pin).** *Step-3a validation
+  (2026-07-02) found several of these TRUE on the real host before any WI-3 code, via the §1 fallback
+  channel: the ctor/heritage/super/static-Property arms of (1), (3)'s static-call and static-field arms
+  (incl. the REQ-011 edge-from-trigger source attribution), and (6). The corresponding acceptance tests
+  are already-green with committed no-red justifications (`.vsdd/tdd/WI-3-red-gate.md`); the bindings-
+  channel arms below remain genuinely red and Gate-3-validated at Step 3b.* (1) end-to-end cross-file
   resolution of each WI-2 mechanic once `workspaceFqnBindings` is populated; (2) the local-over-global
   precedence shadowing; (3) **static type-name-receiver resolution** — the shape SHARED by a trigger call
   `Handler.handle()` (REQ-011) and a cross-file static call `B.f()` (the WI-3 design risk; capture is
@@ -1326,9 +1378,12 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   edge-attribution (an **Architect-accepted** reliance, held for Gate-3) and the *resolution* are the
   reliances — with one committed fallback each), **and (3b) trigger-body instance-receiver typing** (a
   trigger-scope local `h = new …; h.x` getting its type binding — not free fallout of WI-2, §2); (4) **FORECLOSED
-  for Apex-internal duplicates** — the §3 collision guard injects ≤1 binding per folded key, so a >1 *Apex*
+  for Apex-internal duplicates ON THE BINDINGS CHANNEL** — the §3 collision guard injects ≤1 binding per
+  folded key, so a >1 *Apex*
   bucket never reaches the host lookup; the host's ">1-bucket → ambiguous, not first-match" behaviour is moot
-  for Apex (the safety is Apex-local, not host-dependent). The only reachable multi-binding case is (8); (5)
+  for Apex (the safety is Apex-local, not host-dependent). The §1 fallback channel is OUTSIDE this
+  foreclosure — its exact-case first-match behaviour on duplicates is the §3 parity-accepted limitation
+  (validated 2026-07-02). The only reachable multi-binding case on the bindings channel is (8); (5)
   qualified nested-type access (`Outer.Inner`) resolving via the outer's global binding + nested-type member
   lookup; (6) the host edge-label selection (EXTENDS vs IMPLEMENTS by target kind) for a cross-file
   interface-extends-interface source (the REQ-012-parity behaviour); (7) whether a non-exported top-level
@@ -1386,12 +1441,17 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   via `Outer`'s global binding + nested-type member lookup; resolution is required (committed mechanism, not
   de-scoped), never a mis-bind;
 - **collision / non-poisoning (REQ-015)** — two defs folding to one key (duplicate-named types, or a
-  re-parented fragment colliding with a valid type) → **no edge** for that reference, recorded unresolved
-  (the §3 inject-none guard); never a mis-bind. The fragment-collision liveness loss for a colliding valid
+  re-parented fragment colliding with a valid type) → **no member edge** through a typed receiver
+  (`Dupe d; d.hit()` — the §3 inject-none guard; observable as edge absence, a plain bindings-channel
+  miss). The ctor form (`new Dupe()`) binds exact-case-first via the §1 fallback channel — asserted as
+  pinned host behaviour under the §3 parity-accepted limitation, NOT as a WI-3 resolution claim. The
+  fragment-collision liveness loss for a colliding valid
   type is the documented §A.13 limitation (a black-box-observable absence of edge, not a mis-bind);
 - **misfiled valid top-level type** — `class Helper` saved in `Utils.cls` (name ≠ filename) is still injected
   (its `qualifiedName` is bare) and resolves cross-file when its key is unique (no silent REQ-010
-  reduction, §3);
+  reduction, §3); a class misfiled in a `.trigger` file is excluded from injection (member/case-folded
+  forms unresolved) while its exact-case ctor form binds via the fallback channel — both asserted as the
+  §4 documented-limitation behaviour;
 - **non-exported top-level type** — black-box: a cross-file reference to a `private`/no-modifier top-level
   type **resolves** (WI-3 inject-all + the §7(7) [Gate-3 reliance] that the host lookup does not
   visibility-filter). Whether resolving it is *parity-correct* is a **WI-4 REQ-012** question (WI-4 owns the

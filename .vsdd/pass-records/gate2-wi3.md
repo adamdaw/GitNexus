@@ -1,5 +1,14 @@
 # Gate 2 pass record — Spec Fidelity (ITEM-003 / WI-3)
 
+> **SUPERSEDED 2026-07-02 (Phase-5 cascade, dogfood #15).** WI-3 Step-3a validation against
+> the real host surfaced two SDD-003 design-model findings (`.vsdd/tdd/WI-3-step3a-findings.md`):
+> the pre-existing exact-case first-match workspace fallback channel already resolves several
+> REQ-010 forms and bypasses the §3 inject-none guard. Architect-dispositioned 2026-07-02 as
+> parity-accept + document; SDD-003 amended (§1 two-channel model, §2/§3/§4/§7(4)/§8
+> foreclosure-scoping + fallback-channel §A.13 limitation). This record covers the pre-amendment
+> SDD-003 and is superseded pending the cold Gate-2 re-review of the amended SDD-003
+> (`gate2-wi3-r2.md`).
+
 *VSDD §A.7 / §A.17. Gate 2 reviews the derived SDD against the source SRS + the Constitution, via distinct
 context-free adversary invocations (production independence, not just memory reset). Findings are
 derivation-fidelity → **fixed-only**. Verdict authority: Architect (Adam).*
