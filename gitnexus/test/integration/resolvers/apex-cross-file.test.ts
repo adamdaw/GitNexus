@@ -519,6 +519,17 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     expect(ctors[0]!.targetFilePath, 'exact-case target, not the case-variant').toContain('DupOne.cls');
   });
 
+  it('pins the v1.5-family heritage and static arms binding the unique exact-case match (Addendum 15)', () => {
+    // Both probed per-pass: DupSub extends Dupe -> the exact-case Dupe (pre-hook pass);
+    // Dupe.stat() -> Dupe.stat (post-hook). [already-green pins; see WI-3-red-gate.md]
+    const ext = getRelationships(result, 'EXTENDS').find((e) => e.source === 'DupSub');
+    expect(ext, 'heritage arm binds').toBeDefined();
+    expect(ext!.targetFilePath).toContain('DupOne.cls');
+    const stat = getRelationships(result, 'CALLS').find((e) => e.target === 'stat');
+    expect(stat, 'static arm binds').toBeDefined();
+    expect(stat!.targetFilePath).toContain('DupOne.cls');
+  });
+
   it('lets a same-unit declaration shadow a same-named global (local-over-global precedence) (§4)', () => {
     // ShadowUser declares a NESTED Shadow; a top-level Shadow exists in another file.
     // The nested (local) one must win — an edge into Shadow.cls from ShadowUser is a mis-bind.
@@ -646,6 +657,11 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     );
     expect(ctor, 'new Twist() binds the class').toBeDefined();
     expect(ctor!.targetFilePath, 'never the trigger').toContain('TWIST.cls');
+    // static-type-name-member form (probed binding NOTHING pre-hook, Addendum 15):
+    // class-wins via the folded receiver-bound path (§7(11) policy).
+    const buzz = getRelationships(result, 'CALLS').find((e) => e.target === 'buzz');
+    expect(buzz, 'Twist.buzz() resolves to the class static').toBeDefined();
+    expect(buzz!.targetFilePath).toContain('TWIST.cls');
     // ctor/member forms only: the HERITAGE arm is the ratified v1.8(ii) limitation (below),
     // so the no-edge-into-the-trigger sweep here is scoped to CALLS/ACCESSES.
     for (const type of ['CALLS', 'ACCESSES']) {

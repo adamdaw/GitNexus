@@ -468,3 +468,17 @@ call-config / registration-table folded keyspaces), distinct from the raw free-c
 §7(11) is therefore sharpened, not falsified: the Gate-3 question is whether the WI-2 folding path
 reaches the workspace channel cross-file and claims ctor references before the raw channel; the
 committed fallback's named attachment is that same WI-2 Apex-local machinery.
+
+## Addendum 15 (2026-07-02) — v1.5-family arm probes + twin static-member probe
+
+**v1.5 family, case-variant duplicate (`Dupe` + `DUPE`):** the heritage arm (`class DupSub extends
+Dupe`) → `EXTENDS DupSub → Class:DupOne.cls:Dupe`, and the static-type-name arm (`Dupe.stat()`) →
+`CALLS → Method:DupOne.cls:Dupe.stat#0` — BOTH bind the unique exact-case match, per the ratified v1.5
+text, on their respective passes (pre-hook heritage; post-hook receiver-bound). The Addendum-13 shape
+table's case-variant-duplicate row extends to all three v1.5 forms, now per-pass probed.
+
+**Case-variant twin, static-type-name member form (`Twist.buzz()` with `Twist.trigger` + `class TWIST
+{ static buzz }`):** binds **NOTHING** pre-hook (no mis-bind — a trigger has no members, so the
+exact-case receiver yields no member edge). The class-wins outcome post-injection rides the WI-2 folded
+receiver-bound path reaching the workspace key (the §7(11)-class ordering question) — committed and
+fixtured red, same policy as the twin ctor arm.

@@ -1499,7 +1499,9 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   injected workspace key AND claims the reference before the raw exact-case channel; **if the fixture is
   red at Gate 3 the remediation is the §7(11) committed fallback (extend the WI-2 machinery) where
   ordering permits, else Phase-5 escalation** — nothing left to improvise.
-  §8 fixture asserts class-wins for ctor and member forms. **The heritage arm of the twin**
+  §8 fixture asserts class-wins for the ctor, instance-member, AND static-type-name-member
+  (`Twist.buzz()` — probed binding NOTHING pre-hook, Addendum 15: no mis-bind; class-wins rides the
+  WI-2 folded receiver-bound path per the §7(11) policy) forms. **The heritage arm of the twin**
   (`class Sub extends Twist`) is DIFFERENT: it resolves in the PRE-hook heritage pass (Addendum 9),
   where the injection can never intercept — the trigger binds (the Addendum-5 lone-trigger analog) —
   ratified as the SRS v1.8(ii) bounded safety limitation, fixture-pinned as documented behaviour.
@@ -1627,9 +1629,10 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   red fixture here is a mis-bind on valid source → Phase-5 escalation to the
   Architect (no Apex-local knob exists over the shared rank order); (3) **static type-name-receiver resolution** — the shape SHARED by a trigger call
   `Handler.handle()` (REQ-011) and a cross-file static call `B.f()` (the WI-3 design risk; capture is
-  probe-confirmed [structural], the edge-from-trigger is a [structural obligation], the host's *default*
-  edge-attribution (an **Architect-accepted** reliance, held for Gate-3) and the *resolution* are the
-  reliances — with one committed fallback each), **and (3b) trigger-scope typing** — instance-receiver
+  probe-confirmed [structural], the edge-from-trigger is a [structural obligation]; the host's *default*
+  edge-attribution for the exact-case forms is **validated TRUE** (Addendum 4 — the formerly held
+  Architect-accepted reliance is discharged; only the instance-receiver residual (3b) remains held) and
+  the *resolution* reliances carry one committed fallback each), **and (3b) trigger-scope typing** — instance-receiver
   typing (a trigger-scope local `h = new …; h.x` getting its type binding — not free fallout of WI-2, §2)
   AND overload-argument typing from trigger scope (the REQ-011 ∘ REQ-008 composition, §4 — the same
   not-free-fallout reasoning on the argument side; same committed-fallback class); (4) **FORECLOSED
@@ -1784,11 +1787,10 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   ABSENCE, only). The **case-varied/mismatched forms to the colliding pair** (`new dupe()`, `dupe d;` —
   the exact-case channel misses both keys, the folded key is guard-suppressed) emit nothing: asserted as
   exactly ONE ctor edge from the caller to the pair (the exact-case v1.5-exception bind) and zero member
-  edges — the v1.5 scenario's second Then-clause. **The ctor fixture is the REPRESENTATIVE for the v1.5
-  family's three forms:** the heritage arm rides the pre-hook pass with the same
-  unique-exact-case-key bind (the Addendum-13 shape table's case-variant-duplicate row governs both
-  passes), and the static-type-name-receiver arm rides the same post-hook exact-case behaviour — same
-  disposition, pinned by the family (the §8 v1.6/v1.10 representativeness practice). The ctor form (`new Dupe()`) binds exact-case-first via the §1 fallback channel — asserted as
+  edges — the v1.5 scenario's second Then-clause. **All three v1.5 forms are per-pass probed and fixtured** (Addendum 15 — the family's arms ride
+  three different passes, so representativeness was not assumed): the heritage arm (`DupSub extends
+  Dupe` → EXTENDS to the unique exact-case match) and the static-type-name arm (`Dupe.stat()` → CALLS
+  to `Dupe.stat`) each get their own already-green pin alongside the ctor fixture. The ctor form (`new Dupe()`) binds exact-case-first via the §1 fallback channel — asserted as
   pinned host behaviour under the §3 parity-accepted limitation, NOT as a WI-3 resolution claim. The
   fragment-collision liveness loss for a colliding valid
   type is the documented §A.13 limitation (a black-box-observable absence of edge, not a mis-bind);
