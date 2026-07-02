@@ -991,7 +991,9 @@ resolves cross-file names through two distinct channels, and WI-3 controls only 
   channel serves; the QualifiedNameIndex fallback is guard-independent but itself conservative on ties. The REQ-010 gap the
   hook closes is exactly the forms the fallback channel does NOT provide: **declared-type bindings**
   (instance receivers — `B b; b.member()`, field/property chains, cross-file inherited-member lookup),
-  every **case-varied** reference (the fallback is exact-case; the folded key lives here),
+  every **case-varied** reference EXCEPT the heritage forms (the channel is exact-case; the folded key
+  lives here — heritage rides the pre-hook pass where the key is unreachable, the ratified SRS v1.8(i)
+  limitation),
   **enum-constant access** (`MyEnum.VALUE`, unlike static Property access), **overload narrowing**
   (all argument kinds and both receiver forms), **nested-type qualified access** (`Outer.Inner`), and
   **trigger-scope instance receivers**.
@@ -1117,9 +1119,9 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     foreclosed by the §3 guard, and the cross-language case is structurally foreclosed (per-language-run
     registry instances — Addendum 12; §7(8) retired), covered by the §8 mixed-language NFR-002
     regression pin, not by a reliance. **The invariant does
-    NOT extend to the §1 exact-case single-match channel** (ctor/heritage/static-receiver forms): a
+    NOT extend to the §1 exact-case channel** (ctor/heritage/static-receiver forms): a
     case-variant duplicate binds its unique exact-case key there; a same-case duplicate binds nothing
-    (single-match guard) — the documented §3 limitation (invalid-source-only, Architect-accepted +
+    (the Addendum-13 shape-table rows — probed behaviour, not a mechanism pin) — the documented §3 limitation (invalid-source-only, Architect-accepted +
     probe-corrected 2026-07-02), not a WI-3-controllable outcome.
 - **REQ-011 (trigger body references a user-defined type/method/field → resolved edge).**
   - *Precondition:* a user-defined Apex trigger whose body references a user-defined Apex type, method, or
@@ -1244,11 +1246,11 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   unconditionally **on the bindings channel**.
   **Exact-case-channel limitation (§A.13, Architect-accepted 2026-07-02; ratified at SRS level as the
   v1.5 REQ-015 bounded exception, text probe-corrected + re-ratified same day):** the guard governs only
-  the channel WI-3 writes. The pre-existing §1 exact-case single-match channel (all languages, no
+  the channel WI-3 writes. The pre-existing §1 exact-case channel (all languages, no
   provider hook) resolves a ctor / heritage / static-type-name-receiver reference to a duplicate simple
   name by binding the unique exact-case key when the duplicates are case-variants (`new Dupe()` bound
-  with `DUPE` present — distinct keys); a SAME-case duplicate binds **nothing** (single-match guard,
-  conservative — probe-verified). Suppressing the channel for Apex would require a shared-code edit or a
+  with `DUPE` present — distinct keys); a SAME-case duplicate binds **nothing** (probed — the
+  Addendum-13 same-case-duplicate row, conservative). Suppressing the channel for Apex would require a shared-code edit or a
   new §2.2 seam — an Apex-specific deviation from parity of exactly the kind the Gate-2 tiebreaker
   revert removed — so the behaviour is **parity-accepted and documented**: a case-variant duplicate type
   name — **invalid Apex, uncompiled-source-only** — can mis-bind those three reference forms via the
@@ -1257,7 +1259,7 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   the `.trigger` exclusion below: it governs injection only; the exact-case channel binds a class-like
   def wherever it parses — one misfiled in a `.trigger` file, and (REQ-004 v1.6 corrected exception) a
   correctly-filed LONE trigger referenced as a type from invalid source (`new T()` → the trigger def;
-  probe-verified) — while a trigger twinned with a same-EXACT-CASE-named class binds nothing (single-match); a
+  probe-verified) — while a trigger twinned with a same-EXACT-CASE-named class binds nothing (probed — Addendum 5/13); a
   CASE-VARIANT same-named class does NOT suppress the exact-case channel (the trigger's key stays
   unique — probed, Addendum 8), so that shape is a committed-to-fix §7(11) safety case (§4), not a
   limitation.
@@ -1424,8 +1426,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   **nothing** for that key → the **member path** (typed-receiver resolution, e.g. `Dupe d; d.hit()`) is
   unresolved Apex-locally, never mis-bound (REQ-015), with **no reliance on the
   host's >1-bucket handling** (foreclosed, §3/§7(4)). The **ctor/heritage/static-receiver forms** flow
-  through the §1 exact-case single-match channel: a case-variant duplicate binds its unique exact-case
-  key; a SAME-case duplicate binds nothing (single-match guard — probed) — the documented §3
+  through the §1 exact-case channel: a case-variant duplicate binds its unique exact-case
+  key; a SAME-case duplicate binds nothing (probed — Addendum 13) — the documented §3
   limitation (parity-accepted 2026-07-02), pinned by fixture as host behaviour, not a
   WI-3 outcome. Reachable because GitNexus graphs **uncompiled** source
   (SDD-001 §4) — Apex *compilation* would forbid a duplicate type name, but the analyser must not.
@@ -1459,8 +1461,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   SHALL" pattern, §3), NOT a silent conservative-unresolved (which would reduce REQ-010 without an SRS
   amendment — Constitution §7). §8 asserts resolution.
 - **Dotted-tail collision (nested `TOuter.TInner` + unrelated top-level `class TInner`)** — the
-  exact-case channel's dotted-tail arm retries the tail under the single-match guard, so with both defs
-  indexed under the tail key nothing binds (probed 2026-07-02, Addendum 6 — no mis-bind into the decoy);
+  exact-case channel binds **nothing** into the decoy (probed 2026-07-02, Addendum 6/13 — behaviour
+  pin, not a mechanism claim);
   post-injection the qualified reference resolves to the NESTED type via the outer's global binding +
   member lookup (§7(5)), never to the same-named top-level decoy. Fixture asserts both halves.
 - **Nested type not injected by bare simple name (no mis-bind via the injection)** — a nested type's
@@ -1469,8 +1471,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   and stays conservatively unresolved on the bindings channel (REQ-015). (Nested types are reachable only
   as `Outer.Inner`, the bullet above. The exact-case channel indexes the nested def under its BARE
   `qualifiedName` — Addendum 7 — but the ctor/free-call arm binds TOP-LEVEL types only: probed in BOTH
-  repo shapes (Addendum 10 — no-decoy single-candidate: no edge; with a top-level decoy: no edge, the
-  single-match guard), so the bare cross-file reference emits nothing either way; the internal reason the
+  repo shapes (Addendum 10 — no-decoy single-candidate: no edge; with a top-level decoy: no edge), so
+  the bare cross-file reference emits nothing either way; the internal reason the
   ctor arm skips nested defs is unpinned — the OUTCOME is fixture-pinned per shape, black-box.)
 - **Valid nested/top-level name share (`class Outer { class Helper {} }` + top-level `class Helper` —
   LEGAL Apex)** — under the owning-scope discriminant only the TOP-LEVEL `Helper` is selected, so the
@@ -1492,13 +1494,13 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   `.cls`), so it is an invalid-source-only limitation — symmetric in spirit to the `.cls`-misfile
   case (which *is* injected) but dropped from injection because the extension is the only available
   trigger discriminant. No throw.
-- **Same-case duplicate type name (`class Samey` in two files)** — the exact-case channel's
-  single-match guard binds **nothing** (2 defs under one key — probed 2026-07-02), and the §3
+- **Same-case duplicate type name (`class Samey` in two files)** — the exact-case channel binds
+  **nothing** (the Addendum-13 same-case-duplicate row — probed), and the §3
   inject-none guard keeps the bindings channel empty for the folded key → all forms conservatively
   unresolved; pinned by fixture (the REQ-015 main scenario governs, no v1.5 exception fires).
 - **Lone correctly-filed trigger referenced as a type (`new T()`/`extends T`, only `T.trigger` in the
-  repo)** — invalid referencing source; the exact-case channel's key is unique and `isClassLike` admits
-  the trigger def → the reference **binds the trigger** (probed: CALLS/EXTENDS into `Class:T.trigger:T`)
+  repo)** — invalid referencing source; the exact-case channel **binds the trigger** (the Addendum-13
+  lone-trigger row — probed behaviour) (probed: CALLS/EXTENDS into `Class:T.trigger:T`)
   — the REQ-004 v1.6 corrected exception, pinned by fixture as documented-limitation behaviour. The
   bindings channel never serves it (the §3 exclusion), and a same-named class flips it to the twin case
   below.
@@ -1513,7 +1515,7 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   ordering permits, else Phase-5 escalation** — nothing left to improvise.
   §8 fixture asserts class-wins for the ctor, instance-member, AND static-type-name-member
   (`Twist.buzz()` — probed binding NOTHING pre-hook, Addendum 15: no mis-bind; class-wins rides the
-  WI-2 folded receiver-bound path per the §7(11) policy) forms. **The heritage arm of the twin**
+  §7(15) receiver-bound reliance with its single committed fallback) forms. **The heritage arm of the twin**
   (`class Sub extends Twist`) is DIFFERENT: it resolves in the PRE-hook heritage pass (Addendum 9),
   where the injection can never intercept — the trigger binds (the Addendum-5 lone-trigger analog) —
   ratified as the SRS v1.8(ii) bounded safety limitation, fixture-pinned as documented behaviour.
@@ -1702,7 +1704,13 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   key (the WI-2 seam folded the receiver-bound and declared-type keyspaces, not the dotted-name path;
   distinct from (5), the member-lookup half) — committed fallback class: the §3 nested-type
   member-resolution addition under `languages/apex/` (the same mechanism class as (5)'s), extended to
-  fold the outer segment. (14) **Plain-miss internal record** — whether the host's internal unresolved
+  fold the outer segment. (15) **Receiver-bound static-type-name-member workspace reach** — whether the WI-2 folded
+  receiver-bound path resolves a static member through a workspace-injected type binding
+  (`Twist.buzz()`, `Foo.stat2()` — the twin static-member arms; distinct from (11)'s ctor/free-call
+  arm and from (3)'s single-segment reliance): **one committed fallback — §7(3)'s static-receiver
+  type-binding synthesis** (the same mechanism family), extended to consult the workspace key; if the
+  hit-shape ordering (the raw exact-case channel claiming first) defeats it, Phase-5 escalation.
+  (14) **Plain-miss internal record** — whether the host's internal unresolved
   counter fires for a
   pass-level typed-receiver guard-miss (§2; non-blocking for the black-box contract, whose observable is
   edge absence per SRS v1.7). Validation vehicle: inspect the host's resolve stats/log output at Gate 3;
@@ -1859,7 +1867,7 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   parent → CALLS to the parent member from the trigger container (REQ-011 ∘ §7(10), the MRO walk from
   trigger scope — compositions are not assumed free);
 - **same-case duplicate** — two `class Samey` files → all reference forms conservatively unresolved
-  (the exact-case channel's single-match guard + the §3 inject-none guard), never a bind;
+  (the Addendum-13 same-case-duplicate row + the §3 inject-none guard), never a bind;
 - **lone-trigger reference** — `new Lone()` with only `Lone.trigger` present → binds the trigger def via
   the exact-case channel (pinned REQ-004 v1.6 corrected-exception behaviour, not correct resolution);
   the ctor form is the REPRESENTATIVE fixture for the v1.6 lone-trigger family — the `extends` arm rides
@@ -1877,8 +1885,10 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
 - **valid twin (trigger + class sharing a name)** — `Foo f = …; f.run()` from another file → resolves to
   the **class** (the injected def, via the folded declared-type keyspace); the `new Foo()` ctor edge →
   CALLS to the class, asserted under the §7(11) reliance + committed fallback (same policy as the
-  case-varied ctor fixture); no resolution edge targets the trigger def
-  (REQ-004);
+  case-varied ctor fixture); the **static-type-name-member arm** (`Foo.stat2()` — a different
+  receiver-bound shape from the case-variant twin: the exact-case key holds TWO defs) → CALLS to the
+  class static, asserted under §7(15); no resolution edge targets the trigger def across ALL asserted
+  arms (REQ-004);
 - **non-existent type** — a cross-file reference to an undeclared type (`new Missing(); m.poke()`) →
   zero edges, run completes (REQ-015/NFR-001);
 - **single-file / no-op** — evidenced by the WI-2 same-unit suite staying green (regression), not a new

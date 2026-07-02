@@ -698,6 +698,11 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     );
     expect(ctor, 'new Twin() binds the class (§7(11))').toBeDefined();
     expect(ctor!.targetFilePath, 'the class, never the trigger').toContain('Twin.cls');
+    // static-type-name-member arm (§7(15)): a different receiver-bound shape from the
+    // case-variant twin — the exact-case key holds TWO defs here.
+    const stat2 = getRelationships(result, 'CALLS').find((e) => e.target === 'stat2');
+    expect(stat2, 'Twin.stat2() resolves to the class static').toBeDefined();
+    expect(stat2!.targetFilePath).toContain('Twin.cls');
     // REQ-004 guard: no resolution edge ever targets the trigger def.
     for (const type of ['CALLS', 'ACCESSES', 'EXTENDS', 'IMPLEMENTS']) {
       expect(
