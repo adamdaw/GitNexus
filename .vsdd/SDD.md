@@ -4,8 +4,10 @@
 approved SRS-001 and the work-item decomposition. One SDD section per work item; authored in
 dependency order. **WI-1 (ITEM-001) first.***
 
-- **Constitution version:** CONST-gitnexus-apex **v1.1.0** (amended 2026-06-29; §2.2 generic-seams
-  refinement). This SDD is authored under it and Gate 2 checks the SDD does not contradict it.
+- **Constitution version:** CONST-gitnexus-apex **v1.1.1** (v1.1.0 at SDD-001 authoring — the
+  2026-06-29 §2.2 generic-seams refinement; v1.1.1 since 2026-06-30 — §2.1/§2.2 isolation scoped to
+  logic, not comments; SDD-003 is authored under v1.1.1). Each SDD section is authored under, and Gate 2
+  checks it against, the Constitution version its own header declares.
 - **Consumes:** RESEARCH-001 (§A.6 grammar feasibility, Architect-approved 2026-06-28).
 
 ---
@@ -1068,7 +1070,9 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     **bare declared-type usage** (`B b;` where B is in another file) → the declared-type **binding** (no
     standalone edge, per REQ-005 v1.3 — observable via the member access it enables) — all with **no import
     statement and no synthetic IMPORTS edge**. The match is case-insensitive (the
-    folded global key) for every reference kind EXCEPT the heritage forms — the host's inheritance
+    folded global key) for every reference kind EXCEPT the heritage forms — for the ctor/free-call kind
+    this rides the §7(11) [Gate-3 reliance] (committed fold-retry fallback for miss-shapes; Phase-5 for
+    the hit-shape), not a pinned host behaviour — the host's inheritance
     pre-pass precedes the registration and suppresses retry, so case-varied `extends`/`implements` is
     the ratified SRS v1.8(i) bounded liveness limitation (exact-case heritage resolves via the host's
     own channel); the emitted target id is the case-preserving id. **[structural]** WI-3 registers
@@ -1478,7 +1482,9 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   a cross-file reference (`Foo f = new Foo(); f.run()`) resolves to the **class**, and **no resolution
   edge ever targets the trigger def** (REQ-004 non-referenceability, fulfilled on the bindings channel).
   Probed on the real host (2026-07-02): pre-injection the exact-case channel does NOT mis-bind the twin
-  pair — it resolves neither (a pre-WI-3 liveness miss on valid source that the injection closes). **The
+  pair — it resolves neither (a pre-WI-3 liveness miss on valid source that the injection closes). **The heritage arm** (`class Sub extends Foo`) is the SRS v1.10(v) limitation: the pre-hook pass sees
+  two defs under the exact-case key and conservatively refuses — unresolved, no mis-bind (probed;
+  fixture-pinned). **The other
   two arms differ mechanically but are BOTH asserted:** `Foo f`/`f.run()` rides the folded declared-type
   keyspace (WI-2-validated fold) and is asserted as the injection's outcome (genuinely red pre-impl); the
   `new Foo()` ctor edge cannot come from the exact-case channel post-injection (the twin key still holds
@@ -1716,7 +1722,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   post-hook reference kinds (a single-kind green does not discharge the others);
 - **nested-parent heritage (SRS v1.10 pins)** — `class Sub extends Outer.Inner`: no-decoy →
   NO heritage edge (v1.10(iii)); with a same-named top-level decoy → EXTENDS into the decoy, pinned as
-  the v1.10(iv) documented limitation (never as correct resolution);
+  the v1.10(iv) documented limitation (never as correct resolution); the SAME-case valid twin's
+  heritage clause (`class Twin2 extends Foo` shape, trigger + class both present) → NO heritage edge
+  (v1.10(v), conservative refusal pinned);
 - **dotted-tail decoy (both halves)** — nested `TOuter.TInner` + unrelated top-level `class TInner`:
   the qualified reference resolves to the NESTED type (post-injection, via the outer's binding) and
   ZERO edges ever land on the top-level decoy (pre-injection the tail arm binds nothing — Addendum 6);

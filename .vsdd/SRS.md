@@ -90,7 +90,10 @@ detail. Derived from INTENT-001; reviewed against it and the Constitution at Gat
   (`class Sub extends Outer.Inner` — valid Apex, parent in another file) remains cross-file-unresolved
   (liveness); (iv) WHERE an unrelated top-level type shares the nested parent's simple name (also valid
   Apex), the heritage clause can **mis-bind to that top-level type** (a valid-source, triple-narrow
-  safety limitation — nested parent + same-named top-level type + heritage form). Both parity-grounded
+  safety limitation — nested parent + same-named top-level type + heritage form); (v — added same day)
+  the SAME-case valid trigger/class twin's heritage clause (`class Sub extends Foo`, `Foo.trigger` +
+  `Foo.cls` both present) remains **unresolved** — the pre-pass sees two defs under the exact-case key
+  and conservatively refuses (valid-source liveness, no mis-bind). All parity-grounded
   (the pre-pass runs before any per-language registration, host-uniform) and fixture-pinned as
   documented behaviour; the generic pipeline reorder remains the noted upstream/WI-4 candidate.
   Deliberate bounded scope reductions; Architect-approved (Adam, 2026-07-02). Re-enters Gate 1 fidelity
@@ -206,7 +209,8 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   and (ii) the case-variant trigger/class twin's heritage form can bind the trigger (triple-narrow
   safety) — both documented limitations; exact-case heritage between top-level classes resolves.
   **Amended v1.10 — extended:** (iii) a nested-parent heritage clause remains unresolved (liveness);
-  (iv) with a same-named top-level type present it can mis-bind to that type (triple-narrow safety).)
+  (iv) with a same-named top-level type present it can mis-bind to that type (triple-narrow safety);
+  (v) the same-case valid trigger/class twin's heritage clause remains unresolved (liveness).)
 - **REQ-008** *(head reworded v1.2)* — The system SHALL resolve an overloaded user-defined Apex method at
   a call site to the unique overload remaining after narrowing by parameter count, then — among any
   equal-arity overloads — by exact declared parameter types: the unique equal-arity overload **every** one

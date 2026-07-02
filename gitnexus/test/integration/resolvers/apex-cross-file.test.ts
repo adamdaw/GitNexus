@@ -539,6 +539,15 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     expect(call!.targetFilePath, 'targets the nested type, not the decoy').toContain('TOuter.cls');
   });
 
+  it('pins the same-case twin heritage clause unresolved (SRS v1.10(v) documented limitation)', () => {
+    // TwinSub extends Twin with Twin.trigger + Twin.cls present: the pre-hook pass sees two
+    // defs under the exact-case key and refuses — liveness-only, no mis-bind.
+    // [conservative pin; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'EXTENDS').filter((e) => e.source === 'TwinSub'),
+    ).toEqual([]);
+  });
+
   it('pins nested-parent heritage mis-binding the same-tail decoy (SRS v1.10(iv) documented limitation)', () => {
     // TailSub extends TOuter.TInner with top-level TInner present: the pre-hook pass binds
     // the DECOY (probed, Addendum 11) — pinned as the ratified limitation, never as correct

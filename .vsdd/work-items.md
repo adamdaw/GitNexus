@@ -22,7 +22,7 @@ per-item state machine. Keep it current as each item advances.*
 |---|---|---|---|---|---|
 | ITEM-001 | WI-1 parse & graph | **DONE** (Gates 1–5) | 6→done | 1, 1-decomp, 2, 3, 4, 5 | light-SRS ✓, SDD-001 v1.2.1 ✓, pass-records gate1/decomp/2/3/4/5 ✓; impl green |
 | ITEM-002 | WI-2 resolution mechanics | **DONE** (Gates 1–5) | 6→done | 1, 1-decomp, 2, 3, 4, **5** | light-SRS ✓, SDD-002 ✓ (+ USES clarification #20; REQ-008 param-arg narrowing → WI-4), SRS v1.3, Constitution v1.1.1, pass-records gate2-wi2/gate3-wi2/gate4-wi2/**gate5-wi2** ✓; **impl GREEN — 29 integration + 7 unit anchors + 25 Gate-5 hardening; full resolver surface + peers green (NFR-002 holds)**. Gate 4: Pass 1 PASS_FIXED (8 cold rounds), Pass 2 PASS_ACCEPTED (2 cold rounds), Adam-signed 2026-06-30. Gate 5 (Phase 6): fuzz (24-input corpus + 10k smoke-fuzz, 0 crashes) + 8/8 mutants killed + purity audit, all PASS, Adam-signed 2026-06-30 |
-| ITEM-003 | WI-3 cross-file & trigger | **active** | **Phase 3 Step 3a done; Gate 2 REOPENED (SDD amended)** | 1, 1-decomp, ~~2~~ | light-SRS ✓ (+ REQ-008 cross-file-receiver + super-delegation), **SDD-003 ✓ (amended 2026-07-02: §1 two-channel model + fallback-channel §A.13 limitation, Architect-accepted)**, **RESEARCH-003 ✓** (§A.6 + 3 addenda), SRS **v1.9** (v1.4 REQ-011 type-usage; v1.5 REQ-015 exact-case-channel exception, probe-corrected; v1.6 REQ-010/REQ-004 misfile + lone-trigger exceptions, probe-corrected; v1.7 REQ-015 record-observability interpretation; v1.8 REQ-007/REQ-010 heritage-form limitations; v1.9 REQ-010 fragment-collision exception — all 2026-07-02, Architect-ratified), pass-record gate2-wi3 **SUPERSEDED** (Phase-5 cascade; cold re-review → gate2-wi3-r2 pending). **Step 3a ✓:** 48 integration + 8 unit tests authored, 31 red / 25 pass (fallback-channel already-greens ledgered), peers 312/312 green; red-gate `tdd/WI-3-red-gate.md` + findings `tdd/WI-3-step3a-findings.md`. Edge-source reliance validated TRUE (host attributes trigger-body edges to the container natively). Design: Seam B `populateNamespaceSiblings` (pure registration) + `qualifiedName` top-level discriminant + inject-none collision guard (bindings channel) |
+| ITEM-003 | WI-3 cross-file & trigger | **active** | **Phase 3 Step 3a done; Gate 2 REOPENED (SDD amended)** | 1, 1-decomp, ~~2~~ | light-SRS ✓ (+ REQ-008 cross-file-receiver + super-delegation), **SDD-003 ✓ (amended 2026-07-02: §1 two-channel model + fallback-channel §A.13 limitation, Architect-accepted)**, **RESEARCH-003 ✓** (§A.6 + 3 addenda), SRS **v1.9** (v1.4 REQ-011 type-usage; v1.5 REQ-015 exact-case-channel exception, probe-corrected; v1.6 REQ-010/REQ-004 misfile + lone-trigger exceptions, probe-corrected; v1.7 REQ-015 record-observability interpretation; v1.8 REQ-007/REQ-010 heritage-form limitations; v1.9 REQ-010 fragment-collision exception; v1.10 REQ-007 nested-parent + same-case-twin heritage limitations — all 2026-07-02, Architect-ratified), pass-record gate2-wi3 **SUPERSEDED** (Phase-5 cascade; cold re-review → gate2-wi3-r2 pending). **Step 3a ✓:** 48 integration + 8 unit tests authored, 31 red / 25 pass (fallback-channel already-greens ledgered), peers 312/312 green; red-gate `tdd/WI-3-red-gate.md` + findings `tdd/WI-3-step3a-findings.md`. Edge-source reliance validated TRUE (host attributes trigger-body edges to the container natively). Design: Seam B `populateNamespaceSiblings` (pure registration) + `qualifiedName` top-level discriminant + inject-none collision guard (bindings channel) |
 | ITEM-004 | WI-4 parity & external | proposed | — | (epic 1+decomp) | light-SRS ✓; SDD pending |
 
 **Dependency-DAG execution (refines the binary mode):** the run follows the dependency graph, not a
@@ -45,12 +45,14 @@ foundation, then WI-2…4 follow in order.
 | REQ-008 (overload resolution) | WI-2 | | REQ-007 (extends/implements edges) | WI-2 |
 | NFR-004 (resolution test) | WI-4 | | | |
 
-**REQ-015 v1.5/v1.7, REQ-004 v1.6, REQ-007 v1.8, and REQ-010 v1.8/v1.9 exception acceptances complete
-at WI-3** (recorded 2026-07-02, Architect-approved): the SRS v1.5 exact-case-channel exception, the v1.6
+**REQ-015 v1.5/v1.7, REQ-004 v1.6, REQ-007 v1.8/v1.10, and REQ-010 v1.8/v1.9 exception acceptances
+complete at WI-3** (recorded 2026-07-02, Architect-approved): the SRS v1.5 exact-case-channel exception, the v1.6
 misfile/lone-trigger exceptions, the v1.7 observability interpretation, the v1.8 heritage-form
-limitations, and the v1.9 fragment-collision exception are ratified epic-level amendments whose pinning
+limitations (extended v1.10: nested-parent + same-case-twin heritage), and the v1.9 fragment-collision
+exception are ratified epic-level amendments whose pinning
 fixtures (duplicate-name ctor, same-case duplicate, lone-trigger, misfiled-class/trigger, collision
-observability, case-varied-heritage unresolved, twin-heritage trigger-bind) ship in WI-3's Gate-3
+observability, case-varied-heritage unresolved, twin-heritage trigger-bind, nested-parent-heritage
+unresolved/decoy-mis-bind, same-case-twin-heritage unresolved) ship in WI-3's Gate-3
 suite — WI-3 completes these exception acceptances without re-owning REQ-015 (WI-2), REQ-007 (WI-2), or
 REQ-004 (WI-1), mirroring the REQ-008 cross-file-receiver completion entry.
 
