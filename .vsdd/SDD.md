@@ -981,8 +981,9 @@ resolves cross-file names through two distinct channels, and WI-3 controls only 
   (free-call/ctor `run.ts:753`, receiver-bound `run.ts:728` — both after the hook at `run.ts:636`) run
   this same lookup BEFORE their QualifiedNameIndex fallback, so WI-3's folded workspace keys are
   reachable by them — iff each callsite's lookup name is folded (the WI-2 §2.2 seam folded the
-  receiver-bound-calls and declared-type keyspaces; the ctor/free-call callsite's folding is a
-  [Gate-3 reliance], §7(11)). **The heritage pre-emit pass is PRE-hook** (`run.ts:573` < `:636`) and
+  receiver-bound-calls and declared-type keyspaces; the SHARED ctor/free-call callsite is read-pinned
+  RAW — Addendum 14 — and the reliance is whether the WI-2 Apex folding ctor path reaches the workspace
+  key and precedes the raw channel, §7(11)). **The heritage pre-emit pass is PRE-hook** (`run.ts:573` < `:636`) and
   suppresses every `inherits` site from downstream retry (`run.ts:155-163`) — the workspace keys are
   structurally UNREACHABLE for heritage clauses, so the case-varied heritage forms are the ratified
   SRS v1.8 limitations, not §7(11) arms. The §3 inject-none guard governs everything the workspace
@@ -1176,9 +1177,11 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
 ## 3. Interface definition (what WI-3 adds)
 
 - **`languages/apex/namespace-siblings.ts`** (new) — `populateApexNamespaceSiblings(parsedFiles, indexes,
-  ctx)`: iterate each **`parsedFile.scopes`**, mirroring the Java package-siblings iteration
-  (`java/package-siblings.ts:95-105`): select the **class-kind scopes whose `parent` is the file's Module
-  scope** and take EVERY class-like `SymbolDefinition` from each such scope's `ownedDefs` into the def
+  ctx)`: iterate each **`parsedFile.scopes`**, mirroring the Java package-siblings SCOPE-SELECTION
+  discriminant only (`java/package-siblings.ts:95-105` — class-kind scope, Module-scope parent; Java
+  then takes the FIRST class-like def and breaks, `:98-101`): select those scopes and — a **deliberate
+  WI-3 divergence from the Java take-first** — take EVERY class-like `SymbolDefinition` from each such
+  scope's `ownedDefs` into the def
   universe (a class-kind scope's `ownedDefs` also carries Property/member defs — those are excluded by
   Predicate 1; a degenerate error-recovery scope can carry more than one class-like def — ALL enter the
   universe, so the §2 no-mis-bind guarantee holds per EXISTING def and a same-folded-name pair co-owned
@@ -1748,7 +1751,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   post-hook reference kinds (a single-kind green does not discharge the others). *(A qualified STATIC
   member on a nested type — `Outer.Inner.MAX` — is NOT expressible in valid Apex: inner classes cannot
   declare static members (an Apex language restriction), so that kind is invalid-source-only and falls
-  under general conservatism, no fixture obligation.)*;
+  under general conservatism, no fixture obligation.)* The **doubly-varied** form (`OUTER.INNER` —
+  §7(13) outer folding ∘ §7(5) fold-extended tail lookup, the composition of the two reliance-backed
+  mechanisms) is fixtured too — compositions are not assumed free;
 - **nested-parent heritage (SRS v1.10 pins)** — `class Sub extends Outer.Inner`: no-decoy →
   NO heritage edge (v1.10(iii)); with a same-named top-level decoy → EXTENDS into the decoy, pinned as
   the v1.10(iv) documented limitation (never as correct resolution); the SAME-case valid twin's
@@ -1824,6 +1829,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   (the exact-case channel's single-match guard + the §3 inject-none guard), never a bind;
 - **lone-trigger reference** — `new Lone()` with only `Lone.trigger` present → binds the trigger def via
   the exact-case channel (pinned REQ-004 v1.6 corrected-exception behaviour, not correct resolution);
+  the ctor form is the REPRESENTATIVE fixture for the v1.6 lone-trigger family — the `extends` arm rides
+  the same channel with the same probed outcome (Addendum 5: EXTENDS into `Class:T.trigger:T`) and
+  carries the same disposition (the §8 v1.10 representativeness practice);
 - **case-variant trigger/class twin** — `Twist.trigger` + `class TWIST`, reference `new Twist()` /
   `w.turn()` → binds the CLASS, never the trigger (the committed-to-fix §7(11) safety case — red
   pre-impl, the probe shows the trigger bound); its **heritage arm** (`class Sub extends Twist`) →

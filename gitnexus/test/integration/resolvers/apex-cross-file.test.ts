@@ -279,6 +279,16 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toEqual([]);
   });
 
+  it('resolves DOUBLY-VARIED qualified nested access (OUTER.INNER → e.ping()) (REQ-010/§7(13)∘§7(5))', () => {
+    // The composition of the outer-folding and tail-folding mechanisms — fixtured because
+    // compositions are not assumed free.
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'ping' && e.sourceFilePath.includes('DoubleCase'),
+      ),
+    ).toBeDefined();
+  });
+
   it('does NOT inject a nested type by bare simple name — bare Inner stays unresolved (REQ-015)', () => {
     // [conservative-negative; see WI-3-red-gate.md] — never mis-binds; anchored red
     // by the qualified-access positive above.
