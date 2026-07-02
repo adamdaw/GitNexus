@@ -965,8 +965,11 @@ resolves cross-file names through two distinct channels, and WI-3 controls only 
   member access** (`B.FIELD` → ACCESSES for a static Property; also the trigger static call/field
   forms, with the edge source natively attributed to the trigger container — §7(3) static arms and the
   REQ-011 edge-source obligation hold on the real host).
-- **The bindings channel (what WI-3 registers).** `lookupBindingsAt`'s local → finalized → augmented →
-  namespace → `workspaceFqnBindings` lookup — the channel `populateNamespaceSiblings` feeds. **Channel
+- **The bindings channel (what WI-3 registers).** `walkScopeChain`'s local-first walk (per-scope
+  `scope.bindings`, `walkers.ts:628-639`) over `lookupBindingsAt`'s finalized → augmented → namespace →
+  `workspaceFqnBindings` channels (`walkers.ts:56-96` — the lookup itself has NO local arm; local
+  precedence is the walk's per-scope check, which is exactly why §7(2)'s enclosing-scope risk exists) —
+  the workspace channel is what `populateNamespaceSiblings` feeds. **Channel
   interaction (Addendum 5, ordering corrected Addendum 9):** the POST-HOOK exact-case-channel passes
   (free-call/ctor `run.ts:753`, receiver-bound `run.ts:728` — both after the hook at `run.ts:636`) run
   this same lookup BEFORE their QualifiedNameIndex fallback, so WI-3's folded workspace keys are
@@ -1513,8 +1516,9 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   depends on the host lookup's language-scoping; the case-fold partitions in the common case, but
   cross-language non-interference is **held for Gate-3 validation, not asserted**. Measured by peer resolver
   suites green.
-- **Performance:** one O(top-level-type-defs) injection pass at finalize; no new per-reference cost (the
-  global lookup already runs). The injection is a bounded map population.
+- **Performance:** one O(scopes) selection traversal at finalize (the owning-scope discriminant visits
+  each file's class-kind scopes) producing an O(top-level-type-defs) injected set; no new per-reference
+  cost (the global lookup already runs). The injection is a bounded map population.
 
 ## 6. Security-critical tag & clauses
 
@@ -1738,7 +1742,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   the exact-case channel (pinned REQ-004 v1.6 corrected-exception behaviour, not correct resolution);
 - **case-variant trigger/class twin** — `Twist.trigger` + `class TWIST`, reference `new Twist()` /
   `w.turn()` → binds the CLASS, never the trigger (the committed-to-fix §7(11) safety case — red
-  pre-impl, the probe shows the trigger bound);
+  pre-impl, the probe shows the trigger bound); its **heritage arm** (`class Sub extends Twist`) →
+  EXTENDS into the trigger def, asserted as the documented SRS v1.8(ii) limitation behaviour (the
+  pre-hook pass; NOT correct resolution);
 - **trigger misfiled in a `.cls` file** — pinned §A.13 limitation behaviour (the REQ-004 v1.6 bounded
   exception): the misfiled trigger def is
   injected, so a (case-varied) reference to its name binds it (documented breach of REQ-004
