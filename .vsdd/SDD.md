@@ -1407,6 +1407,14 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   **tripwired**: the fixture asserts NO member edge into the mis-bound target; if Step 3b turns it red
   (the poisoned MRO mis-resolving members), Phase-5 escalation for a targeted ratification — never a
   silent absorption.
+- **Non-colliding re-parented fragment (error-recovery input; documented behaviour, not a
+  limitation)** — a malformed outer's nested fragment re-parents to the Module scope (Addendum 12), so
+  when its folded name is UNIQUE the §3 algorithm deterministically injects it: a cross-file reference
+  to the fragment's name (incl. case-varied, via the folded key) binds the fragment — consistent with
+  WI-1's NFR-001 re-parent precedent (the recovered parse makes the fragment a de-facto file-scoped
+  top-level def; no SHALL is narrowed — added liveness on invalid source, no mis-bind: the key is
+  unique by hypothesis, and the colliding branch is the ratified v1.9 inject-none). §8 fixture pins the
+  bind.
 - **Misfiled-trigger collision (SRS v1.11(c), probe-corrected)** — a trigger mis-declared in a `.cls`
   file enters the injection universe (the round-26 extension-discriminant trade-off), so a
   same-folded-name VALID class gets inject-none: its bindings-channel forms remain unresolved. The
@@ -1488,9 +1496,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   pin, not a mechanism claim);
   post-injection the qualified reference resolves to the NESTED type via the outer's global binding +
   member lookup (§7(5)), never to the same-named top-level decoy. Fixture asserts both halves.
-- **Nested type not injected by bare simple name (no mis-bind via the injection)** — a nested type's
-  scope is parented to the outer type's class scope, so the §3 owning-scope discriminant **excludes** it
-  from the global injection; a bare `Inner` reference from another file finds no WORKSPACE `Inner` binding
+- **Nested type not injected by bare simple name (no mis-bind via the injection; WELL-FORMED parses)** —
+  a nested type's scope is parented to the outer type's class scope, so the §3 owning-scope discriminant
+  **excludes** it from the global injection (on error-recovery input the Addendum-12 exception applies —
+  the re-parented-fragment bullet below); a bare `Inner` reference from another file finds no WORKSPACE `Inner` binding
   and stays conservatively unresolved on the bindings channel (REQ-015). (Nested types are reachable only
   as `Outer.Inner`, the bullet above. The exact-case channel indexes the nested def under its BARE
   `qualifiedName` — Addendum 7 — but the ctor/free-call arm binds TOP-LEVEL types only: probed in BOTH
@@ -1838,6 +1847,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
 - **cross-file member case-collision** — `CaseColl c = …; c.Act()` with `act`/`ACT` declared on the
   cross-file target → no edge + a positive `suppressed` record (REQ-015 two obligations,
   ambiguity-reaches-resolver);
+- **non-colliding re-parented fragment** — a malformed outer's uniquely-named nested fragment injects
+  and a cross-file (case-varied) reference to it binds — the documented Addendum-12 behaviour,
+  WI-1-precedent-consistent (asserted as behaviour on invalid source, not correct-Apex resolution);
 - **collision / non-poisoning (REQ-015)** — two defs folding to one key (duplicate-named types, or a
   re-parented fragment colliding with a valid type) → **no member edge** through a typed receiver
   (`Dupe d; d.hit()` — the §3 inject-none guard; the REQ-015 record obligation is dischargeable

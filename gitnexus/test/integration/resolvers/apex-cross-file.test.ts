@@ -602,6 +602,17 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     expect(call!.targetFilePath, 'targets the nested type, not the decoy').toContain('TOuter.cls');
   });
 
+  it('pins the NON-colliding re-parented fragment binding (Addendum-12 documented behaviour)', () => {
+    // FragLoneOuter is malformed; its uniquely-named nested Fraglet re-parents to Module
+    // scope and injects — the case-varied reference binds it (red pre-impl). Documented
+    // behaviour on invalid source (WI-1 re-parent precedent), not correct-Apex resolution.
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'wave' && e.sourceFilePath.includes('FragLoneCaller'),
+      ),
+    ).toBeDefined();
+  });
+
   it('pins the fragment-collision limitation — the valid Frag stays unresolved (SRS v1.9)', () => {
     // FragBroken's error-recovery re-parents nested Frag to Module scope (Addendum 12), so
     // the injection sees two 'frag' defs and registers neither: the VALID top-level Frag's
