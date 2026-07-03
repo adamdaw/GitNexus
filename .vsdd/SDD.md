@@ -1407,12 +1407,17 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   its §8 fixture is red:** a cross-file superclass member-walk addition under `languages/apex/` (the same
   class of Apex-local addition as the nested-type and static-receiver fallbacks) — **never** a silent
   conservative-unresolved, which would reduce a REQ-005/007 SHALL without an SRS amendment (Constitution §7).
-- **Heritage-limitation downstream family (SRS v1.11(a)/(b), probe-corrected)** — WHERE a heritage
-  clause is unresolved (v1.8(i)/v1.10(iii)/(v) shapes), the subtype's MRO lacks the parent: its
-  inherited-member references remain unresolved (Addendum 16), `super()` remains unresolved
-  (Addendum 17), and `super.method()`
-  MIS-RESOLVES to the subtype's own override (Addendum 17 — a probed self-loop, ratified v1.11(a)
-  corrected text; fixture-pinned as documented behaviour). The v1.10(iv) MIS-BOUND-heritage MRO is
+- **Heritage-limitation downstream family (SRS v1.11(a)/(b) → v1.12-corrected)** — WHERE a heritage
+  clause is unresolved (v1.8(i)/v1.10(iii)/(v) shapes), the subtype's MRO lacks the parent, so its
+  **MRO-dependent inherited-member implicit-this** references remain unresolved (Addendum 16). The
+  **`super` arms diverge from the MRO path (SRS v1.12, Step-3b probe-confirmed for the v1.8(i)
+  case-varied shape):** `super()` and `super.method()` DO resolve to the parent — the `super`-receiver
+  synthesis folds the superclass identifier from the `extends` clause and consults the cross-file
+  registration channel independently of the heritage pre-pass, reaching the parent even though the
+  EXTENDS/IMPLEMENTS *edge* stays unresolved (`CaseKid` → CALLS into `Base.Base`/`Base.greet`, with no
+  EXTENDS edge to Base — the two mechanisms have independent cross-file reach). This supersedes the
+  earlier v1.11(a) `super()`-unresolved / `super.method()`-self-loop pins for the case-varied shape; the
+  v1.10(iii)/(v) shapes are not re-probed and remain as pinned. The v1.10(iv) MIS-BOUND-heritage MRO is
   **tripwired**: the fixture asserts NO member edge into the mis-bound target; if Step 3b turns it red
   (the poisoned MRO mis-resolving members), Phase-5 escalation for a targeted ratification — never a
   silent absorption.
@@ -1843,12 +1848,14 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   this shape and ARE valid — `Outer.Level.HIGH` — covered by the nested-enum bullet below.)* The **doubly-varied** form (`OUTER.INNER` —
   §7(13) outer folding ∘ §7(5) fold-extended tail lookup, the composition of the two reliance-backed
   mechanisms) is fixtured too — compositions are not assumed free;
-- **heritage-downstream (SRS v1.11(a) corrected) + poisoned-MRO tripwire (v1.11(b))** — under a
-  case-varied heritage clause: the subtype's implicit-this inherited member stays unresolved (pinned
-  liveness); `super.method()` self-loop mis-bind pinned as the documented v1.11(a) behaviour
-  (`CaseKid.greetUp()` → CALLS targeting CaseKid's own override, Addendum 17); the `super()` arm pinned
-  separately (zero CALLS for the super() site — no resolution AND no self-loop; the two super arms
-  diverge, Addendum 17, so neither family-pins the other); through the v1.10(iv)
+- **heritage-downstream (SRS v1.11(a) → v1.12-corrected) + poisoned-MRO tripwire (v1.11(b))** — under a
+  case-varied heritage clause: the subtype's **MRO-dependent implicit-this inherited member** stays
+  unresolved (pinned liveness — the MRO lacks the parent). The **`super` arms resolve to the parent**
+  (SRS v1.12, Step-3b probe-confirmed): `super.method()` → CALLS into the parent's member
+  (`CaseKid.greetUp()` → `Base.greet`, NOT the self-loop) and `super()` → CALLS into the parent ctor
+  (`Base.Base`), both via the heritage-pre-pass-independent `super`-receiver synthesis — so the subtype
+  carries `super`-sourced CALLS into Base with NO EXTENDS edge to it. This supersedes the earlier
+  v1.11(a) `super()`-unresolved / `super.method()`-self-loop pins for the case-varied shape; through the v1.10(iv)
   mis-bound EXTENDS, NO member edge into the mis-bound target (tripwire — red at Step 3b escalates);
   the v1.10(iii)/(v) downstream shapes are family-pinned (same suppressed-MRO mechanism-independent
   behaviour, per the Addendum-16 determinacy);

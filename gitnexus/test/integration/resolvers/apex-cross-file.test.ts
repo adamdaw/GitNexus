@@ -220,25 +220,31 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toEqual([]);
   });
 
-  it('pins the super() arm unresolved under an unresolved heritage clause — no edge, no self-loop (SRS v1.11(a))', () => {
-    // Addendum 17: super() resolves nothing (unlike the diverging super.method() self-loop
-    // below). Assert both absences from CaseKid's ctor site. [conservative pin]
+  it('resolves the super() arm to the PARENT ctor despite the unresolved heritage EDGE (SRS v1.12)', () => {
+    // Phase-5 v1.12 ratify: the super-receiver synthesis folds the `extends BASE` identifier and
+    // consults the cross-file channel INDEPENDENTLY of the heritage pre-pass, so super() reaches
+    // Base's ctor even though CaseKid's EXTENDS edge stays unresolved (v1.8(i), pinned below) — the
+    // two mechanisms have independent reach. No ctor self-loop. Supersedes the v1.11(a) super()-
+    // unresolved pin for the case-varied shape.
     const kidCalls = getRelationships(result, 'CALLS').filter(
       (e) => e.sourceFilePath.includes('CaseKid'),
     );
-    expect(kidCalls.filter((e) => e.target === 'Base'), 'no resolution to Base').toEqual([]);
+    const superCtor = kidCalls.find((e) => e.target === 'Base');
+    expect(superCtor, 'super() resolves to the parent ctor').toBeDefined();
+    expect(superCtor!.rel.targetId, 'the Base ctor across files').toContain('Base.Base');
     expect(kidCalls.filter((e) => e.target === 'CaseKid'), 'no ctor self-loop').toEqual([]);
   });
 
-  it('pins the super-method self-loop under an unresolved heritage clause (SRS v1.11(a) corrected)', () => {
-    // Probed (Addendum 17): super.greet() in CaseKid (whose extends BASE is unresolved)
-    // mis-resolves to CaseKid's OWN override — documented behaviour, pinned, not correct
-    // resolution. [already-green pin; see WI-3-red-gate.md]
+  it('resolves super.greet() to the PARENT member despite the unresolved heritage EDGE (SRS v1.12)', () => {
+    // Phase-5 v1.12 ratify: super.method() diverges from the MRO-inherited path — it resolves to
+    // Base.greet via the heritage-pre-pass-independent super-receiver synthesis, NOT CaseKid's own
+    // override (the superseded v1.11(a) self-loop). CaseKid's implicit-this inherited() (MRO path)
+    // still stays unresolved (pin above); only the super arms reach Base.
     const call = getRelationships(result, 'CALLS').find(
       (e) => e.target === 'greet' && e.sourceFilePath.includes('CaseKid'),
     );
-    expect(call, 'super.greet() emits (the self-loop)').toBeDefined();
-    expect(call!.rel.targetId, 'targets CaseKid\'s own override (the pinned v1.11(a) behaviour)').toContain('CaseKid');
+    expect(call, 'super.greet() resolves').toBeDefined();
+    expect(call!.rel.targetId, "targets Base's greet, not CaseKid's override").toContain('Base.greet');
   });
 
   it('leaves CASE-VARIED heritage (CaseKid extends BASE implements IFACE) unresolved — SRS v1.8(i) limitation', () => {

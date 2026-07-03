@@ -115,6 +115,21 @@ detail. Derived from INTENT-001; reviewed against it and the Constitution at Gat
   twin-analog refusal — probe-corrected + re-ratified 2026-07-02; misfile-triggered, liveness-only). Deliberate bounded scope reductions;
   Architect-approved (Adam, 2026-07-02). Re-enters Gate 1 fidelity (verified by the fresh Gate 2
   adversary reading SRS+SDD together).
+  **Amended v1.12 (2026-07-03)** — Phase-5 impl-driven correction of v1.11(a)'s `super`-arm consequence
+  for the **v1.8(i) case-varied-heritage shape** (the CaseKid fixture; tests at Gate-3 §8), Architect-approved
+  (Adam, 2026-07-03). Probe + implementation show that under a case-varied heritage clause
+  (`class Sub extends BASE`, `Base.cls` present), `super()` and `super.method()` DO resolve to the parent:
+  the `super`-receiver synthesis folds the superclass identifier taken from the `extends` clause and consults
+  the cross-file registration channel **independently of the heritage pre-pass**, so it reaches the parent
+  even though the EXTENDS/IMPLEMENTS *edge* stays unresolved (the v1.8(i) edge limitation is unchanged — the
+  two cross-file mechanisms have independent reach). Only the **MRO-dependent inherited-member implicit-this**
+  reference remains unresolved for this shape — it needs the resolved EXTENDS edge to enter the linearization.
+  Documented consequence, fixture-pinned: a subtype may carry `super`-sourced CALLS edges into the parent
+  **without** an EXTENDS edge to it. This supersedes v1.11(a)'s `super()`-unresolved and `super.method()`
+  self-loop pins **for the case-varied shape only**; the v1.10(iii) nested-parent and v1.10(v) same-case-twin
+  heritage shapes are not re-probed here and remain as pinned. Not a shipped limitation — a requirement
+  correction (the v1.11(a) pin over-constrained a behaviour the host resolves correctly). Re-enters Gate 1
+  fidelity (verified by the fresh Gate 2 adversary reading SRS+SDD together).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope

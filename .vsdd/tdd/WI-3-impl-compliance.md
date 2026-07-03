@@ -380,3 +380,31 @@ editing (throwaway `apex-probe.scratch.test.ts`, deleted).
 - **⚠ Phase-5 cascade:** both tests were cleared at Gate 3 (`gate3-wi3.md`); correcting them
   partially supersedes that record. Batch the Gate-3 re-attestation with the #223/#233 ratify
   (which also edits the suite) — record once when the heritage rulings land.
+
+## Increment 14 — #223/#233 super-arm ratify (Phase-5, SRS v1.12) — SPEC + TEST, NO impl change
+
+Not an implementation increment: the impl already resolves `super()`/`super.greet()` → **Base** (the
+inc-3 identifier-fold gave the `super`-receiver synthesis independent cross-file reach); the ratified
+spec pinned the *old* super()-unresolved / super.method()-self-loop behaviour it labelled "documented,
+NOT correct." Architect ruled **Phase-5 ratify →Base** (Adam, 2026-07-03) — a *requirement correction*
+(the v1.11(a) pin over-constrained a behaviour the host resolves correctly), the VSDD revise-the-SRS
+route, NOT a shipped limitation. Suite **107 → 109 passing / 2 red of 111**; peers untouched.
+
+- **Probe-confirmed shape (throwaway test, deleted):** from `CaseKid.cls`, exactly two CALLS —
+  `Base` → `Constructor:Base.cls:Base.Base#0` (super ctor) and `greet` → `Method:Base.cls:Base.greet#0`
+  (super.greet → **Base**, not the CaseKid override). No EXTENDS edge from CaseKid (the v1.8(i)
+  case-varied heritage-edge limitation is unchanged — pin 244 stays green). So the graph carries
+  `super`-sourced CALLS into Base **without** an EXTENDS edge to it: the `super`-receiver synthesis and
+  the MRO/heritage pre-pass have **independent** cross-file reach. CaseKid's implicit-this `inherited()`
+  (MRO path) stays unresolved (pin 212 green) — the MRO lacks the parent.
+- **Scope:** the ratify is scoped to the **v1.8(i) case-varied shape** the tests exercise; the
+  v1.10(iii) nested-parent and v1.10(v) same-case-twin shapes are **not re-probed** and remain pinned.
+- **Changed artifacts:** `SRS.md` (new **v1.12** amendment superseding v1.11(a)'s super sub-clause),
+  `SDD.md` (Edge-Case-Catalog heritage-downstream entry + §8 acceptance pin → v1.12), tests 223/233
+  (`apex-cross-file.test.ts`) flipped to assert the Base targets.
+- **⚠ Phase-5 cascade (load-bearing):** changed **SRS** → invalidates SDD/test/impl/proof records
+  (Gates 2–5) **for the touched pin**; changed **tests** (incs 13 + 14) → invalidates the Gate-3
+  record. Re-arm order: **Gate 1** (SRS v1.12 vs Intent, cold) → **Gate 2** (SDD vs SRS v1.12, cold) →
+  **Gate 3** (tests vs spec, cold `vsdd-test-validator`, covering incs 13 + 14) → Gate 4 fidelity picks
+  up impl-vs-v1.12. The re-reviews are localised (one pin) but **not skipped** — each re-cleared record
+  is re-committed. Impl is UNCHANGED by this increment, so no Gate-5 re-fuzz owed *from this edit*.
