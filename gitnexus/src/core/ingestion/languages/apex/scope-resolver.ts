@@ -17,6 +17,7 @@ import { populateClassOwnedMembers } from '../../scope-resolution/scope/walkers.
 import type { ScopeResolver } from '../../scope-resolution/contract/scope-resolver.js';
 import { apexProvider } from './index.js';
 import { apexArityCompatibility, apexResolveReceiverMember } from './resolution.js';
+import { populateApexNamespaceSiblings } from './namespace-siblings.js';
 
 const apexScopeResolver: ScopeResolver = {
   language: SupportedLanguages.Apex,
@@ -24,6 +25,11 @@ const apexScopeResolver: ScopeResolver = {
   importEdgeReason: 'apex-scope: import',
 
   resolveImportTarget: () => null,
+
+  // WI-3 (SDD-003 §3): cross-file type visibility via pure registration — inject
+  // top-level user-defined types into the shared `workspaceFqnBindings` channel so
+  // every WI-2 resolution mechanic reaches across files.
+  populateNamespaceSiblings: populateApexNamespaceSiblings,
 
   mergeBindings: (existing, incoming) => [...existing, ...incoming],
 
