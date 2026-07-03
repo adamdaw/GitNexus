@@ -21,5 +21,7 @@ trigger T on Account (before insert) {
     AccountHandler d;
     Integer sz = d.size;
     List<Account> accs = Trigger.new;
+    Alarm a2;
+    a2.ring();
     System.debug(n);
 }

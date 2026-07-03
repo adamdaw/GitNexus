@@ -631,15 +631,23 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     ).toEqual([]);
   });
 
-  it('pins the misfiled-trigger collision — the valid VICTIM class stays unresolved (SRS v1.11(c))', () => {
-    // MisTrig.cls misfiles `trigger Victim`; VICTIM.cls is valid. Both enter the universe
-    // (extension discriminant), the folded key 'victim' collides -> inject-none: the valid
-    // class's typed-receiver form stays unresolved. [conservative pin; see WI-3-red-gate.md]
+  it('pins the misfiled-trigger collision, BOTH halves (SRS v1.11(c))', () => {
+    // MisTrig.cls misfiles `trigger Victim`; VICTIM.cls is valid (case-variant sub-shape).
+    // Interior: the folded key collides -> inject-none -> z.live() stays unresolved.
+    // Boundary: the valid class's exact-case ctor still binds via the host channel — an
+    // over-broad implementation that drops the valid def entirely fails this half.
+    // [conservative + already-green pins; see WI-3-red-gate.md]
     expect(
       getRelationships(result, 'CALLS').filter(
         (e) => e.target === 'live' && e.sourceFilePath.includes('VictimCaller'),
       ),
+      'interior: typed-receiver form unresolved',
     ).toEqual([]);
+    const ctor = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'VICTIM' && e.sourceFilePath.includes('VictimCaller'),
+    );
+    expect(ctor, 'boundary: exact-case ctor still binds').toBeDefined();
+    expect(ctor!.targetFilePath).toContain('VICTIM.cls');
   });
 
   it('pins nested-parent heritage mis-binding the same-tail decoy (SRS v1.10(iv) documented limitation)', () => {
@@ -884,6 +892,25 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
     const access = getRelationships(result, 'ACCESSES').find((e) => e.target === 'MAX_SIZE');
     expect(access).toBeDefined();
     expect(fromTrigger(access!)).toBe(true);
+  });
+
+  it('resolves a trigger-body DECLARATION-ONLY interface-typed variable (Alarm a2; a2.ring()) (REQ-011 ∘ §3 Interface arm)', () => {
+    // Trigger-scope typing ∘ the Predicate-1 Interface arm, composed.
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'ring');
+    expect(call).toBeDefined();
+    expect(fromTrigger(call!)).toBe(true);
+    expect(call!.targetFilePath, 'targets the interface member').toContain('Alarm.cls');
+  });
+
+  it('resolves a trigger-body CASE-VARIED constructor (new ACCOUNTHANDLER()) (REQ-011 ∘ §7(11))', () => {
+    // The exact-case trigger ctor is already-green (fallback channel); the case-varied one
+    // resolves only via the folded path — assert a SECOND trigger-sourced ctor edge.
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'AccountHandler' && fromTrigger(e),
+      ).length,
+      'both exact-case and case-varied ctors bind',
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it('resolves trigger-body nested-qualified access (Kit.Part p; p.snap()) from the trigger (REQ-011 ∘ §7(5)/(13))', () => {

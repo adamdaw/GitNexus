@@ -1079,9 +1079,13 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     reaching the workspace key; for the hit-shape the extension must precede the raw exact-case channel,
     else Phase-5 escalation), and for the qualified nested forms it rides §7(13) (outer segment) and §7(5)'s
     fold-extended fallback (tail segment) — reliance-backed commitments, not pinned host behaviour.
-    The postcondition is further bounded by the ratified SRS v1.5–v1.10 exceptions — in particular the
-    v1.6 class-misfiled-in-`.trigger` exclusion and the v1.9 fragment-collision inject-none also defeat
-    case-folded resolution for their (invalid-source-only) target shapes, exactly as §3/§4 catalogue — the host's inheritance
+    The postcondition is further bounded by the ratified SRS v1.5–v1.11 exceptions — in particular the
+    v1.6 class-misfiled-in-`.trigger` exclusion, the v1.9 fragment-collision inject-none, the v1.11(c)
+    misfiled-trigger collision (a `.cls`-misfiled trigger poisons a valid class's folded key), and the
+    v1.11(a) heritage-downstream shapes (inherited members unresolved; `super.method()` self-loop — a
+    ratified mis-bind carve-out that rides the receiver-binding synthesis, NOT the bindings-channel
+    lookup, so the clause's bindings-channel no-mis-bind invariant stands) also defeat resolution for
+    their target shapes, exactly as §3/§4 catalogue — the host's inheritance
     pre-pass precedes the registration and suppresses retry, so case-varied `extends`/`implements` is
     the ratified SRS v1.8(i) bounded liveness limitation (exact-case heritage resolves via the host's
     own channel); the emitted target id is the case-preserving id. **[structural]** WI-3 registers
@@ -1809,9 +1813,11 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   mis-bound EXTENDS, NO member edge into the mis-bound target (tripwire — red at Step 3b escalates);
   the v1.10(iii)/(v) downstream shapes are family-pinned (same suppressed-MRO mechanism-independent
   behaviour, per the Addendum-16 determinacy);
-- **misfiled-trigger collision (SRS v1.11(c))** — a `.cls`-misfiled trigger + a same-folded-name valid
-  class → the valid class's typed-receiver form stays unresolved (pinned liveness; the misfile poisons
-  the key);
+- **misfiled-trigger collision (SRS v1.11(c), BOTH halves)** — a `.cls`-misfiled trigger + a
+  same-folded-name valid class (case-variant sub-shape) → the valid class's typed-receiver form stays
+  unresolved (the limitation's interior) AND its exact-case ctor form still binds via the host channel
+  (the limitation's boundary — an over-broad implementation that suppresses the valid def entirely
+  fails this half);
 - **nested-parent heritage (SRS v1.10 pins)** — `class Sub extends Outer.Inner`: no-decoy →
   NO heritage edge (v1.10(iii)); with a same-named top-level decoy → EXTENDS into the decoy, pinned as
   the v1.10(iv) documented limitation (never as correct resolution); the SAME-case valid twin's
@@ -1890,6 +1896,12 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
 - **trigger-body nested-qualified** — `Kit.Part p = new Kit.Part(); p.snap()` in the trigger body →
   CALLS from the trigger container (REQ-011 ∘ the §7(5)/(13) qualified resolution — the trigger-scope
   composition is not assumed free, mirroring the chain/overload compositions);
+- **trigger-body interface-typed declared variable** — `Alarm a2; a2.ring()` (declaration-only) in the
+  trigger body → CALLS targeting the interface's own member (REQ-011 ∘ §7(3b) ∘ the Predicate-1
+  Interface arm, composed);
+- **trigger-body case-varied constructor** — `new ACCOUNTHANDLER()` in the trigger body → a second ctor
+  CALLS from the trigger container (REQ-011 ∘ §7(3b) ∘ the §7(11) folding-ctor reach, composed — the
+  exact-case trigger ctor fixture alone does not discharge it);
 - **trigger-body external reference (REQ-011 invariant)** — `System.debug(...)` and `Trigger.new` in the
   trigger body → no edge, no Apex-specific defect record, run completes (the §2 invariant's acceptance);
 - **trigger-body overloaded call** — `Handler.log(7)` with `log(Integer)`/`log(String)` from a trigger body
