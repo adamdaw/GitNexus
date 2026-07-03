@@ -463,6 +463,11 @@ function resolveVarTypeBindings(matches: CaptureMatch[]): CaptureMatch[] {
  */
 function inferArgType(argNode: SyntaxNode): string {
   switch (argNode.type) {
+    // The vendored tree-sitter-sfapex grammar collapses Java's integer-literal
+    // variants to a single `int` node (and boolean literals to `boolean`), unlike
+    // tree-sitter-java. The Java-derived names are kept for fidelity but never fire
+    // on Apex source; `int`/`boolean` are the live Apex cases (RESEARCH-001 probe).
+    case 'int':
     case 'decimal_integer_literal':
     case 'hex_integer_literal':
     case 'octal_integer_literal':
@@ -475,6 +480,7 @@ function inferArgType(argNode: SyntaxNode): string {
     case 'string_literal':
     case 'character_literal':
       return 'String';
+    case 'boolean':
     case 'true':
     case 'false':
       return 'Boolean';

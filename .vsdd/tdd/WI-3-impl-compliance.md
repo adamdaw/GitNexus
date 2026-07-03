@@ -128,3 +128,30 @@ Build note: integration tests run the compiled `dist/` worker; each `src/` edit 
   needs the mechanism-3 nested-type resolver, not this flat capture).
 - **NFR-002:** peers + prior Apex **312/312 green** (Java/peer queries untouched; the new
   capture fires only on the Apex grammar).
+
+## Increment 5 — integer/boolean literal argument-type inference (REQ-008; Apex-local)
+
+- **Targets (red→green):** static type-name-receiver overload `Target.sf(7)` and the two
+  trigger-body overload arms `AccountHandler.log(7)` → `log(Integer)` and `h.ilog(9)` →
+  `ilog(Integer)`, plus the trigger fixture's scoped REQ-006 no-false-suppressed assertion
+  (which was red only because those trigger overloads mis-recorded as `suppressed`).
+  Suite **89 → 93 passing / 18 red of 111**.
+- **Root cause (probed 2026-07-03):** `inferArgType` (`captures.ts`) was written against
+  tree-sitter-java node names, but the vendored tree-sitter-sfapex grammar collapses Java's
+  integer-literal variants to a single **`int`** node and boolean literals to **`boolean`**
+  (grammar probe: `f(7)` → arg node `int`; `f(true)` → `boolean`). So every integer/boolean
+  literal argument inferred to `''` → `@reference.parameter-types = [""]` → overload narrowing
+  saw no argument type → all same-arity candidates survived → `OVERLOAD_AMBIGUOUS` suppression
+  instead of an exact-type narrow. (Local-var args narrow via the arg-names channel and
+  ctor-expression args via `object_creation_expression`, which is why `fLocal`/`fCtor` were
+  already green — only the literal path was dead.)
+- **Change (Apex-local, `languages/apex/captures.ts`):** add `case 'int'` (→ Integer) and
+  `case 'boolean'` (→ Boolean) to `inferArgType`, alongside the retained-for-fidelity Java
+  names (which never fire on Apex source). One switch, no control-flow change.
+- **Justification:** corrects an Apex-grammar node-name mismatch in Apex-local code; no shared
+  edit, no new seam. Diff confined to the integer/boolean literal-arg overload targets. Still
+  red after this increment (distinct root causes, next increments): `fField` (`this.w` is a
+  `field_access` arg — needs field-type inference, not a literal), `fLit` (`new Target().fLit(42)`
+  — a compound constructor-expression *receiver* that must resolve cross-file), the REQ-015
+  undisambiguable ctor, and the main-fixture REQ-006 (green once fLit + fField resolve).
+- **NFR-002:** peers + prior Apex **312/312 green**.
