@@ -209,6 +209,17 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toBeDefined();
   });
 
+  it('pins the heritage-downstream liveness loss — CaseKid\'s inherited() stays unresolved (SRS v1.11(a))', () => {
+    // The unresolved case-varied clause leaves CaseKid's MRO without Base, so the
+    // implicit-this inherited-member call fails too (probed, Addendum 16 — determinate).
+    // [conservative pin; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'inherited' && e.sourceFilePath.includes('CaseKid'),
+      ),
+    ).toEqual([]);
+  });
+
   it('leaves CASE-VARIED heritage (CaseKid extends BASE implements IFACE) unresolved — SRS v1.8(i) limitation', () => {
     // The heritage pre-emit pass runs BEFORE the hook and suppresses retry (Addendum 9):
     // the workspace keys are unreachable for heritage clauses, so the case-varied forms
@@ -598,6 +609,25 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     // [conservative pin; see WI-3-red-gate.md]
     expect(
       getRelationships(result, 'EXTENDS').filter((e) => e.source === 'TwinSub'),
+    ).toEqual([]);
+  });
+
+  it('tripwires the poisoned MRO — no member edge into the mis-bound decoy (SRS v1.11(b))', () => {
+    // TailSub's EXTENDS mis-binds the decoy TInner (v1.10(iv)); member lookup must NOT
+    // ride it into decoy2. A red here at Step 3b escalates (Phase 5), never absorbed.
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'decoy2'),
+    ).toEqual([]);
+  });
+
+  it('pins the misfiled-trigger collision — the valid VICTIM class stays unresolved (SRS v1.11(c))', () => {
+    // MisTrig.cls misfiles `trigger Victim`; VICTIM.cls is valid. Both enter the universe
+    // (extension discriminant), the folded key 'victim' collides -> inject-none: the valid
+    // class's typed-receiver form stays unresolved. [conservative pin; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'live' && e.sourceFilePath.includes('VictimCaller'),
+      ),
     ).toEqual([]);
   });
 

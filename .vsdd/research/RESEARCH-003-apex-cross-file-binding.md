@@ -482,3 +482,15 @@ table's case-variant-duplicate row extends to all three v1.5 forms, now per-pass
 exact-case receiver yields no member edge). The class-wins outcome post-injection rides the WI-2 folded
 receiver-bound path reaching the workspace key (the §7(11)-class ordering question) — committed and
 fixtured red, same policy as the twin ctor arm.
+
+## Addendum 16 (2026-07-02) — heritage-limitation downstream probes
+
+(a) **Case-varied heritage downstream:** `class CvSub extends BASE2` (unresolved per v1.8(i)) with an
+implicit-this `greet2()` call → **nothing resolves** — the suppressed inheritance site leaves the MRO
+without the parent, so inherited-member references in the subtype fail too. Determinate (the injection
+cannot reach the suppressed pre-hook site) → ratified as SRS v1.11(a).
+(b) **Poisoned MRO (v1.10(iv) decoy mis-bind):** with `TailSub extends Outer.Inner` mis-bound to the
+top-level decoy `Inner`, pre-hook `t.decoy()` / `t.ping()` resolve **nothing** — member lookup does not
+yet ride the mis-bound EXTENDS. Whether it does POST-injection (once `TailSub t` binds) is only
+Step-3b-observable → tripwired per SRS v1.11(b): the fixture asserts no member edge into the decoy; a
+red escalates.

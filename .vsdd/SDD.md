@@ -919,11 +919,12 @@ at WI-3.
 
 # SDD-003 — WI-3: Cross-file binding & trigger resolution
 
-- **Consumes:** SRS-001 (**v1.10**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
+- **Consumes:** SRS-001 (**v1.11**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
   resolution), with REQ-015 as amended v1.5 (the bounded exact-case-channel exception, probe-corrected) and
   v1.7 (the record-observability interpretation), the REQ-010/REQ-004 v1.6 bounded misfile exceptions
   (probe-corrected), the REQ-007/REQ-010 v1.8 heritage-form limitations (extended v1.10 to
-  nested-parent heritage), and the REQ-010 v1.9 fragment-collision exception;
+  nested-parent heritage; v1.11 to their downstream inherited-member consequences + the
+  misfiled-trigger collision), and the REQ-010 v1.9 fragment-collision exception;
   the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
   Architect-approved 2026-06-30; **addenda 4–15**, 2026-07-02 (Addendum 15 supplies the v1.5 per-pass arm probes and the twin
   static-member probe) — note Addendum 5 corrects Addendum 4's
@@ -1166,13 +1167,14 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     arm and REQ-010, equally a type-name receiver). It is the **shared static-type-name-receiver resolution
     reliance** (§4) — the SAME shape as a cross-file static reference `B.f(...)` / `B.CONST`; it is not
     trigger-specific, and WI-2's receiver binding covers only `this`/instance receivers, so it is unvalidated
-    for both. **Enum-constant arm-specific disposition (probe-informed):** Addendum 4 shows the static
-    Property arm already resolves exact-case pre-hook while exact-case `Color.RED`/`Level.HIGH` do NOT —
-    so the enum-constant miss lies in the member/constant lookup half, not receiver visibility; the
-    committed fallback class for a red enum-constant fixture is therefore the static-receiver synthesis
-    **extended with an Apex-local enum-constant member-lookup arm** (under `languages/apex/`); if the
-    miss proves to sit in a shared member-lookup surface not correctable Apex-locally → Phase-5
-    escalation (named here so a red fixture leaves nothing to improvise). **Committed fallback (one mechanism, shared across the call and field/enum-constant arms):** if
+    for both. **Enum-constant arm-specific disposition:** Addendum 4 shows the static
+    Property arm resolving exact-case pre-hook while exact-case `Color.RED`/`Level.HIGH` do NOT — the
+    working HYPOTHESIS (probe observes edge absence only; it cannot localise the failing half, and
+    Addendum 13 retracted channel-interior inference) is a member/constant-lookup miss. The committed
+    fallback therefore covers BOTH halves: the static-receiver type-binding synthesis (receiver half,
+    already committed for the shared shape) PLUS an Apex-local enum-constant member-lookup arm (under
+    `languages/apex/`); if the miss proves to sit in a shared surface not correctable Apex-locally →
+    Phase-5 escalation (named here so a red fixture leaves nothing to improvise). **Committed fallback (one mechanism, shared across the call and field/enum-constant arms):** if
     any static-receiver fixture (trigger or cross-file, call or field) is red, a **static-receiver
     type-binding synthesis** binds the receiver's type-name to the class/enum node it resolves to in
     `workspaceFqnBindings` (mirroring `apexReceiverBinding`'s `this`/`super` synthesis, but for a type-name
@@ -1393,6 +1395,18 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   its §8 fixture is red:** a cross-file superclass member-walk addition under `languages/apex/` (the same
   class of Apex-local addition as the nested-type and static-receiver fallbacks) — **never** a silent
   conservative-unresolved, which would reduce a REQ-005/007 SHALL without an SRS amendment (Constitution §7).
+- **Heritage-limitation downstream family (SRS v1.11(a)/(b))** — WHERE a heritage clause is unresolved
+  (v1.8(i)/v1.10(iii)/(v) shapes), the subtype's MRO lacks the parent, so its inherited-member and
+  `super` references remain unresolved too (probe-verified determinate consequence — Addendum 16;
+  fixture-pinned as documented liveness behaviour). The v1.10(iv) MIS-BOUND-heritage MRO is
+  **tripwired**: the fixture asserts NO member edge into the mis-bound target; if Step 3b turns it red
+  (the poisoned MRO mis-resolving members), Phase-5 escalation for a targeted ratification — never a
+  silent absorption.
+- **Misfiled-trigger collision (SRS v1.11(c))** — a trigger mis-declared in a `.cls` file enters the
+  injection universe (indistinguishable under the extension discriminant, the round-26 trade-off), so a
+  same-folded-name VALID class gets inject-none: its bindings-channel forms remain unresolved
+  (misfile-triggered, liveness-only; its exact-case forms still resolve via the host channel).
+  Fixture-pinned.
 - **Nested-parent heritage (`class Sub extends Outer.Inner` — valid Apex, SRS v1.10)** — rides the
   PRE-hook heritage pass (Addendum 9), unreachable by the injection and every WI-3 fallback; probed
   (Addendum 11): no-decoy → **unresolved** (the v1.10(iii) liveness limitation); with an unrelated
@@ -1785,6 +1799,13 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   under general conservatism, no fixture obligation.)* The **doubly-varied** form (`OUTER.INNER` —
   §7(13) outer folding ∘ §7(5) fold-extended tail lookup, the composition of the two reliance-backed
   mechanisms) is fixtured too — compositions are not assumed free;
+- **heritage-downstream (SRS v1.11(a)) + poisoned-MRO tripwire (v1.11(b))** — under a case-varied
+  heritage clause, the subtype's implicit-this inherited member stays unresolved (pinned liveness);
+  through the v1.10(iv) mis-bound EXTENDS, NO member edge into the mis-bound target (tripwire — red at
+  Step 3b escalates);
+- **misfiled-trigger collision (SRS v1.11(c))** — a `.cls`-misfiled trigger + a same-folded-name valid
+  class → the valid class's typed-receiver form stays unresolved (pinned liveness; the misfile poisons
+  the key);
 - **nested-parent heritage (SRS v1.10 pins)** — `class Sub extends Outer.Inner`: no-decoy →
   NO heritage edge (v1.10(iii)); with a same-named top-level decoy → EXTENDS into the decoy, pinned as
   the v1.10(iv) documented limitation (never as correct resolution); the SAME-case valid twin's
