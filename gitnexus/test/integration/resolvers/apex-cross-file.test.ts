@@ -475,6 +475,30 @@ describe.skipIf(!apexAvailable)('Apex cross-file overload resolution (REQ-008 �
     resolvesExactly('sf', 'Integer', 'String');
   });
 
+  it('resolves a cross-file CONSTRUCTOR overload (new CtorTarget(7)) to the Integer Constructor node (REQ-005 ∘ REQ-008)', () => {
+    // Target-node identity with the in-unit form: the edge must refine to the declared
+    // Constructor node, not stop at the Class node (§7(1) arm, fixture-validated).
+    const ctor = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'CtorTarget' && e.sourceFilePath.includes('CtorCaller'),
+    );
+    expect(ctor, 'new CtorTarget(7) resolves').toBeDefined();
+    expect(ctor!.rel.targetId, 'targets the Integer Constructor node').toContain('Integer');
+  });
+
+  it('leaves an undisambiguable cross-file CONSTRUCTOR overload unresolved AND records it (REQ-015)', () => {
+    // CtorAmb passes an Other: matches neither ctor exactly at equal arity -> ambiguous.
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'CtorTarget' && e.sourceFilePath.includes('CtorAmb'),
+      ),
+      'obligation 1: no binding edge',
+    ).toEqual([]);
+    expect(
+      suppressed(result).some((o) => o.name.toLowerCase() === 'ctortarget'),
+      'obligation 2: recorded unresolved',
+    ).toBe(true);
+  });
+
   it('leaves an undisambiguable cross-file overload unresolved AND records it (REQ-015 ∘ REQ-010)', () => {
     expect(
       getRelationships(result, 'CALLS').filter((e) => e.target === 'amb').length,

@@ -1430,7 +1430,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   CASE-VARIANT sub-shape's exact-case forms still resolve via the host channel; the SAME-case sub-shape
   loses those too (the Addendum-13 twin-analog refusal row). Misfile-triggered, liveness-only;
   fixture-pinned per sub-shape (the §8 fixture pins the case-variant sub-shape; the same-case sub-shape
-  is family-pinned by the Addendum-13 row + the valid-twin fixture, same shape).
+  is family-pinned by the **same-case-duplicate fixture** — the mechanically identical shape: two
+  same-folded-key universe defs trip inject-none AND two same-exact-case class-like defs refuse on the
+  exact-case channel; the valid-twin fixture is NOT the anchor — there the trigger def is
+  extension-filtered OUT of the universe and the class wins).
 - **Nested-parent heritage (`class Sub extends Outer.Inner` — valid Apex, SRS v1.10)** — rides the
   PRE-hook heritage pass (Addendum 9), unreachable by the injection and every WI-3 fallback; probed
   (Addendum 11): no-decoy → **unresolved** (the v1.10(iii) liveness limitation); with an unrelated
@@ -1447,6 +1450,14 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   cross-file `c.Act()`) → no edge AND a positive `suppressed` record (the WI-2-validated case-collision
   shape reached through the WI-3 binding; the §2/SRS-v1.7 assertable-record shape beyond the two
   overload forms). §8 fixture.
+- **Cross-file constructor-overload completion (REQ-005 ∘ REQ-008 ∘ REQ-010)** — `new B(7)` against a
+  cross-file `B(Integer)`/`B(String)` → CALLS targeting the **`B(Integer)` Constructor node** (pinning
+  target-node identity with the in-unit form — the workspace binding is the Class def, so whether the
+  ctor edge refines to the declared Constructor node as in-unit is part of the §7(1) end-to-end
+  reliance, fixture-validated); a same-arity undisambiguable ctor argument → unresolved + `suppressed`
+  record (the ambiguity-reaches-resolver shape). Constructor-overload selection is a WI-2 mechanic
+  (SDD-001 Constructor nodes; SDD-002 arity+param-type delegation), so its cross-file completion falls
+  under the header's "every WI-2 mechanic" claim, mirroring the method-overload fixtures.
 - **Cross-file mutual / cyclic type chain** — `class A { B b; }` in file A and `class B { A a; }` in file B
   (the two-file mutual form SDD-002 §4 deferred to WI-3), access `a.b.a...` → resolves the reachable
   segments and **terminates** (the host field-access fixpoint's bounded convergence, as in the WI-2 in-unit
@@ -1782,6 +1793,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   static-receiver reliance + fallback); and the disambiguating argument is exercised across WI-2's supported
   kinds — a **field-typed** argument (`this.acct` of a user-defined field type) as well as
   local/literal/constructor — reached cross-file (the method-parameter kind stays WI-4);
+- **cross-file constructor overload** — `new CtorTarget(7)` with `CtorTarget(Integer)`/`CtorTarget(String)`
+  declared in another file → CALLS targeting the Integer **Constructor node** (in-unit target-node
+  identity); an undisambiguable same-arity ctor argument → unresolved + recorded (`suppressed`);
 - **cross-file inherited member** — child (file C) `extends` parent (file B), member declared on the parent
   → the call resolves to the parent member across files, asserted for BOTH call forms (materially
   different paths): the **typed-receiver** form (`Child c = …; c.inherited()` — receiver-typing ∘ member
