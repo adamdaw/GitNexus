@@ -155,3 +155,24 @@ Build note: integration tests run the compiled `dist/` worker; each `src/` edit 
   — a compound constructor-expression *receiver* that must resolve cross-file), the REQ-015
   undisambiguable ctor, and the main-fixture REQ-006 (green once fLit + fField resolve).
 - **NFR-002:** peers + prior Apex **312/312 green**.
+
+## Increment 6 — `this.<field>` argument-type inference (REQ-008; Apex-local)
+
+- **Targets (red→green):** the field-typed-argument overload `t.fField(this.w)` → `fField(Widget)`,
+  and — as a consequence — the main overload fixture's REQ-006 no-false-suppressed assertion
+  (red only because `fField` was mis-recording as `suppressed`). Suite **93 → 95 passing / 16 red of 111**.
+- **Root cause:** the arg-names → declared-type channel (`resolveVarTypeBindings`) only extracted
+  a name for bare `identifier` arguments, so `this.w` (a `field_access` node) got no name and its
+  type stayed `''` → `fField`'s two Widget/Gadget overloads couldn't narrow → `OVERLOAD_AMBIGUOUS`.
+  The class field `w`'s declared type (`Widget`) is ALREADY in the `varTypes` map at the class-level
+  key `\0w` (from its `@type-binding.annotation`); only the arg side was missing.
+- **Change (Apex-local, `languages/apex/captures.ts`):** new `argReferenceName` helper — returns a
+  bare identifier's text, or `this.<field>` for a `this.`-qualified field access; used where
+  `argNames` was built. In `resolveVarTypeBindings`, a `this.<field>` name resolves against the
+  class-level field key `\0<field>` ONLY (never a same-named local — `this.` is explicit field
+  access, so it must not be shadowed by a local of the same name).
+- **Justification:** two Apex-local edits in one file; reuses the existing class-level field type
+  map. No shared edit, no new seam. The `this.`-only class-level keying avoids a latent mis-bind
+  (a method-local `w` shadowing the field `w`), which no fixture exercises but which the plain
+  local-first lookup would have gotten wrong.
+- **NFR-002:** peers + prior Apex **312/312 green**.

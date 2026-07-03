@@ -176,7 +176,7 @@ export function emitApexScopeCaptures(
           JSON.stringify(argTypes),
         );
 
-        const argNames = args.map((a) => (a!.type === 'identifier' ? a!.text : ''));
+        const argNames = args.map((a) => argReferenceName(a!));
         if (argNames.some((n) => n !== '')) {
           grouped['@reference.arg-names'] = syntheticCapture(
             '@reference.arg-names',
@@ -423,8 +423,12 @@ function resolveVarTypeBindings(matches: CaptureMatch[]): CaptureMatch[] {
       let patched = false;
       for (let i = 0; i < types.length; i++) {
         if (types[i] === '' && names[i] !== undefined && names[i] !== '') {
-          // Same-function local first; fall back to class-level/global (fields).
-          const rt = varTypes.get(`${callFnKey}\0${names[i]!}`) ?? varTypes.get(`\0${names[i]!}`);
+          // A `this.<field>` arg keys the class-level field ONLY (the `\0` scope);
+          // a bare name tries the same-function local first, then the class field.
+          const nm = names[i]!;
+          const rt = nm.startsWith('this.')
+            ? varTypes.get(`\0${nm.slice('this.'.length)}`)
+            : (varTypes.get(`${callFnKey}\0${nm}`) ?? varTypes.get(`\0${nm}`));
           if (rt !== undefined) {
             // Fold the resolved var type (Apex case-insensitivity) to match the
             // folded declared param types in overload narrowing.
@@ -447,6 +451,24 @@ function resolveVarTypeBindings(matches: CaptureMatch[]): CaptureMatch[] {
     resolved.push(m);
   }
   return resolved;
+}
+
+/**
+ * The identifier an argument expression refers to, for the arg-names →
+ * declared-type resolution in `resolveVarTypeBindings`. A bare `identifier`
+ * (a local/param/field name) returns its text; a `this.<field>` access returns
+ * `this.<field>` so resolution keys the class-level field ONLY (never a
+ * same-named local — `this.` is explicit field access). Anything else (literals,
+ * chained accesses, calls) returns `''` and falls to `inferArgType`.
+ */
+function argReferenceName(argNode: SyntaxNode): string {
+  if (argNode.type === 'identifier') return argNode.text;
+  if (argNode.type === 'field_access') {
+    const obj = argNode.childForFieldName('object');
+    const field = argNode.childForFieldName('field');
+    if (obj?.type === 'this' && field?.type === 'identifier') return `this.${field.text}`;
+  }
+  return '';
 }
 
 /**
