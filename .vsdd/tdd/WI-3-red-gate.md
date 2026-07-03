@@ -105,8 +105,11 @@ All bindings-channel targets: no Apex `populateNamespaceSiblings` is registered,
 - Case-varied forms (the exact-case channel does not fold): `ENGINE e; e.STOP()`; the
   case-varied static type-name receivers `CONSTS.FLOOR` (cross-file field) and
   `ACCOUNTHANDLER.notify()` (trigger-body call) — the §7(3) arms' folded-key completion;
-  the case-varied constructor `new ENGINE()` and heritage `CaseKid extends BASE implements
-  IFACE` — the §7(11) callsite-folding reliance arms.
+  the case-varied constructor `new ENGINE()` — the §7(11) callsite-folding reliance arm.
+  (The case-varied HERITAGE arm `CaseKid extends BASE implements IFACE` is NOT a red arm —
+  §7(11) declares it moot (pre-hook pass, workspace keys unreachable) and SRS v1.8(i)
+  ratifies it UNRESOLVED; its test asserts EXTENDS/IMPLEMENTS absence and is a green
+  limitation pin, listed under the conservative-negative section — Gate-3 R2-F2 correction.)
 - Implicit-this inherited member (`inherited()` inside Child, the own-scope-MRO form) —
   red alongside the typed-receiver form `c.inherited()`.
 - Enum-constant access via type-name receiver: `Color.RED`, trigger `Level.HIGH` (unlike
@@ -203,8 +206,20 @@ describe and fails if a future change mis-binds — regression guards, not red e
 - Malformed trigger body (`Bad.trigger`) → run completes (pure no-crash).
 - `USES`-absence guards (main + trigger fixtures) and the three `findDanglingEdges` guards —
   pass now, meaningful as regression guards once edges exist.
-- Scoped REQ-006 no-false-suppressed assertions (main + trigger fixtures) — pass trivially
-  now (no outcomes exist); become meaningful at Step 3b. Anchored red by the resolving its.
+- Scoped REQ-006 no-false-suppressed assertions: the **main** fixture assertion passes now
+  (its resolving names — including the Gate-3 R2-F1 additions Inner/ping/UP/DOWN/act/BLUE —
+  are plain-misses or resolves, so nothing is suppressed) and is a regression guard; the
+  **trigger** fixture assertion is genuinely RED now (the `log` overload is mis-recorded as
+  `overload-ambiguous` pre-impl — see the trigger-body overload item above), and its R2-F1
+  additions ring/snap/next/LOW/size are plain-misses that add no suppression. Both become
+  fully meaningful at Step 3b.
+- Case-varied HERITAGE `CaseKid extends BASE implements IFACE` → 0 EXTENDS / 0 IMPLEMENTS
+  from CaseKid (ratified SRS **v1.8(i)** limitation pin; §7(11) declares the heritage arm
+  moot — the pre-hook inheritance pass runs before the injection and its workspace keys are
+  unreachable, Addendum 9). Green pre- AND post-impl (pure registration cannot serve
+  heritage); a regression guard that fails if a future change ever mis-binds the case-varied
+  clause. Gate-3 R2-F2 moved this here from the genuinely-RED inventory (it was mis-filed as
+  a §7(11) red arm; the `new ENGINE()` ctor is the only §7(11) red arm).
 
 **Local-shadows-global (`s.ping()` targets the nested Shadow)** — a POSITIVE assertion that
 passes pre-impl because in-unit nested resolution is WI-2 behaviour. Its WI-3 value is the

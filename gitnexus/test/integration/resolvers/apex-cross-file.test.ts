@@ -394,9 +394,12 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     // Black-box form of the §7(7) [Gate-3 reliance]: the host global lookup must not
     // visibility-filter the injected user-defined binding. Parity (whether it SHOULD
     // resolve) is WI-4 REQ-012 — not asserted here.
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'reveal');
+    expect(call, 'the injected non-exported binding resolves').toBeDefined();
     expect(
-      getRelationships(result, 'CALLS').find((e) => e.target === 'reveal'),
-    ).toBeDefined();
+      call!.targetFilePath,
+      'targets the non-exported Hidden.cls specifically (§7(7) reliance)',
+    ).toContain('Hidden');
   });
 
   // static field / enum-constant via a type-name receiver (§2 static-receiver arm)
@@ -464,6 +467,10 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     const resolvingNames = new Set([
       'start', 'stop', 'label', 'leaf', 'value', 'greet', 'inherited', 'Base',
       'Engine', 'assist', 'reveal', 'MAX_SIZE', 'FLOOR', 'RED', 'Iface',
+      // §8 (SDD.md:1997-2001): the negative also covers nested-qualified and enum-constant
+      // resolved refs — the nested Inner ctor + i.ping(), the nested-enum Mood constants
+      // (UP/DOWN), the interface method (act), and the case-varied Color constant (BLUE).
+      'Inner', 'ping', 'UP', 'DOWN', 'act', 'BLUE',
     ]);
     expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
   });
@@ -1140,6 +1147,10 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
     // `pick` is excluded: its undisambiguable call is a REQ-015 reference the host records.
     const resolvingNames = new Set([
       'handle', 'process', 'name', 'MAX_SIZE', 'HIGH', 'AccountHandler', 'log', 'notify', 'ilog', 'tag', 'wake',
+      // §8 (SDD.md:1997-2001): also the trigger-scope nested-qualified/enum/chain/interface
+      // resolved refs — the interface method (ring), nested Kit.Part (snap), chain segment
+      // (next), case-varied enum constant (LOW), declared-type member (size).
+      'ring', 'snap', 'next', 'LOW', 'size',
     ]);
     expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
   });
