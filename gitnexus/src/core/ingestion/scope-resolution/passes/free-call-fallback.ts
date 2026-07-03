@@ -46,6 +46,7 @@ import {
   isOverloadAmbiguousAfterNormalization,
   narrowOverloadCandidates,
   type ConversionRankFn,
+  type OverloadNarrowingHookCtx,
 } from './overload-narrowing.js';
 
 export function emitFreeCallFallback(
@@ -134,7 +135,35 @@ export function emitFreeCallFallback(
       // to the Class node itself (implicit constructor). Legacy emits
       // the same two targets; see test expectations.
       let fnDef: SymbolDefinition | undefined;
+      // Constructor overloads that a conservative-overload language (Apex) could
+      // not disambiguate by argument types — recorded UNRESOLVED after the block
+      // rather than guessing the first-declared ctor. Undefined for every other
+      // language (the default arity-only path never sets it).
+      let ctorUnresolved: readonly SymbolDefinition[] | undefined;
       if (site.callForm === 'constructor') {
+        // Most languages link `Type(...)` to the explicit Constructor def when one
+        // exists (else the Class). `constructorCallTargetsClass` opts into always
+        // linking to the Class. `conservativeOverloadResolution` (Apex, REQ-015)
+        // narrows the constructor overloads by argument types and records an
+        // undisambiguable set as unresolved; every other language keeps the
+        // byte-identical arity-only `pickConstructorOrClass` path.
+        const resolveCtorTarget = (cls: SymbolDefinition): SymbolDefinition | undefined => {
+          if (options.constructorCallTargetsClass === true) return cls;
+          if (options.conservativeOverloadResolution === true) {
+            const outcome = selectConstructorConservative(cls, site, workspaceIndex, scopes, {
+              argumentTypeClasses: site.argumentTypeClasses,
+              conversionRankFn: options.conversionRankFn,
+              conversionOnlyArgTypePrefixes: options.conversionOnlyArgTypePrefixes,
+              constraintCompatibility: options.constraintCompatibility,
+            });
+            if ('unresolved' in outcome) {
+              ctorUnresolved = outcome.unresolved;
+              return undefined;
+            }
+            return outcome.def;
+          }
+          return pickConstructorOrClass(cls, workspaceIndex, scopes, site.arity);
+        };
         const classDef = resolveInheritanceBaseInScope(
           site.inScope,
           site.name,
@@ -142,30 +171,29 @@ export function emitFreeCallFallback(
           site.rawQualifiedName,
         );
         if (classDef !== undefined && classDef.type !== 'Interface') {
-          // Most languages link `Type(...)` to the explicit Constructor def
-          // when one exists (else the Class). Languages that model the call
-          // as a reference to the type itself opt into
-          // `constructorCallTargetsClass` and always link to the Class.
-          fnDef =
-            options.constructorCallTargetsClass === true
-              ? classDef
-              : pickConstructorOrClass(classDef, workspaceIndex, scopes, site.arity);
+          fnDef = resolveCtorTarget(classDef);
         } else if (options.allowGlobalFallback === true) {
           // The constructed type may live in a sibling/imported file that is
           // not in the call-site's lexical scope-chain bindings. Fall back to
           // a unique workspace-wide Class def by simple name (gated on the
-          // same global-fallback opt-in as free calls). Then target the
-          // Class or its Constructor per the language's preference.
+          // same global-fallback opt-in as free calls).
           const globalClass = pickUniqueGlobalClass(site.name, globalClassesBySimpleName);
-          if (globalClass !== undefined) {
-            fnDef =
-              globalClass.type === 'Interface'
-                ? undefined
-                : options.constructorCallTargetsClass === true
-                  ? globalClass
-                  : pickConstructorOrClass(globalClass, workspaceIndex, scopes, site.arity);
+          if (globalClass !== undefined && globalClass.type !== 'Interface') {
+            fnDef = resolveCtorTarget(globalClass);
           }
         }
+      }
+      if (ctorUnresolved !== undefined) {
+        recordSuppressedOutcome(options.recordResolutionOutcome, {
+          phase: 'free-call-fallback',
+          filePath: parsed.filePath,
+          name: site.name,
+          range: site.atRange,
+          reason: 'overload-ambiguous',
+          candidates: ctorUnresolved,
+        });
+        handledSites.add(siteKey(parsed.filePath, site));
+        continue;
       }
       // Implicit-this overload narrowing: an unqualified call inside
       // a method body might be calling a sibling overload on the
@@ -766,19 +794,17 @@ function logicalCallableKey(def: SymbolDefinition): string {
   ].join('\0');
 }
 
-/** For a constructor call `new X(...)`, return the X class's explicit
- *  Constructor def (by walking the class scope's ownedDefs) or the
- *  Class def itself when no explicit Constructor exists. Matches
- *  legacy behavior — tests assert targetLabel === 'Class' for implicit
- *  ctors and targetLabel === 'Constructor' for explicit ones. */
-function pickConstructorOrClass(
+/** Collect a class's explicit Constructor defs (own class-scope ownedDefs
+ *  plus any nested non-Class child scopes). Empty when the class has only an
+ *  implicit constructor. Shared by `pickConstructorOrClass` (arity-only, the
+ *  default) and `selectConstructorConservative` (argument-type narrowing). */
+function collectConstructors(
   classDef: SymbolDefinition,
   workspaceIndex: WorkspaceResolutionIndex,
   scopes?: ScopeResolutionIndexes,
-  callArity?: number,
-): SymbolDefinition {
+): SymbolDefinition[] {
   const classScope = workspaceIndex.classScopeByDefId.get(classDef.nodeId);
-  if (classScope === undefined) return classDef;
+  if (classScope === undefined) return [];
   const ctors: SymbolDefinition[] = [];
   for (const def of classScope.ownedDefs) {
     if (def.type === 'Constructor') ctors.push(def);
@@ -792,12 +818,54 @@ function pickConstructorOrClass(
       }
     }
   }
+  return ctors;
+}
+
+/** For a constructor call `new X(...)`, return the X class's explicit
+ *  Constructor def (by walking the class scope's ownedDefs) or the
+ *  Class def itself when no explicit Constructor exists. Matches
+ *  legacy behavior — tests assert targetLabel === 'Class' for implicit
+ *  ctors and targetLabel === 'Constructor' for explicit ones. */
+function pickConstructorOrClass(
+  classDef: SymbolDefinition,
+  workspaceIndex: WorkspaceResolutionIndex,
+  scopes?: ScopeResolutionIndexes,
+  callArity?: number,
+): SymbolDefinition {
+  const classScope = workspaceIndex.classScopeByDefId.get(classDef.nodeId);
+  if (classScope === undefined) return classDef;
+  const ctors = collectConstructors(classDef, workspaceIndex, scopes);
   if (ctors.length === 0) return classDef;
   if (callArity !== undefined) {
     const narrowed = narrowByArity(ctors, callArity);
     if (narrowed !== undefined) return narrowed;
   }
   return ctors[0]!;
+}
+
+/**
+ * Constructor selection for conservative-overload languages (Apex, REQ-015):
+ * narrow a class's constructors by the call's ARGUMENT TYPES, not arity alone.
+ * A single exact match binds; an undisambiguable multi-constructor set (no exact
+ * match, or >1 surviving candidate) is left UNRESOLVED so the caller records it
+ * rather than guessing the first-declared constructor (which `pickConstructorOrClass`
+ * would do via `narrowByArity` → `ctors[0]`). A class with 0 constructors binds the
+ * Class node (implicit ctor); a single constructor binds unconditionally (no
+ * ambiguity to resolve), mirroring `pickOverload`'s single-overload short-circuit.
+ */
+function selectConstructorConservative(
+  classDef: SymbolDefinition,
+  site: ParsedFile['referenceSites'][number],
+  workspaceIndex: WorkspaceResolutionIndex,
+  scopes: ScopeResolutionIndexes | undefined,
+  hookCtx: OverloadNarrowingHookCtx,
+): { def: SymbolDefinition } | { unresolved: readonly SymbolDefinition[] } {
+  const ctors = collectConstructors(classDef, workspaceIndex, scopes);
+  if (ctors.length === 0) return { def: classDef };
+  if (ctors.length === 1) return { def: ctors[0]! };
+  const candidates = narrowOverloadCandidates(ctors, site.arity, site.argumentTypes, hookCtx);
+  if (candidates.length === 1) return { def: candidates[0]! };
+  return { unresolved: candidates.length > 0 ? candidates : ctors };
 }
 
 /** Find a unique workspace-wide class-like def by simple name, for a

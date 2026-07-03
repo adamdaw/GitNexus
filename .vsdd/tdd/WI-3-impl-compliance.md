@@ -176,3 +176,39 @@ Build note: integration tests run the compiled `dist/` worker; each `src/` edit 
   (a method-local `w` shadowing the field `w`), which no fixture exercises but which the plain
   local-first lookup would have gotten wrong.
 - **NFR-002:** peers + prior Apex **312/312 green**.
+
+## Increment 7 — conservative constructor overload narrowing (REQ-015; SHARED-CODE, Architect-approved 2026-07-03)
+
+- **Target (red→green):** `CtorAmb` — `new CtorTarget(o:Other)` where `o` matches neither
+  `CtorTarget(Integer)` nor `(String)` → obligation 1 (no binding edge) + obligation 2 (a
+  `suppressed` outcome named `ctortarget`). Suite **95 → 96 passing / 15 red of 111**.
+- **Root cause (probed 2026-07-03):** constructor calls did NOT narrow by argument type in ANY
+  language — `free-call-fallback.ts pickConstructorOrClass` selected a ctor by ARITY only
+  (`narrowByArity` → else `ctors[0]`). So every same-arity `new X(...)` bound the first-declared
+  constructor regardless of arg types; `new CtorTarget(7)` passed only by luck (Integer declared
+  first), and `new CtorTarget(o)` MIS-BOUND to Integer (a wrong edge — worse than unresolved).
+  `conservativeOverloadResolution` (Apex=true) was consulted only in member-call resolution
+  (`receiver-bound-calls.ts`), never the constructor/free-call path.
+- **Architect disposition (design fork, mirrors increment 2):** Adam chose **the shared-code fix**
+  over an SRS limitation (2026-07-03) — CtorAmb is a mis-bind on valid Apex, and a limitation that
+  leaves a false edge is weaker than a correct narrow.
+- **Change (SHARED code — generic, gated, no Apex naming), `scope-resolution/passes/free-call-fallback.ts`:**
+  - extracted `collectConstructors` (the ctor-collection logic) out of `pickConstructorOrClass`
+    (behaviour-preserving refactor — the default arity-only path is byte-identical);
+  - added `selectConstructorConservative`: narrows the class's ctors by `site.argumentTypes` via the
+    shared `narrowOverloadCandidates`; a single match binds, a 0/1-ctor class binds unconditionally
+    (no ambiguity), an undisambiguable multi-ctor set returns `{ unresolved }`;
+  - in the constructor block, a `resolveCtorTarget` closure routes to `selectConstructorConservative`
+    ONLY when `conservativeOverloadResolution === true`; on `unresolved` it records a `suppressed`
+    outcome (`overload-ambiguous`) + marks the site handled + `continue`s (mirroring the existing
+    implicit-this and free-call conservative-suppression blocks). Every non-conservative language
+    keeps the unchanged `pickConstructorOrClass` path.
+- **Justification:** additive + gated — the new argument-type narrowing and suppression fire only
+  under the existing `conservativeOverloadResolution` flag (Apex-only today). Generic, no
+  language-specific control flow (Constitution §2.1). Bonus correctness: multi-ctor calls with a
+  typed arg now bind the RIGHT ctor (`new CtorTarget('s')` → String), not the first-declared.
+- **NFR-002:** peers + prior Apex **312/312 green**; plus a broad ctor-sensitive cross-language run
+  (cpp, csharp ×2, kotlin, typescript, java-1928, php, python, dart, go, ruby) **1827/1827 green** —
+  the gated default path is confirmed byte-identical.
+- **⚠ Owes its own §2.2 review + adversary pass** — the THIRD shared edit; batch with increments
+  2 + 3 at Gate 4 (generic-seam legitimacy + no unintended peer semantics change).
