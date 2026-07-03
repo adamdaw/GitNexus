@@ -67,12 +67,25 @@ export function computeApexNamespaceBindings(
     if (moduleScopeId === undefined) continue;
     for (const scope of parsed.scopes) {
       if (scope.kind !== 'Class') continue; // all Apex type-decl kinds → @scope.class
-      if (scope.parent !== moduleScopeId) continue; // Predicate 2: top-level only
+      // Predicate 2 (owning-scope discriminant): a top-level type is owned by a
+      // Module-parented Class-kind scope (§3), keyed by its BARE folded name. A
+      // NESTED type (§7(5)/(13) qualified-nested fallback) is owned by a
+      // Class-parented Class-kind scope; its `qualifiedName` is already dotted
+      // (`Outer.Inner`), so the SAME fold-of-qualifiedName keys it under a DOTTED
+      // key (`outer.inner`) — never a bare key, so a bare `new Inner()` still
+      // misses (REQ-015) and only a qualified `Outer.Inner` reference reaches it
+      // via `findClassBindingInScope`'s folded workspace consult (before the
+      // dotted-tail decoy fallback). Both are pure registration under one key rule.
+      const nested = scope.parent !== moduleScopeId;
       for (const def of scope.ownedDefs) {
         if (!isApexTypeDef(def.type)) continue; // Predicate 1
         if (isTriggerFiled(def.filePath)) continue; // .trigger exclusion, before grouping
         const qn = def.qualifiedName;
         if (qn === undefined || qn === '') continue;
+        // A top-level type's qualifiedName is its bare simple name; a nested
+        // type's is the dotted `Outer.Inner` path (both verified via the parsed
+        // owned-def shape). Folding both keeps top-level bare / nested dotted.
+        if (nested && !qn.includes('.')) continue; // defensive: a nested def must be qualified
         const key = foldIdentifier(qn);
         let group = byKey.get(key);
         if (group === undefined) {

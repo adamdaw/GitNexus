@@ -237,3 +237,27 @@ Build note: integration tests run the compiled `dist/` worker; each `src/` edit 
   kotlin, typescript ×2, java-1928, php, python, dart, go, ruby, javascript) **1893/1893 green**.
 - **⚠ Owes its own §2.2 review + adversary pass** — the FOURTH shared edit; batch with increments
   2 + 3 + 7 at Gate 4.
+
+## Increment 9 — nested-type qualified-key injection (REQ-010/§7(5)/(13); Apex-local)
+
+- **Target (red→green):** `resolves nested-enum constants (Outer.Mood.UP exact + OUTER.MOOD.DOWN
+  case-varied)`. Suite **97 → 98 passing / 13 red of 111**. First piece of mechanism 3 (nested types).
+- **Root cause (probed 2026-07-03):** `populateApexNamespaceSiblings` injected only TOP-LEVEL types
+  (Predicate 2 = Module-parented Class scope), keyed by folded simple name. Nested types (`Outer.Mood`,
+  `Outer.Inner`) were never registered in `workspaceFqnBindings`, so a static-type-name receiver
+  `Outer.Mood` (Case 2: `findClassBindingInScope('Outer.Mood')`) missed the workspace and fell through
+  to the dotted-tail fallback (which finds no bare `Mood` class). Probe confirmed nested defs carry a
+  **dotted** `qualifiedName` in the parsed owned-def shape (`Outer.Mood`, `Outer.Inner`, `Outer.Helper`).
+- **Change (Apex-local), `languages/apex/namespace-siblings.ts`:** in `computeApexNamespaceBindings`,
+  also iterate Class-parented (nested) Class-kind scopes and inject their class-like owned defs under
+  the SAME fold-of-`qualifiedName` rule. A top-level def's qualifiedName is bare (`Outer`→`outer`); a
+  nested def's is dotted (`Outer.Mood`→`outer.mood`) — so the nested key is always dotted, never a
+  bare key. `findClassBindingInScope` folds a dotted receiver (`Outer.Mood`→`outer.mood`) and consults
+  the workspace channel BEFORE its dotted-tail decoy fallback (`walkers.ts:676` then `:320`), so the
+  nested type binds and the same-tail top-level decoy is bypassed. Same inject-none collision guard.
+- **Justification:** pure registration, no shared-code edit, no new seam — the §7(5)/(13) qualified-
+  nested committed fallback expressed as an extension of the §3 injection universe (a bare `new Inner()`
+  still misses: nested keys are dotted, so REQ-015 unresolved is preserved). Enum-constant ACCESS rides
+  increment 4's `enum_constant` registration once the receiver `Outer.Mood` binds.
+- **NFR-002:** Apex WI-1/WI-2 + Java peers **312/312 green** (the hook is Apex-only — registered on
+  `apexScopeResolver` — so no cross-language surface is touched).
