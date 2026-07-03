@@ -325,3 +325,25 @@ Build note: integration tests run the compiled `dist/` worker; each `src/` edit 
   causally independent of a resolution-pass edit.)
 - **⚠ Owes its own §2.2 review + adversary pass — the FIFTH shared edit; batch with increments 2, 3,
   7, 8 at Gate 4** (generic-seam legitimacy + no unintended peer semantics change).
+
+## Increment 12 — interface-dispatch opt-out for Apex (REQ-010/§3 Interface arm; SHARED-CODE, Architect-approved 2026-07-03)
+
+- **Target (red→green):** `resolves DECLARATION-ONLY interface-typed variables — BOTH Iface v; v.act()
+  AND case-varied IFACE w; w.act() to Iface.act`. Suite **104 → 105 passing / 6 red of 111**.
+- **Root cause:** the generic `emitInterfaceDispatchFor` (`receiver-bound-calls.ts:208`, called at
+  `:1205` after a Case-4 primary edge to an Interface method) emits a SECONDARY `interface-dispatch`
+  CALLS edge to every implementer's same-named method. `Derived implements Iface`, so `v.act()`/`w.act()`
+  each produced a primary edge (→Iface.act) AND a secondary (→Derived.act) — 4 edges where §3 wants 2,
+  each targeting the interface's OWN member (a declaration-only interface var has no known runtime type).
+- **Change (SHARED code — generic, no Apex naming):**
+  - `contract/scope-resolver.ts`: new optional `emitInterfaceDispatch?: boolean` (default = on).
+  - `receiver-bound-calls.ts`: gate the `emitInterfaceDispatchFor` call on `provider.emitInterfaceDispatch
+    !== false`; add the field to the consumed `ReceiverBoundProviderSubset` Pick.
+  - `languages/apex/scope-resolver.ts`: `emitInterfaceDispatch: false`.
+- **Justification (fork, Architect-approved):** additive + gated on a new default-on toggle — every other
+  language leaves it undefined (dispatch stays ON), so peer behaviour is byte-identical. The Apex opt-out
+  encodes a real graph-convention difference (SDD-003 §3), not an Apex-named branch (Constitution §2.1).
+- **NFR-002:** Apex peers **312/312**; **full cross-language resolver suite 2980/2986** (only the 6
+  remaining WI-3 pins fail; all 51 non-Apex files pass — the default-on gate is peer-clean).
+- **⚠ Owes its own §2.2 review + adversary pass — the SIXTH shared edit; batch with increments 2, 3, 7,
+  8, 11 at Gate 4.**

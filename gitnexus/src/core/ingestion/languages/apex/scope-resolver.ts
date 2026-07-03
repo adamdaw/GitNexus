@@ -51,6 +51,11 @@ const apexScopeResolver: ScopeResolver = {
   // REQ-015: an undisambiguable overloaded call is left UNRESOLVED, never
   // guessed (no exact-type match → no edge), rather than the host best-guess.
   conservativeOverloadResolution: true,
+  // SDD-003 §3: a declaration-only interface-typed call (`Iface v; v.act()`)
+  // targets ONLY the interface's own member — the concrete implementation is
+  // unknown without a runtime type, so the generic implementer-fanout would
+  // over-connect. Opt out of the secondary interface-dispatch edges.
+  emitInterfaceDispatch: false,
 };
 
 export { apexScopeResolver };

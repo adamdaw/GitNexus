@@ -655,6 +655,19 @@ export interface ScopeResolver {
   readonly conservativeOverloadResolution?: boolean;
 
   /**
+   * Emit secondary `interface-dispatch` CALLS edges from an interface-typed
+   * receiver's method call to every implementing class's same-named method.
+   * Default `true` (undefined = on) — the existing cross-language behaviour.
+   *
+   * Set `false` for a language whose graph convention is that a
+   * declaration-only interface-typed call targets ONLY the interface's own
+   * member declaration, not its implementations (Apex, SDD-003 §3 — a
+   * declaration-only `Iface v; v.act()` resolves to `Iface.act`, and the
+   * concrete dispatch target is unknown without a runtime type).
+   */
+  readonly emitInterfaceDispatch?: boolean;
+
+  /**
    * Unwrap a property-style collection accessor on a typed receiver
    * to its element type. Called by `resolveCompoundReceiverClass`
    * when walking dotted member-access chains of the form

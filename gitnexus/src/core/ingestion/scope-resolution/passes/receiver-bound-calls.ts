@@ -95,6 +95,7 @@ type ReceiverBoundProviderSubset = Pick<
   | 'conversionOnlyArgTypePrefixes'
   | 'constraintCompatibility'
   | 'isStaticOnly'
+  | 'emitInterfaceDispatch'
 >;
 
 function normalizeTemplateArgToken(value: string): string {
@@ -1201,15 +1202,21 @@ export function emitReceiverBoundCalls(
             if (ok) emitted++;
             // Interface dispatch: when the primary owner is an
             // Interface, emit secondary CALLS edges to every
-            // implementing class's same-named method.
-            emitted += emitInterfaceDispatchFor(
-              ownerDef,
-              memberName,
-              memberDef,
-              site,
-              confidence,
-              calleeCapture,
-            );
+            // implementing class's same-named method. Gated per-language
+            // (default on): a language whose graph convention is that a
+            // declaration-only interface-typed call targets ONLY the
+            // interface's own member (Apex, SDD-003 §3) opts out via
+            // `emitInterfaceDispatch: false`.
+            if (provider.emitInterfaceDispatch !== false) {
+              emitted += emitInterfaceDispatchFor(
+                ownerDef,
+                memberName,
+                memberDef,
+                site,
+                confidence,
+                calleeCapture,
+              );
+            }
             // Always mark handled when the site was resolved, even
             // if the edge was deduplicated (collapse mode), so
             // `emitReferencesViaLookup` doesn't re-emit from the
