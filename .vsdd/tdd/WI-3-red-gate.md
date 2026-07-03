@@ -1,10 +1,13 @@
 # WI-3 (Cross-file binding & trigger resolution) — Red-Gate record
 
 *VSDD Phase 3, Step 3a. Records the Red-Gate state of the WI-3 cross-file suite
-(`test/integration/resolvers/apex-cross-file.test.ts`, 48 tests, 6 multi-file fixtures under
+(`test/integration/resolvers/apex-cross-file.test.ts`, 7 multi-file fixture dirs under
 `test/fixtures/lang-resolution/apex-cross-file*`) and the main-thread unit anchors
-(`test/unit/apex-cross-file-unit.test.ts`, 8 tests) authored against SDD-003 §8 (as amended
-2026-07-02), BEFORE the WI-3 implementation. The Gate-3 adversary verifies this record
+(`test/unit/apex-cross-file-unit.test.ts`) authored against SDD-003 §8 (as amended
+2026-07-02), BEFORE the WI-3 implementation. Initially 48+8 tests at first authoring; the
+Gate-2 re-review rounds grew the suite — the FINAL certified tally is the one in the
+suite-state paragraph below (the Gate-3 adversary verifies against the tagged tests at
+that final state). The Gate-3 adversary verifies this record
 against the tagged tests.*
 
 ## Suite state at authoring

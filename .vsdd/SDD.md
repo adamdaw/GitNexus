@@ -1501,6 +1501,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   outcome rides the §7(1) end-to-end [Gate-3 reliance] (the injected binding winning for the typed-receiver
   member form) — asserted by a §8 fixture, not pinned. No throw; the
   external case stays unresolved precisely when there is no user-defined type of that name.
+- **Nested-enum constant access (`Outer.Mood.UP`, valid Apex)** — the nested-member lookup composed
+  with the enum-constant arm (§7(5)/(13) ∘ §2), exact-case + case-varied; committed under the same
+  fallback classes, never de-scoped (the earlier not-expressible claim covered inner-CLASS statics
+  only). §8 fixture.
 - **Nested-type cross-file qualified access, all case dimensions** — `Outer.Inner`, outer-varied
   `OUTER.Inner` (§7(13)), and tail-varied `Outer.INNER` (§7(5)'s fold-extended fallback) each referenced
   from another file **resolve** — the REQ-010 case-insensitivity SHALL has no silent gap in the
@@ -1834,10 +1838,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   lookup's case dimension, its committed nested-type member-resolution fallback extended to fold the
   member segment) qualified forms — each fixture exercising BOTH the constructor form
   (`new Outer.Inner()`) and the declared-type/instance-member form (`Outer.Inner v; v.ping()`), the two
-  post-hook reference kinds (a single-kind green does not discharge the others). *(A qualified STATIC
-  member on a nested type — `Outer.Inner.MAX` — is NOT expressible in valid Apex: inner classes cannot
-  declare static members (an Apex language restriction), so that kind is invalid-source-only and falls
-  under general conservatism, no fixture obligation.)* The **doubly-varied** form (`OUTER.INNER` —
+  post-hook reference kinds (a single-kind green does not discharge the others). *(A qualified static field/method on a nested CLASS — `Outer.Inner.MAX` — is not expressible in
+  valid Apex: inner classes cannot declare static members. A **nested ENUM's constants** are exactly
+  this shape and ARE valid — `Outer.Level.HIGH` — covered by the nested-enum bullet below.)* The **doubly-varied** form (`OUTER.INNER` —
   §7(13) outer folding ∘ §7(5) fold-extended tail lookup, the composition of the two reliance-backed
   mechanisms) is fixtured too — compositions are not assumed free;
 - **heritage-downstream (SRS v1.11(a) corrected) + poisoned-MRO tripwire (v1.11(b))** — under a
@@ -1864,6 +1867,11 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
 - **dotted-tail decoy (both halves)** — nested `TOuter.TInner` + unrelated top-level `class TInner`:
   the qualified reference resolves to the NESTED type (post-injection, via the outer's binding) and
   ZERO edges ever land on the top-level decoy (pre-injection the tail arm binds nothing — Addendum 6);
+- **nested-enum constant (valid Apex — the qualified static-member shape that IS expressible)** —
+  cross-file `Outer.Mood.UP` → ACCESSES to the nested enum's constant (exact-case AND case-varied
+  `OUTER.MOOD.UP` — the §7(5)/(13) nested-member lookup ∘ the §2 enum-constant arm, doubly composed,
+  fixtured per the compositions-not-free policy); the declared-type form `Outer.Mood m;` binds
+  (observable via the constant access);
 - **valid nested/top-level name share** — nested `Outer.Helper` + top-level `class Helper` (legal Apex) →
   the top-level `Helper` injects alone (owning-scope discriminant) and resolves cross-file; no false
   collision (REQ-010 on valid source);

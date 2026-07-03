@@ -7,4 +7,5 @@ public virtual class Outer {
     public class Helper {
         public void fake() {}
     }
+    public enum Mood { UP, DOWN }
 }

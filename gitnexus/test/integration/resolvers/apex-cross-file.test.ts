@@ -292,6 +292,13 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toEqual([]);
   });
 
+  it('resolves nested-enum constants (Outer.Mood.UP exact + OUTER.MOOD.DOWN case-varied) (REQ-010/§7(5)∘§2)', () => {
+    // The valid qualified static-member shape: nested-member lookup ∘ enum-constant arm.
+    const accesses = getRelationships(result, 'ACCESSES');
+    expect(accesses.find((e) => e.target === 'UP'), 'exact-case constant').toBeDefined();
+    expect(accesses.find((e) => e.target === 'DOWN'), 'case-varied form').toBeDefined();
+  });
+
   it('resolves TAIL-VARIED qualified nested access (Outer.INNER → d.ping()) via the folded member segment (REQ-010/§7(5))', () => {
     // The third case dimension of the qualified form: the outer is exact-case, the member
     // segment case-varied — rides §7(5)'s fold-extended nested-member fallback.
