@@ -220,6 +220,16 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toEqual([]);
   });
 
+  it('pins the super() arm unresolved under an unresolved heritage clause — no edge, no self-loop (SRS v1.11(a))', () => {
+    // Addendum 17: super() resolves nothing (unlike the diverging super.method() self-loop
+    // below). Assert both absences from CaseKid's ctor site. [conservative pin]
+    const kidCalls = getRelationships(result, 'CALLS').filter(
+      (e) => e.sourceFilePath.includes('CaseKid'),
+    );
+    expect(kidCalls.filter((e) => e.target === 'Base'), 'no resolution to Base').toEqual([]);
+    expect(kidCalls.filter((e) => e.target === 'CaseKid'), 'no ctor self-loop').toEqual([]);
+  });
+
   it('pins the super-method self-loop under an unresolved heritage clause (SRS v1.11(a) corrected)', () => {
     // Probed (Addendum 17): super.greet() in CaseKid (whose extends BASE is unresolved)
     // mis-resolves to CaseKid's OWN override — documented behaviour, pinned, not correct
