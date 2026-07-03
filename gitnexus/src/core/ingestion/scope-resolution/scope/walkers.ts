@@ -57,10 +57,15 @@ export function lookupBindingsAt(
   scopeId: ScopeId,
   name: string,
   scopes: ScopeResolutionIndexes,
+  // The scope-independent `workspaceFqnBindings` channel applies at every scope,
+  // so a per-scope walk (`walkScopeChain`) that wants an ENCLOSING-scope declaration
+  // to shadow the flat global must defer it to after the walk. Callers that resolve
+  // at a single scope keep the default (all four channels).
+  includeWorkspace = true,
 ): readonly BindingRef[] {
   const finalized = scopes.bindings.get(scopeId)?.get(name);
   const augmented = scopes.bindingAugmentations.get(scopeId)?.get(name);
-  const workspace = scopes.workspaceFqnBindings?.get(name);
+  const workspace = includeWorkspace ? scopes.workspaceFqnBindings?.get(name) : undefined;
   // Per-namespace channel (#1871 named-namespace generalization). Gated by
   // accessibility: only a *module* scope carries an `accessibleNamespacesByScope`
   // entry, so this collects nothing at child scopes and at module scopes only for
@@ -634,12 +639,25 @@ function walkScopeChain(
     }
 
     // Then imported/augmented bindings — only consulted when no local match.
-    const importedBindings = lookupBindingsAt(currentId, name, scopes);
+    // The scope-independent workspace channel is DEFERRED (includeWorkspace=false)
+    // so an enclosing-scope declaration found later in the walk shadows it.
+    const importedBindings = lookupBindingsAt(currentId, name, scopes, false);
     for (const b of importedBindings) {
       if (predicate(b.def)) return b.def;
     }
 
     currentId = scope.parent;
+  }
+
+  // Workspace channel (scope-independent global — e.g. a C# global-namespace type
+  // or an Apex cross-file top-level type) consulted ONLY after the whole scope
+  // chain's per-scope declarations are exhausted, so a local/enclosing declaration
+  // of the same name shadows the global (universal local-shadows-global scoping).
+  const workspace = scopes.workspaceFqnBindings?.get(name);
+  if (workspace !== undefined) {
+    for (const b of workspace) {
+      if (predicate(b.def)) return b.def;
+    }
   }
   return undefined;
 }

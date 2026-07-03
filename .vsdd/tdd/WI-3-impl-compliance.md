@@ -54,3 +54,28 @@ Build note: integration tests run the compiled `dist/` worker; each `src/` edit 
   cross-file inherited-member MRO (§7(10) — implicit-this inherited, h.tag), cross-file overloads
   (REQ-008 ∘ REQ-010), the interface declaration-only arm (§3), and the trigger-scope compositions
   (REQ-011 ∘ the above). Increments 2+ pending.
+
+## Increment 2 — §7(2) local-over-global precedence (shared-code fix; Architect-approved 2026-07-02)
+
+- **Target (red→green):** the `local-over-global precedence` fixture (nested `Shadow` in
+  ShadowUser wins over the injected global `Shadow.cls`). Integration `apex-cross-file.test.ts`
+  70 → 71 passing; 81/111 with unit.
+- **Architect disposition (Phase-5 escalation):** the §7(2) reliance validated FALSE; Adam chose
+  **the shared-code precedence fix** (a generic §2.2 seam, not an SRS limitation) — local-shadows-
+  global is universal, so the injected flat global must not beat an enclosing-scope declaration.
+- **Changes (SHARED code — generic, no Apex naming):**
+  - `src/core/ingestion/scope-resolution/scope/walkers.ts` — `lookupBindingsAt` gains an
+    `includeWorkspace = true` param (default preserves every single-scope caller);
+    `walkScopeChain` now walks the chain with `includeWorkspace: false` and consults the
+    scope-independent `workspaceFqnBindings` channel ONCE, after the whole chain's per-scope
+    declarations are exhausted — so a local/enclosing declaration of the same name shadows the
+    flat global (the same lexical-scoping rule the walker already applied per-scope, now extended
+    across the whole chain for the workspace channel). Cycle-break defers to the same fallback.
+- **Justification:** minimal generic edit — reorders only the workspace channel relative to the
+  scope walk; no language-specific control flow (Constitution §2.1). `findClassBindingInScope`
+  (the declared-type/class-name resolver) routes through `walkScopeChain`, so the Apex declared
+  type `Shadow s` now finds the enclosing nested type first. Other scope-chain walkers
+  (callables/exports) are untouched — no fixture exercises an enclosing-shadow of those name kinds.
+- **NFR-002:** peers + prior Apex **312/312 green** (the reorder changed no peer resolution).
+- **⚠ Owes its own §2.2 review + adversary pass (Adam's condition):** flagged for the Gate-4
+  review of the shared edit (generic-seam legitimacy + no unintended peer semantics change).
