@@ -1080,7 +1080,9 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     this rides the §7(11) [Gate-3 reliance] (committed WI-2-machinery extension — the folding ctor path
     reaching the workspace key; for the hit-shape the extension must precede the raw exact-case channel,
     else Phase-5 escalation), and for the qualified nested forms it rides §7(13) (outer segment) and §7(5)'s
-    fold-extended fallback (tail segment) — reliance-backed commitments, not pinned host behaviour.
+    fold-extended fallback (tail segment), and for the static type-name-receiver member kind it rides
+    §7(15)/(3)'s reliance and committed (fold-extended) fallback — reliance-backed commitments, not
+    pinned host behaviour.
     The postcondition is further bounded by the ratified SRS v1.5–v1.11 exceptions — in particular the
     v1.6 class-misfiled-in-`.trigger` exclusion, the v1.9 fragment-collision inject-none, the v1.11(c)
     misfiled-trigger collision (a `.cls`-misfiled trigger poisons a valid class's folded key), and the
@@ -1182,7 +1184,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     `languages/apex/`); if the miss proves to sit in a shared surface not correctable Apex-locally →
     Phase-5 escalation (named here so a red fixture leaves nothing to improvise). **Committed fallback (one mechanism, shared across the call and field/enum-constant arms):** if
     any static-receiver fixture (trigger or cross-file, call or field) is red, a **static-receiver
-    type-binding synthesis** binds the receiver's type-name to the class/enum node it resolves to in
+    type-binding synthesis** binds the receiver's type-name — **folded via the §2.2 seam before the
+    workspace lookup** — to the class/enum node it resolves to in
     `workspaceFqnBindings` (mirroring `apexReceiverBinding`'s `this`/`super` synthesis, but for a type-name
     receiver via the global registry), so the subsequent member/constant lookup proceeds — all under
     `languages/apex/`. Not an open choice.
