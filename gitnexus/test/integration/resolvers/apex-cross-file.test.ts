@@ -813,8 +813,11 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     const turn = getRelationships(result, 'CALLS').find((e) => e.target === 'turn');
     expect(turn, 'w.turn() resolves to the class member').toBeDefined();
     expect(turn!.targetFilePath).toContain('TWIST.cls');
+    // The class is declared `TWIST`, so the ctor edge target is the node name 'TWIST';
+    // the source wrote `new Twist()`. Apex is case-insensitive, so the predicate folds
+    // case (a `=== 'Twist'` check would falsely miss the class-cased node — Gate-3 defect).
     const ctor = getRelationships(result, 'CALLS').find(
-      (e) => e.target === 'Twist' && e.sourceFilePath.includes('TwistCaller'),
+      (e) => e.target.toLowerCase() === 'twist' && e.sourceFilePath.includes('TwistCaller'),
     );
     expect(ctor, 'new Twist() binds the class').toBeDefined();
     expect(ctor!.targetFilePath, 'never the trigger').toContain('TWIST.cls');
@@ -1016,15 +1019,18 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
     expect(call!.targetFilePath, 'targets the interface member').toContain('Alarm.cls');
   });
 
-  it('resolves a trigger-body CASE-VARIED constructor (new ACCOUNTHANDLER()) (REQ-011 ∘ §7(11))', () => {
-    // The exact-case trigger ctor is already-green (fallback channel); the case-varied one
-    // resolves only via the folded path — assert a SECOND trigger-sourced ctor edge.
-    expect(
-      getRelationships(result, 'CALLS').filter(
-        (e) => e.target === 'AccountHandler' && fromTrigger(e),
-      ).length,
-      'both exact-case and case-varied ctors bind',
-    ).toBeGreaterThanOrEqual(2);
+  it('resolves a trigger-body CASE-VARIED constructor (new BASEHANDLER()) to a distinct class (REQ-011 ∘ §7(11))', () => {
+    // A trigger is a single container node T, so two ctors to the SAME class collapse to one
+    // edge (the I2 (caller,target) invariant) — a case-varied site sharing the exact-case
+    // ctor's target is unobservable by count. Mirroring the peer idiom (cpp
+    // `callsFrom('call_defaulted_constructor', 'Gadget')` → toHaveLength(1)), the case-varied
+    // ctor targets a DISTINCT class (new BASEHANDLER() → BaseHandler), so its folded-path
+    // resolution in trigger scope is independently observable as exactly one edge.
+    const ctors = getRelationships(result, 'CALLS').filter(
+      (e) => e.target === 'BaseHandler' && fromTrigger(e),
+    );
+    expect(ctors, 'the case-varied trigger ctor resolves via the folded key').toHaveLength(1);
+    expect(ctors[0]!.targetFilePath, 'the class, resolved from the trigger').toContain('BaseHandler.cls');
   });
 
   it('resolves trigger-body nested-qualified access (Kit.Part p; p.snap()) from the trigger (REQ-011 ∘ §7(5)/(13))', () => {

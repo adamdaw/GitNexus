@@ -9,6 +9,7 @@ trigger T on Account (before insert) {
     String tg = h.tag();
     ACCOUNTHANDLER cv = new ACCOUNTHANDLER();
     cv.wake();
+    BaseHandler bh = new BASEHANDLER();
     String n = h.name;
     String nm = h.next.name;
     Integer m = AccountHandler.MAX_SIZE;

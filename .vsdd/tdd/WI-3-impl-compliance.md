@@ -347,3 +347,36 @@ Build note: integration tests run the compiled `dist/` worker; each `src/` edit 
   remaining WI-3 pins fail; all 51 non-Apex files pass — the default-on gate is peer-clean).
 - **⚠ Owes its own §2.2 review + adversary pass — the SIXTH shared edit; batch with increments 2, 3, 7,
   8, 11 at Gate 4.**
+
+## Increment 13 — test-defect corrections (#809 twin-ctor case predicate, #1019 trigger-ctor count) — TEST-ONLY, Phase-5 → Gate 3
+
+Not an implementation increment: two Gate-3 acceptance tests asserted the wrong observable and
+were RED against a *correct* implementation. Architect-ruled test defects (Adam, 2026-07-03,
+"Confirm — correct the tests"); the fix corrects the tests, not the resolver. Suite **105 → 107
+passing / 4 red of 111**; peers untouched (test-only). Probe-verified impl correctness before
+editing (throwaway `apex-probe.scratch.test.ts`, deleted).
+
+- **#809 (`resolves the CASE-VARIANT trigger/class twin to the CLASS, never the trigger`):** the
+  class is declared `TWIST`, so its ctor edge target is the node name `'TWIST'`; the source wrote
+  `new Twist()`. The finder used `e.target === 'Twist'` — a **case-sensitive predicate on a
+  case-insensitive language**, so it missed the class-cased node and failed while the impl was
+  correct (probe: `new Twist()` → `TWIST @ TWIST.cls`, never the trigger; turn/buzz likewise).
+  Fix: fold case in the predicate (`e.target.toLowerCase() === 'twist'`). Test-only.
+- **#1019 (`resolves a trigger-body CASE-VARIED constructor`):** asserted `>= 2` ctor edges from
+  the trigger to `AccountHandler` (exact-case + case-varied). A trigger is a **single container
+  node T**, so two ctors to one class collapse to one edge (the I2 `(caller,target)` invariant) —
+  the assertion is *structurally unsatisfiable*, not merely wrong-valued (probe: exactly one
+  collapsed `rel:CALLS:…T->…AccountHandler`, no per-site metadata). No peer suite asserts `>=2`
+  collapsed edges; peers keep each ctor site observable by isolating it in a distinct caller
+  (`cpp.test.ts:4499` `callsFrom('call_defaulted_constructor','Gadget')` → `toHaveLength(1)`) — and
+  a trigger body cannot have distinct callers. Fix (Architect chose "distinct-target fixture"):
+  add `BaseHandler bh = new BASEHANDLER();` to `T.trigger` (case-varied ctor → a **distinct**
+  class), assert `toHaveLength(1)` on the trigger→BaseHandler edge — the peer idiom, and the
+  case-varied ctor's folded-path resolution in trigger scope is now independently observable.
+  Probe-verified the distinct-target ctor **resolves** (1 edge → BaseHandler.cls, source T) before
+  committing — i.e. a genuine test defect, not a masked build gap.
+- **Changed files:** `test/integration/resolvers/apex-cross-file.test.ts` (two tests),
+  `test/fixtures/lang-resolution/apex-cross-file-trigger/T.trigger` (one distinct-target ctor line).
+- **⚠ Phase-5 cascade:** both tests were cleared at Gate 3 (`gate3-wi3.md`); correcting them
+  partially supersedes that record. Batch the Gate-3 re-attestation with the #223/#233 ratify
+  (which also edits the suite) — record once when the heritage rulings land.
