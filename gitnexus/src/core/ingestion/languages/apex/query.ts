@@ -73,6 +73,14 @@ const APEX_SCOPE_QUERY = `
   declarator: (variable_declarator
     name: (identifier) @declaration.name)) @declaration.variable
 
+;; Declarations — enum constants (SDD-003 §3 static-receiver enum-constant
+;; synthesis). Registers each constant as a Property of the enclosing enum
+;; scope so \`Color.RED\` resolves via the static-type-name-receiver member
+;; lookup (findOwnedMember). Apex-local divergence from java/query.ts, which
+;; omits enum constants from scope resolution — an Apex committed fallback.
+(enum_constant
+  name: (identifier) @declaration.name) @declaration.variable
+
 ;; Type bindings — parameter annotations: void f(Account a)
 (formal_parameter
   type: (type_identifier) @type-binding.type

@@ -101,3 +101,30 @@ Build note: integration tests run the compiled `dist/` worker; each `src/` edit 
   channels stay RAW-keyed (exact-case). No Apex-specific control flow (Constitution §2.1).
 - **NFR-002:** peers + prior Apex **312/312 green** (additive fold changed no peer resolution).
 - **⚠ Owes its own §2.2 review + adversary pass** — the SECOND shared edit; batch with increment 2 at Gate 4.
+
+## Increment 4 — static-receiver enum-constant synthesis (SDD-003 §3; Apex-local)
+
+- **Targets (red→green):** the flat static-receiver enum-constant ACCESS forms —
+  `Color.RED` and case-varied `COLOR.BLUE` (main), plus the trigger arms `Level.HIGH`
+  and case-varied `LEVEL.LOW`. Integration+unit suite **85 → 89 passing / 22 red of 111**.
+- **Root cause (probed 2026-07-03):** enum constants are captured by the WI-1 graph query
+  (`queries.ts:38` `@definition.property` → `HAS_PROPERTY` edge exists) but NOT by the
+  WI-2/WI-3 scope-resolution query (`query.ts` `APEX_SCOPE_QUERY`), which — mirroring
+  `java/query.ts` node-for-node — captures `field_declaration`/`local_variable_declaration`
+  but no `enum_constant`. So an enum's constants never enter the scope-resolution field
+  registry; `findOwnedMember(Color, 'RED')` misses even though the static-receiver `Color`
+  (Enum, class-like) resolves via Case 2. Static class fields (`Consts.MAX_SIZE`) already
+  green because `field_declaration` IS captured — the residual was enum-only.
+- **Change (Apex-local, `languages/apex/query.ts`):** add an `enum_constant` declaration
+  capture to `APEX_SCOPE_QUERY`, tagged `@declaration.variable` (same tag as
+  `field_declaration`), so each constant registers as a Property of its enclosing enum
+  scope (ownerId = the enum) via the shared `propertyHook`. `findOwnedMember` then resolves
+  `Color.RED` → ACCESSES. The member name is folded through the §2.2 seam (increment 3), so
+  the case-varied `COLOR.BLUE`/`LEVEL.LOW` arms resolve on the same capture.
+- **Justification:** one Apex-local query line; a deliberate divergence from `java/query.ts`
+  (which omits enum constants from scope resolution) implementing the SDD-003 §3 committed
+  fallback. No shared-code edit, no new seam (Constitution §2.1/§2.2). Diff confined to
+  the four enum-constant target tests; the nested-enum `Outer.Mood.UP` form stays RED (it
+  needs the mechanism-3 nested-type resolver, not this flat capture).
+- **NFR-002:** peers + prior Apex **312/312 green** (Java/peer queries untouched; the new
+  capture fires only on the Apex grammar).
