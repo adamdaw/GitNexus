@@ -160,6 +160,16 @@ const APEX_SCOPE_QUERY = `
   type: (generic_type
     (type_identifier) @reference.name)) @reference.call.constructor
 
+;; Qualified nested constructor: new Outer.Inner() (SDD-003 §7(5)/(13)). The type
+;; is a \`scoped_type_identifier\` (not a plain \`type_identifier\`); capture the WHOLE
+;; scoped node as @reference.name so \`site.name\` is the dotted \`Outer.Inner\`, which
+;; \`findClassBindingInScope\` folds (\`outer.inner\`) and resolves against the nested
+;; type injected into \`workspaceFqnBindings\` (namespace-siblings), before the
+;; dotted-tail decoy fallback. The emitted edge target is the resolved def's simple
+;; name (\`Inner\`). Apex-local: java/query.ts assumes no qualified \`new pkg.Foo()\`.
+(object_creation_expression
+  type: (scoped_type_identifier) @reference.name) @reference.call.constructor
+
 ;; References — field/property writes: obj.name = 'x'
 (assignment_expression
   left: (field_access

@@ -261,3 +261,24 @@ Build note: integration tests run the compiled `dist/` worker; each `src/` edit 
   increment 4's `enum_constant` registration once the receiver `Outer.Mood` binds.
 - **NFR-002:** Apex WI-1/WI-2 + Java peers **312/312 green** (the hook is Apex-only — registered on
   `apexScopeResolver` — so no cross-language surface is touched).
+
+## Increment 10 — qualified nested constructor capture (REQ-010/§7(5)/(13); Apex-local)
+
+- **Target:** the ctor half of the nested-qualified tests — `new Outer.Inner()` and its three case
+  variants (`new OUTER.Inner()`, `new Outer.INNER()`, `new OUTER.INNER()`). Suite count unchanged
+  (**98/111**) because every nested test also asserts a `.member` receiver call (increment 11), but
+  the four ctor CALLS edges now emit (probe: `{NestedCaller,CaseNested,TailCase,DoubleCase}.cls →
+  Inner @ Outer.cls`).
+- **Root cause:** `query.ts` captured `object_creation_expression` only for `type_identifier` /
+  `generic_type`; `new Outer.Inner()` is a `scoped_type_identifier`, so it produced NO constructor
+  site (probe pre-impl: 0 CALLS). `query.ts:15` carried the stale WI-1 assumption "Apex has no
+  qualified `new pkg.Foo()`".
+- **Change (Apex-local), `languages/apex/query.ts`:** add a ctor capture matching
+  `type: (scoped_type_identifier) @reference.name` — capturing the WHOLE scoped node so `site.name`
+  is the dotted `Outer.Inner`. `resolveInheritanceBaseInScope` → `findClassBindingInScope` folds it
+  (`outer.inner`) and hits the increment-9 workspace injection before the dotted-tail decoy fallback;
+  the emitted edge target is the resolved def's simple name (`Inner`), verified against Outer.cls.
+- **Justification:** captures + injection land TOGETHER (per the handoff diagnosis — a capture-only
+  attempt regressed via the decoy fallback; increment 9's injection makes the folded workspace consult
+  win first). Apex-local divergence from `java/query.ts`. No shared edit.
+- **NFR-002:** Apex WI-1/WI-2 peers **126/126 green** (Java unaffected — Apex-only query).
