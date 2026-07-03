@@ -1454,7 +1454,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   cross-file `B(Integer)`/`B(String)` → CALLS targeting the **`B(Integer)` Constructor node** (pinning
   target-node identity with the in-unit form — the workspace binding is the Class def, so whether the
   ctor edge refines to the declared Constructor node as in-unit is part of the §7(1) end-to-end
-  reliance, fixture-validated); a same-arity undisambiguable ctor argument → unresolved + `suppressed`
+  reliance, fixture-validated; the EXACT-case form validated TRUE pre-hook — the host channel already
+  refines to the Constructor node, an already-green acceptance per the red-gate ledger); a same-arity undisambiguable ctor argument → unresolved + `suppressed`
   record (the ambiguity-reaches-resolver shape). Constructor-overload selection is a WI-2 mechanic
   (SDD-001 Constructor nodes; SDD-002 arity+param-type delegation), so its cross-file completion falls
   under the header's "every WI-2 mechanic" claim, mirroring the method-overload fixtures.

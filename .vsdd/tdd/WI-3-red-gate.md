@@ -143,6 +143,10 @@ behaviour; they are kept as acceptance + regression guards (Architect-approved 2
 - Fallback-channel limitation pins (authored post-disposition, green by design):
   duplicate-name ctor binds exact-case-first (`new Dupe()` → DupOne.cls); misfiled-class
   ctor binds into the `.trigger` file (`new Rogue()`).
+- Cross-file constructor overload, exact-case positive (`new CtorTarget(7)` → the Integer
+  Constructor node): already green — the exact-case channel resolves declared-ctor classes
+  with Constructor-node refinement pre-hook (the Addendum-4 `super()` analog). Kept as
+  acceptance + regression guard; its undisambiguable arm is genuinely red.
 - Undisambiguable trigger-body overload (`AccountHandler.pick('x')` → 0 CALLS + a
   `suppressed` outcome named `pick`): already green — the fallback-channel static receiver
   reaches the host's overload-ambiguity path pre-hook, which records the suppression. Kept
