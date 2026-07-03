@@ -1359,7 +1359,10 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
 - **Trigger-body / static-receiver resolution (REQ-011 + cross-file static call)** — capture is
   probe-confirmed (§2), so the only addition the Gate-3 fixtures might force is the **single committed
   mechanism**: a **static-receiver type-binding synthesis** that binds a static *type-name* receiver
-  (`Handler.handle()`, `B.f()`) to the class node it resolves to in `workspaceFqnBindings`, mirroring
+  (`Handler.handle()`, `B.f()`) to the class node it resolves to in `workspaceFqnBindings` — **folding
+  the receiver type-name via the §2.2 `normalizeIdentifier` seam before the workspace lookup** (the
+  workspace keys are folded; `apexReceiverBinding` performs no fold — the §7(5) fold-extended wording
+  pattern) — mirroring
   `apexReceiverBinding`'s `this`/`super` synthesis but for a type-name receiver — under `languages/apex/`
   (Constitution §2.1). Built only if a static-receiver fixture is red (the host may already resolve it via
   REQ-010); not pre-built speculatively. One mechanism, one hook site — not an open choice.
@@ -1752,7 +1755,8 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   static member through a workspace-injected type binding (`Twist.buzz()`, `Foo.stat2()` — the twin
   static-member arms; distinct from (11)'s ctor/free-call arm and from (3)'s single-segment reliance):
   **one committed fallback — §7(3)'s static-receiver type-binding synthesis** (the same mechanism
-  family), extended to consult the workspace key; if the hit-shape ordering (the raw exact-case channel
+  family), extended to consult the workspace key **with the receiver name folded via the §2.2 seam**;
+  if the hit-shape ordering (the raw exact-case channel
   claiming first) defeats it, Phase-5 escalation. Gate 3 (tests vs the real host) validates
   all of these; the Gate-2 adversary validates the wiring (Seam-B registration, the injected def set, the
   collision guard, the folded key) and the split, not the behaviours.
