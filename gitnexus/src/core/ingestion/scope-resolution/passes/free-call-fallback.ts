@@ -94,6 +94,11 @@ export function emitFreeCallFallback(
      *  the call (record unresolved + mark handled) instead of leaving it for the
      *  reference-index emitter to guess a first-overload target. Default false. */
     readonly conservativeOverloadResolution?: boolean;
+    /** When true, an unqualified implicit-`this` call resolves through the
+     *  enclosing class's MRO (inherited members), not just its own methods.
+     *  Off by default — peer semantics (C++ two-phase lookup) require own-class-
+     *  only. Apex opts in (REQ-005/007 inherited-member resolution). */
+    readonly resolveInheritedImplicitThisCall?: boolean;
     readonly recordResolutionOutcome?: ResolutionOutcomeRecorder;
     /** Resolved-callee-id capture sink (#2227 U2). Threaded in only under
      *  `--pdg`; `undefined` ⇒ zero overhead, byte-identity (R4). Captured at
@@ -206,6 +211,7 @@ export function emitFreeCallFallback(
           conversionRankFn: options.conversionRankFn,
           conversionOnlyArgTypePrefixes: options.conversionOnlyArgTypePrefixes,
           constraintCompatibility: options.constraintCompatibility,
+          resolveInheritedImplicitThisCall: options.resolveInheritedImplicitThisCall,
         });
         fnDef = implicitThis.def;
         fnDefFromImplicitThis = fnDef !== undefined;
@@ -930,6 +936,7 @@ export function pickImplicitThisOverload(
     readonly conversionRankFn?: ConversionRankFn;
     readonly conversionOnlyArgTypePrefixes?: readonly string[];
     readonly constraintCompatibility?: ScopeResolver['constraintCompatibility'];
+    readonly resolveInheritedImplicitThisCall?: boolean;
   },
 ): SymbolDefinition | undefined {
   return resolveImplicitThisCall(site, scopes, workspaceIndex, model, hookCtx).def;
@@ -961,6 +968,7 @@ function resolveImplicitThisCall(
     readonly conversionRankFn?: ConversionRankFn;
     readonly conversionOnlyArgTypePrefixes?: readonly string[];
     readonly constraintCompatibility?: ScopeResolver['constraintCompatibility'];
+    readonly resolveInheritedImplicitThisCall?: boolean;
   },
 ): {
   readonly def: SymbolDefinition | undefined;
@@ -986,7 +994,25 @@ function resolveImplicitThisCall(
   const classDefId = workspaceIndex.classScopeIdToDefId.get(classScopeId);
   if (classDefId === undefined) return none;
 
-  const overloads = model.methods.lookupAllByOwner(classDefId, site.name);
+  // Default: own-class lookup only. Peer semantics rely on this — C++ two-phase
+  // lookup forbids an unqualified name in a template body binding to a dependent
+  // base, so an unconditional MRO walk over-connects. A language whose dispatch
+  // DOES resolve inherited implicit-`this` calls (Apex REQ-005/007) opts into the
+  // MRO walk: the enclosing class + its MRO (most-derived-first), first owner that
+  // declares `site.name` supplying the overload set (a subclass override shadows).
+  let overloads: readonly SymbolDefinition[];
+  if (hookCtx?.resolveInheritedImplicitThisCall === true) {
+    overloads = [];
+    for (const ownerId of [classDefId, ...scopes.methodDispatch.mroFor(classDefId)]) {
+      const found = model.methods.lookupAllByOwner(ownerId, site.name);
+      if (found.length > 0) {
+        overloads = found;
+        break;
+      }
+    }
+  } else {
+    overloads = model.methods.lookupAllByOwner(classDefId, site.name);
+  }
   if (overloads.length === 0) return none;
   if (overloads.length === 1) return { def: overloads[0], ambiguous: false, candidates: overloads };
 

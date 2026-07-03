@@ -668,6 +668,19 @@ export interface ScopeResolver {
   readonly emitInterfaceDispatch?: boolean;
 
   /**
+   * Resolve an unqualified implicit-`this` call through the enclosing class's
+   * MRO (inherited members), not just its own declared methods. Default
+   * `false` (undefined = off) — peer semantics require own-class-only: C++
+   * two-phase lookup forbids an unqualified name in a template body binding to
+   * a dependent base, so an unconditional MRO walk over-connects.
+   *
+   * Set `true` for a language whose dispatch resolves inherited implicit-`this`
+   * calls (Apex, REQ-005/007 — `inherited()` inside a subclass binds the
+   * cross-file parent's member via the linearization).
+   */
+  readonly resolveInheritedImplicitThisCall?: boolean;
+
+  /**
    * Unwrap a property-style collection accessor on a typed receiver
    * to its element type. Called by `resolveCompoundReceiverClass`
    * when walking dotted member-access chains of the form

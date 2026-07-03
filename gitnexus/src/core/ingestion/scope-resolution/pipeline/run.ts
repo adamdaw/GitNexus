@@ -773,6 +773,7 @@ export function runScopeResolution(
       conversionOnlyArgTypePrefixes: provider.conversionOnlyArgTypePrefixes,
       constraintCompatibility: provider.constraintCompatibility,
       conservativeOverloadResolution: provider.conservativeOverloadResolution === true,
+      resolveInheritedImplicitThisCall: provider.resolveInheritedImplicitThisCall === true,
       recordResolutionOutcome,
       calleeIdSink: calleeIdAccumulator,
     },

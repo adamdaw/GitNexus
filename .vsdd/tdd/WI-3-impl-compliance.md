@@ -408,3 +408,36 @@ route, NOT a shipped limitation. Suite **107 → 109 passing / 2 red of 111**; p
   **Gate 3** (tests vs spec, cold `vsdd-test-validator`, covering incs 13 + 14) → Gate 4 fidelity picks
   up impl-vs-v1.12. The re-reviews are localised (one pin) but **not skipped** — each re-cleared record
   is re-committed. Impl is UNCHANGED by this increment, so no Gate-5 re-fuzz owed *from this edit*.
+
+## Increment 15 — implicit-`this` inherited-member MRO walk (#185; REQ-005/007) — SHARED-CODE, gated (7th shared edit)
+
+- **Target (red→green):** `resolves an implicit-this inherited member (inherited() inside Child) to the
+  cross-file parent (REQ-005/007)`. Suite **109 → 110 passing / 1 red of 111** (only #740, the pending
+  poisoned-MRO tripwire, remains).
+- **Root cause:** `free-call-fallback.ts resolveImplicitThisCall` looked up only the enclosing class's
+  OWN methods (`lookupAllByOwner(classDefId, name)`), no MRO walk — so an unqualified call to an
+  INHERITED member (`inherited()` inside `Child extends Base`, Base in another file) returned
+  unresolved. The typed-receiver form (`c.inherited()`) already resolved (Case 4 walks the chain);
+  only the implicit-`this` form was the gap.
+- **Change (SHARED code — generic, no Apex naming), GATED default-off:**
+  - `contract/scope-resolver.ts`: new optional `resolveInheritedImplicitThisCall?: boolean` (default
+    off = current own-class-only behaviour).
+  - `free-call-fallback.ts`: when the flag is on, `resolveImplicitThisCall` walks
+    `[classDefId, ...methodDispatch.mroFor(classDefId)]` most-derived-first (first owner declaring the
+    name supplies the overload set — a subclass override shadows); else own-class-only (unchanged).
+    Threaded through the options type + both call sites + the exported `pickImplicitThisOverload` hookCtx.
+  - `pipeline/run.ts`: thread `provider.resolveInheritedImplicitThisCall` into the free-call options.
+  - `languages/apex/scope-resolver.ts`: `resolveInheritedImplicitThisCall: true`.
+- **Why gated (empirically forced):** the FIRST cut walked the MRO unconditionally and **regressed C++**
+  — `cpp.test.ts:3770` (`unqualified f() inside Derived<T>::g() does NOT bind to a dependent base`): C++
+  two-phase lookup forbids an unqualified name in a template body binding to a dependent base, so the
+  unconditional walk over-connected (full suite 2983/2986, 2 cpp reds). Gating default-off restores
+  byte-identical peer behaviour (every non-Apex resolver uses the own-class-only path); Apex opts in
+  (ordinary single inheritance, no dependent-base rule to guard). Established toggle pattern (incs 8,
+  12) — a real generic capability gap surfaced by an Apex fixture, fixed generically + gated, not an
+  Apex-named branch (Constitution §2.1 clean).
+- **NFR-002:** Apex peers 312/312; cpp reverted to green (432-test apex+cpp run: 431/432, sole red =
+  the pending #740 tripwire). Full cross-language resolver suite (52 files): **2985/2986 — 51 files
+  pass, the sole red is the pending #740 tripwire in `apex-cross-file.test.ts`**; every non-Apex file
+  (incl. cpp, post-gate) passes → the gated edit is byte-identical for peers. **⚠ SEVENTH shared edit —
+  owes §2.2 review + adversary at Gate 4; batch with incs 2, 3, 7, 8, 11, 12.**
