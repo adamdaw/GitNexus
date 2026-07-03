@@ -939,7 +939,9 @@ at WI-3.
   declaration unit**. WI-3 supplies the one **cross-file enabler** that lets every WI-2 mechanic reach across
   files, thereby **completing** (not re-owning) the inherently-cross-file epic §9 forms WI-2 deferred:
   two-class calls (REQ-005), cross-file field/property chains (REQ-009), top-level `extends`/`implements`
-  (REQ-007), and top-level-parent `super()`/`super.method()` delegation (REQ-005 sub-clause). WI-3 owns no
+  (REQ-007), top-level-parent `super()`/`super.method()` delegation (REQ-005 sub-clause), and the
+  cross-file-receiver form of REQ-008 overload resolution (added to ITEM-003 at Gate-2 round 3,
+  Architect-approved 2026-06-30 — §1/§4/§8). WI-3 owns no
   WI-2 mechanic REQ; it owns the enabler (REQ-010) + trigger-body resolution (REQ-011).
 
 ## 1. Design overview (the HOW, grounded in the host)
@@ -1401,7 +1403,8 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   conservative-unresolved, which would reduce a REQ-005/007 SHALL without an SRS amendment (Constitution §7).
 - **Heritage-limitation downstream family (SRS v1.11(a)/(b), probe-corrected)** — WHERE a heritage
   clause is unresolved (v1.8(i)/v1.10(iii)/(v) shapes), the subtype's MRO lacks the parent: its
-  inherited-member references and `super()` remain unresolved (Addendum 16), and `super.method()`
+  inherited-member references remain unresolved (Addendum 16), `super()` remains unresolved
+  (Addendum 17), and `super.method()`
   MIS-RESOLVES to the subtype's own override (Addendum 17 — a probed self-loop, ratified v1.11(a)
   corrected text; fixture-pinned as documented behaviour). The v1.10(iv) MIS-BOUND-heritage MRO is
   **tripwired**: the fixture asserts NO member edge into the mis-bound target; if Step 3b turns it red
@@ -1818,7 +1821,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
 - **heritage-downstream (SRS v1.11(a) corrected) + poisoned-MRO tripwire (v1.11(b))** — under a
   case-varied heritage clause: the subtype's implicit-this inherited member stays unresolved (pinned
   liveness); `super.method()` self-loop mis-bind pinned as the documented v1.11(a) behaviour
-  (`CaseKid.greetUp()` → CALLS targeting CaseKid's own override, Addendum 17); through the v1.10(iv)
+  (`CaseKid.greetUp()` → CALLS targeting CaseKid's own override, Addendum 17); the `super()` arm pinned
+  separately (zero CALLS for the super() site — no resolution AND no self-loop; the two super arms
+  diverge, Addendum 17, so neither family-pins the other); through the v1.10(iv)
   mis-bound EXTENDS, NO member edge into the mis-bound target (tripwire — red at Step 3b escalates);
   the v1.10(iii)/(v) downstream shapes are family-pinned (same suppressed-MRO mechanism-independent
   behaviour, per the Addendum-16 determinacy);
