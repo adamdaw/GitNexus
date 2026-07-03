@@ -255,21 +255,45 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
   });
 
   // nested-type qualified access (REQ-010 SHALL) ─────────────────────────────
-  it('resolves qualified nested-type access (Outer.Inner from another file) — i.ping() via CALLS (REQ-010)', () => {
+  it('resolves qualified nested-type access (Outer.Inner from another file) — new Outer.Inner() + i.ping() via CALLS (REQ-010, §8 both kinds)', () => {
+    // §8 (SDD.md:1839-1841): each nested-qualified fixture exercises BOTH the constructor form
+    // (new Outer.Inner()) AND the instance-member form (i.ping()) — a single-kind green does
+    // not discharge the other.
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) =>
+          e.target === 'Inner' &&
+          e.sourceFilePath.includes('NestedCaller') &&
+          e.targetFilePath.includes('Outer.cls'),
+      ),
+      'new Outer.Inner() ctor edge to the nested Inner',
+    ).toBeDefined();
     expect(
       getRelationships(result, 'CALLS').find(
         (e) => e.target === 'ping' && e.sourceFilePath.includes('NestedCaller'),
       ),
+      'i.ping() instance-member edge',
     ).toBeDefined();
   });
 
-  it('resolves CASE-VARIED qualified nested access (OUTER.Inner → c.ping()) via the folded outer key (REQ-010)', () => {
+  it('resolves CASE-VARIED qualified nested access (OUTER.Inner → new OUTER.Inner() + c.ping()) via the folded outer key (REQ-010, §8 both kinds)', () => {
     // The case-varied completion of the nested-qualified form (§8): OUTER must reach
-    // Outer's folded workspace key before .Inner member lookup can run.
+    // Outer's folded workspace key before .Inner member lookup can run. Both reference
+    // kinds asserted (§8:1839-1841).
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) =>
+          e.target === 'Inner' &&
+          e.sourceFilePath.includes('CaseNested') &&
+          e.targetFilePath.includes('Outer.cls'),
+      ),
+      'new OUTER.Inner() ctor edge to the nested Inner',
+    ).toBeDefined();
     expect(
       getRelationships(result, 'CALLS').find(
         (e) => e.target === 'ping' && e.sourceFilePath.includes('CaseNested'),
       ),
+      'c.ping() instance-member edge',
     ).toBeDefined();
   });
 
@@ -299,13 +323,24 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     expect(accesses.find((e) => e.target === 'DOWN'), 'case-varied form').toBeDefined();
   });
 
-  it('resolves TAIL-VARIED qualified nested access (Outer.INNER → d.ping()) via the folded member segment (REQ-010/§7(5))', () => {
+  it('resolves TAIL-VARIED qualified nested access (Outer.INNER → new Outer.INNER() + d.ping()) via the folded member segment (REQ-010/§7(5), §8 both kinds)', () => {
     // The third case dimension of the qualified form: the outer is exact-case, the member
-    // segment case-varied — rides §7(5)'s fold-extended nested-member fallback.
+    // segment case-varied — rides §7(5)'s fold-extended nested-member fallback. Both
+    // reference kinds asserted (§8:1839-1841).
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) =>
+          e.target === 'Inner' &&
+          e.sourceFilePath.includes('TailCase') &&
+          e.targetFilePath.includes('Outer.cls'),
+      ),
+      'new Outer.INNER() ctor edge to the nested Inner',
+    ).toBeDefined();
     expect(
       getRelationships(result, 'CALLS').find(
         (e) => e.target === 'ping' && e.sourceFilePath.includes('TailCase'),
       ),
+      'd.ping() instance-member edge',
     ).toBeDefined();
   });
 
@@ -318,13 +353,23 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toEqual([]);
   });
 
-  it('resolves DOUBLY-VARIED qualified nested access (OUTER.INNER → e.ping()) (REQ-010/§7(13)∘§7(5))', () => {
+  it('resolves DOUBLY-VARIED qualified nested access (OUTER.INNER → new OUTER.INNER() + e.ping()) (REQ-010/§7(13)∘§7(5), §8 both kinds)', () => {
     // The composition of the outer-folding and tail-folding mechanisms — fixtured because
-    // compositions are not assumed free.
+    // compositions are not assumed free. Both reference kinds asserted (§8:1839-1841).
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) =>
+          e.target === 'Inner' &&
+          e.sourceFilePath.includes('DoubleCase') &&
+          e.targetFilePath.includes('Outer.cls'),
+      ),
+      'new OUTER.INNER() ctor edge to the nested Inner',
+    ).toBeDefined();
     expect(
       getRelationships(result, 'CALLS').find(
         (e) => e.target === 'ping' && e.sourceFilePath.includes('DoubleCase'),
       ),
+      'e.ping() instance-member edge',
     ).toBeDefined();
   });
 
@@ -363,14 +408,24 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toBeDefined();
   });
 
-  it('resolves a DECLARATION-ONLY interface-typed variable (Iface v; v.act()) to Iface.act (REQ-010/§3)', () => {
+  it('resolves DECLARATION-ONLY interface-typed variables — BOTH Iface v; v.act() AND case-varied IFACE w; w.act() to Iface.act (REQ-010/§3, §8 both arms)', () => {
     // Declaration-only isolates the Interface workspace entry from constructor-type
     // inference; the CALLS edge must target the interface's OWN member declaration.
-    const call = getRelationships(result, 'CALLS').find(
+    // §8 (SDD.md:1826-1830) requires BOTH the exact-case (Iface v) and the case-varied
+    // (IFACE w) arm. Assert the count so a case-varied miss fails (a single find() would
+    // green on the exact-case match alone).
+    const actCalls = getRelationships(result, 'CALLS').filter(
       (e) => e.target === 'act' && e.sourceFilePath.includes('IfaceUser'),
     );
-    expect(call, 'v.act() resolves via the injected Interface entry').toBeDefined();
-    expect(call!.targetFilePath, 'targets Iface.cls, not an implementation').toContain('Iface.cls');
+    expect(
+      actCalls.length,
+      'both v.act() (Iface) and w.act() (IFACE, case-varied) resolve via the injected Interface entry',
+    ).toBe(2);
+    for (const call of actCalls) {
+      expect(call.targetFilePath, 'each targets Iface.cls, not an implementation').toContain(
+        'Iface.cls',
+      );
+    }
   });
 
   it('resolves a CASE-VARIED cross-file static field via a type-name receiver (CONSTS.FLOOR) (REQ-010/§7(3))', () => {

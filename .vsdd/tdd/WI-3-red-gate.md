@@ -72,6 +72,15 @@ apex-resolution-unit, java.test). No **test scaffolding** (`// vsdd:scaffold`) w
 grammar, provider, and registration all exist from WI-1/WI-2, so there is no scaffold ledger
 for WI-3.
 
+**Current certified tally (post Gate-3 round-1 fixes F1/F2, 2026-07-02):** **111 tests
+(101 integration + 10 unit) — 65 red / 46 pass**; peers 312/312 green. Gate-3 F1 added the
+`new Outer.Inner()` constructor-edge assertion to the four nested-qualified `it`s (they were
+already red on the `i.ping()` arm; the ctor arm is red too — §8 requires both reference kinds).
+Gate-3 F2 strengthened the interface declaration-only `it` from a single `find()` to a
+count===2 assertion over both the exact-case `v.act()` and the case-varied `w.act()` arms
+(measured 0 edges pre-impl → red; a single-arm resolution now fails rather than greening). No
+`it` count change — both fixes tightened existing red tests.
+
 **Step-3a finding (Architect-dispositioned 2026-07-02 — see `WI-3-step3a-findings.md`):**
 the host resolves several cross-file forms with NO WI-3 code, via the exact-case first-match
 workspace fallback (`workspace-index.ts` `simpleName → first module-local callable def`,
@@ -102,7 +111,12 @@ All bindings-channel targets: no Apex `populateNamespaceSiblings` is registered,
   red alongside the typed-receiver form `c.inherited()`.
 - Enum-constant access via type-name receiver: `Color.RED`, trigger `Level.HIGH` (unlike
   static Property access, which the fallback channel provides).
-- Nested-type qualified access `Outer.Inner → i.ping()` (§7(5)).
+- Nested-type qualified access `Outer.Inner` — BOTH the `new Outer.Inner()` constructor edge
+  AND the `i.ping()` instance-member edge (§7(5), §8 two-kind requirement; Gate-3 F1), across
+  the exact / outer-varied / tail-varied / doubly-varied fixtures.
+- Interface declaration-only typed variables — BOTH `Iface v; v.act()` AND case-varied
+  `IFACE w; w.act()` resolve to `Iface.act` (§3 Interface arm, §8 both arms; Gate-3 F2 —
+  asserted as count===2 so a single-arm miss fails).
 - REQ-008 ∘ REQ-010 overloads — all five resolving forms (local / literal / ctor-expression /
   field-typed argument; static type-name receiver `Target.sf(7)`, §7(3)); the undisambiguable
   `t.amb(o)` **recorded** obligation (a `suppressed` outcome named `amb` — red until the
@@ -211,3 +225,25 @@ behaviourally consequential and tested; the failing state only becomes reachable
 - **Step-3b watch item:** the already-green fallback-channel tests must STAY green after the
   hook registers (the two channels must compose, not fight — e.g. the ctor path must not
   degrade when `workspaceFqnBindings` gains Apex keys).
+
+## Planned manual-acceptance (§A.10) — Gate-3 F3 disposition (Architect-signed 2026-07-02)
+
+SDD-003 **§7(14) — Plain-miss internal record** is a `[Gate-3 reliance]` whose validation
+vehicle is environment-visible (an internal host counter/log, not a graph edge), so it is not
+discharged by an automated assertion. The black-box contract IS automated (edge absence — the
+conservative-negative collision/misfile assertions above); this record covers the residual
+internal-record question that §7(14) raises. Gate-3 F3 (test-validator, 2026-07-02):
+Architect-dispositioned route **(a) — record a planned manual-acceptance entry**.
+
+- **MA-WI3-001 (planned).** *Obligation:* confirm whether the host's internal unresolved
+  counter fires for a pass-level typed-receiver guard-miss (the §2 plain-miss path), by
+  inspecting the host's resolve stats / log output during Step-3b validation.
+  *Vehicle:* environment-visible inspection (resolve-stats dump / debug log at a plain-miss
+  callsite — e.g. the collision `d.hit()` or misfile `r.sneak()` fixtures, whose keys the §3
+  inject-none guard never creates).
+  *Pass condition:* NON-BLOCKING for the WI-3 black-box contract — the SRS v1.7 observable is
+  edge absence, already automated. This MA only settles the internal-record question.
+  *Named escalation (§7(14)):* **if no internal record fires**, the disposition is a named
+  escalation to re-ratify the SRS v1.7 interpretation as "no record exists for plain misses" —
+  never a silent discharge. Recorded here so the inspection is tracked, not assumed.
+  *Status:* `planned` (to be executed and recorded at Step-3b validation).
