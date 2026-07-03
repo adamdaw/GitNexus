@@ -105,6 +105,15 @@ const APEX_SCOPE_QUERY = `
   declarator: (variable_declarator
     name: (identifier) @type-binding.name)) @type-binding.annotation
 
+;; Nested-type local declaration: Outer.Inner i (SDD-003 §7(5)/(13)). The type is a
+;; \`scoped_type_identifier\`; captured so the receiver \`i\` gets a dotted type binding
+;; (\`outer.inner\`, qualifier kept by interpretApexTypeBinding) that resolves to the
+;; injected nested type. Apex-local (java/query.ts assumes no qualified declared type).
+(local_variable_declaration
+  type: (scoped_type_identifier) @type-binding.type
+  declarator: (variable_declarator
+    name: (identifier) @type-binding.name)) @type-binding.annotation
+
 ;; Type bindings — field declarations: private Account acct;
 (field_declaration
   type: (type_identifier) @type-binding.type
@@ -113,6 +122,13 @@ const APEX_SCOPE_QUERY = `
 
 (field_declaration
   type: (generic_type) @type-binding.type
+  declarator: (variable_declarator
+    name: (identifier) @type-binding.name)) @type-binding.annotation
+
+;; Nested-type field declaration: private Outer.Inner f; (SDD-003 §7(5)/(13)), the
+;; field-level counterpart of the local above. Apex-local.
+(field_declaration
+  type: (scoped_type_identifier) @type-binding.type
   declarator: (variable_declarator
     name: (identifier) @type-binding.name)) @type-binding.annotation
 

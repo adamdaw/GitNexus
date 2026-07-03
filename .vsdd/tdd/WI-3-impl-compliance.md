@@ -282,3 +282,46 @@ Build note: integration tests run the compiled `dist/` worker; each `src/` edit 
   attempt regressed via the decoy fallback; increment 9's injection makes the folded workspace consult
   win first). Apex-local divergence from `java/query.ts`. No shared edit.
 - **NFR-002:** Apex WI-1/WI-2 peers **126/126 green** (Java unaffected — Apex-only query).
+
+## Increment 11 — nested-type receiver member resolution (REQ-010/§7(5)/(13); Apex-local + 1 SHARED edit, Architect-approved 2026-07-03)
+
+- **Targets (red→green):** the six nested-qualified receiver forms — `resolves qualified nested-type
+  access (Outer.Inner … i.ping())`, `CASE-VARIED (OUTER.Inner … c.ping())`, `TAIL-VARIED (Outer.INNER
+  … d.ping())`, `DOUBLY-VARIED (OUTER.INNER … e.ping())`, `nested access despite a same-tail top-level
+  decoy (t.tping())`, and `trigger-body nested-qualified access (Kit.Part p; p.snap())`. Suite
+  **98 → 104 passing / 7 red of 111**. Completes mechanism 3 (nested types).
+- **Root cause:** two gaps. (1) `query.ts` never captured a `scoped_type_identifier` DECLARED type
+  (`Outer.Inner i`), so the receiver `i` had no type binding. (2) Once captured, `interpretApexTypeBinding`
+  stripped the qualifier to bare `inner` — which cannot reach the nested def (bare keys are deliberately
+  never injected, REQ-015). Keeping the qualifier (`outer.inner`) routes the receiver through Case 3b,
+  whose compound field/return-type walk resolves field/alias chains but has NO path for a nested-TYPE
+  qualified name against the injected workspace FQN.
+- **Changes:**
+  - **Apex-local `languages/apex/query.ts`:** capture `scoped_type_identifier` as the declared type of
+    `local_variable_declaration` and `field_declaration` (mirrors the existing scoped `formal_parameter`
+    capture) → the receiver gets a dotted type binding.
+  - **Apex-local `languages/apex/resolution.ts`:** `interpretApexTypeBinding` KEEPS the qualifier
+    (folded `outer.inner`) instead of stripping to the bare tail — the folded qualified name is the
+    nested type's injected workspace key. Removed the now-unused `stripQualifier`. An external qualifier
+    (`System.Account`→`system.account`) stays unresolved, the same conservative outcome as the prior
+    bare-tail strip (which also never bound an external `System.*` type — WI-2 peers unaffected).
+  - **⚠ SHARED `scope-resolution/passes/receiver-bound-calls.ts` (Architect-approved fork 2026-07-03):**
+    Case 3b gains an additive fallback — when the compound field/return walk misses, a dotted type
+    binding that names a workspace-registered FQN class resolves directly to it via
+    `findClassBindingInScope(declaredAtScope, rawName)` (folds + consults the workspace channel before
+    the dotted-tail decoy fallback). Fires ONLY after the walk misses and only for non-`()` rawNames;
+    a language that injects no dotted workspace key under that name gets `undefined` and is unchanged.
+- **Justification (fork):** the compound resolver genuinely lacks nested-TYPE-via-FQN resolution — a
+  real generic capability gap, not an Apex naming concern (Constitution §2.1 clean). Adam chose the
+  shared fallback over an Apex-local synthetic-typeBinding workaround (cleaner + certain vs a
+  pseudo-member registration smell). The receiver variable's type binding SHOULD resolve to the class
+  its FQN names; this makes it so, generically.
+- **NFR-002:** Apex WI-1/WI-2 peers **312/312**; the **full cross-language resolver suite** (52 files —
+  cpp, csharp ×2, java ×2, kotlin, ts ×5, php ×3, python ×3, dart ×2, go, ruby ×3, rust ×4, swift, vue
+  ×2, cobol ×3, c ×2, javascript, express/laravel/fastapi/nuxt route + shape suites) **2979/2986 pass**
+  — the only 7 failures are the remaining WI-3 heritage/interface/trigger pins in
+  `apex-cross-file.test.ts`; every non-Apex file passes (byte-identical peer semantics confirmed). (Two
+  unrelated unit failures — `git.test.ts`, `sibling-clone-drift.test.ts` — are sandbox git/clone infra,
+  causally independent of a resolution-pass edit.)
+- **⚠ Owes its own §2.2 review + adversary pass — the FIFTH shared edit; batch with increments 2, 3,
+  7, 8 at Gate 4** (generic-seam legitimacy + no unintended peer semantics change).

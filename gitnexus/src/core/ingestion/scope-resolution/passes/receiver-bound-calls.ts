@@ -914,6 +914,18 @@ export function emitReceiverBoundCalls(
             compoundOpts,
           );
         }
+        if (ownerDef === undefined && !typeRef.rawName.includes('(')) {
+          // A dotted type-binding that names a workspace-registered fully-qualified
+          // class — e.g. an Apex nested type `Outer.Inner` injected under its folded
+          // qualified key `outer.inner` — resolves directly to that class. The
+          // compound field/return-type walk above covers field/alias chains, not a
+          // nested-TYPE qualified name. Additive: fires ONLY after the walk misses;
+          // `findClassBindingInScope` folds the name and consults the workspace
+          // channel before its dotted-tail fallback, so a language that never injects
+          // a dotted workspace key (identity/absent normalizer, no FQN binding under
+          // this key) gets `undefined` here and is byte-for-byte unchanged.
+          ownerDef = findClassBindingInScope(typeRef.declaredAtScope, typeRef.rawName, scopes);
+        }
         if (ownerDef !== undefined) {
           const chain = [ownerDef.nodeId, ...scopes.methodDispatch.mroFor(ownerDef.nodeId)];
           let memberDef: SymbolDefinition | undefined;

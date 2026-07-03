@@ -56,11 +56,19 @@ export function interpretApexTypeBinding(captures: CaptureMatch): ParsedTypeBind
   if (nameCap === undefined || typeCap === undefined) return null;
 
   // Strip generics to the base name (SDD-002 §3: member lookup keys on the base
-  // type, as `type-config.ts` does), strip the qualifier, then fold to lower case
-  // — Apex type-name case-insensitivity (the WI-2-defining change). The fold aligns
-  // with the registration-table classLikeHook fold so the binding key matches the
-  // registered class key.
-  const rawType = stripQualifier(stripGeneric(typeCap.text.trim())).toLowerCase();
+  // type, as `type-config.ts` does), then fold to lower case — Apex type-name
+  // case-insensitivity (the WI-2-defining change). The fold aligns with the
+  // registration-table classLikeHook fold so the binding key matches the registered
+  // class key.
+  //
+  // The qualifier is KEPT for a nested type (`Outer.Inner` → `outer.inner`, WI-3
+  // §7(5)/(13)): the folded qualified name is the injected workspace key of the
+  // nested type, so the receiver resolves to the nested def (not the bare tail,
+  // which would mis-bind a same-tail top-level decoy). A single-segment external
+  // qualifier (`System.Account`) keeps its qualifier too and stays unresolved
+  // (`system.account` is not a user type) — the same conservative outcome as the
+  // prior bare-tail strip, which also never bound an external `System.*` type.
+  const rawType = stripGeneric(typeCap.text.trim()).toLowerCase();
 
   let source: TypeRef['source'] = 'parameter-annotation';
   if (captures['@type-binding.self'] !== undefined) source = 'self';
@@ -82,13 +90,6 @@ export function interpretApexTypeBinding(captures: CaptureMatch): ParsedTypeBind
 function stripGeneric(text: string): string {
   const m = text.match(/^((?:[A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Za-z_$][A-Za-z0-9_$]*)<.+>$/s);
   return m !== null ? m[1].trim() : text;
-}
-
-/** `System.Account` → `Account`. */
-function stripQualifier(text: string): string {
-  const lastDot = text.lastIndexOf('.');
-  if (lastDot === -1) return text;
-  return text.slice(lastDot + 1);
 }
 
 // Apex provides no `bindingScopeFor` hook: it does not hoist method return-type
