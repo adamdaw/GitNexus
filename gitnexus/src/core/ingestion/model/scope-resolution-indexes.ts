@@ -88,6 +88,13 @@ export interface ScopeResolutionIndexes {
    *  shared map gives those workspace-wide names one entry each instead of
    *  O(scopes × defs) per-scope augmentation. */
   readonly workspaceFqnBindings: ReadonlyMap<string, readonly BindingRef[]>;
+  /** The active language's identifier normalizer (§2.2 seam), threaded per
+   *  language-run so `lookupBindingsAt` can reach a case-folded
+   *  `workspaceFqnBindings` key (e.g. Apex injects `engine`) from a case-varied
+   *  reference (`ENGINE`). Additive: the fold is tried only after the raw key
+   *  misses, so case-sensitive languages (identity / absent normalizer) are
+   *  unchanged. Undefined for languages that don't fold. */
+  readonly normalizeIdentifier?: (identifier: string) => string;
   /** Workspace-level *type* binding lookup — the typeBindings analogue of
    *  `workspaceFqnBindings`. Holds names that are type-visible from every file
    *  (e.g. C# global/default-namespace method return-type bindings, keyed by

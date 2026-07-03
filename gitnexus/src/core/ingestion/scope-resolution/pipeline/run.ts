@@ -614,6 +614,10 @@ export function runScopeResolution(
   const indexes = {
     ...finalized,
     methodDispatch: buildPopulatedMethodDispatch(mroByClassDefId, extendsOnlyMroByClassDefId),
+    // §2.2 seam: thread the active language's identifier normalizer so the
+    // scope-independent workspace lookup can reach a case-folded key (Apex) from
+    // a case-varied reference. Identity/absent for case-sensitive languages.
+    normalizeIdentifier: provider.languageProvider.normalizeIdentifier,
   };
 
   // Build the workspace resolution index ONCE — scope-valued lookups

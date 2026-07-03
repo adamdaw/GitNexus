@@ -53,6 +53,26 @@ const EMPTY_BINDINGS: readonly BindingRef[] = Object.freeze([]);
  * through this helper instead of `scopes.bindings.get(...)` directly,
  * so the augmentation channel is always visible.
  */
+/**
+ * Workspace-channel lookup that tries the raw `name`, then — for case-folding
+ * languages (e.g. Apex, whose namespace-siblings inject folded keys like `engine`)
+ * — the `normalizeIdentifier`-folded key, so a case-varied reference (`ENGINE`)
+ * reaches the folded workspace entry. Additive: the folded fallback fires ONLY
+ * when the raw key misses, and only when a folding normalizer is present and the
+ * folded form differs — so case-sensitive languages (identity/absent normalizer)
+ * are byte-for-byte unchanged.
+ */
+function workspaceBindingsFor(
+  name: string,
+  scopes: ScopeResolutionIndexes,
+): readonly BindingRef[] | undefined {
+  const raw = scopes.workspaceFqnBindings?.get(name);
+  if (raw !== undefined) return raw;
+  const folded = scopes.normalizeIdentifier?.(name);
+  if (folded === undefined || folded === name) return undefined;
+  return scopes.workspaceFqnBindings?.get(folded);
+}
+
 export function lookupBindingsAt(
   scopeId: ScopeId,
   name: string,
@@ -65,7 +85,7 @@ export function lookupBindingsAt(
 ): readonly BindingRef[] {
   const finalized = scopes.bindings.get(scopeId)?.get(name);
   const augmented = scopes.bindingAugmentations.get(scopeId)?.get(name);
-  const workspace = includeWorkspace ? scopes.workspaceFqnBindings?.get(name) : undefined;
+  const workspace = includeWorkspace ? workspaceBindingsFor(name, scopes) : undefined;
   // Per-namespace channel (#1871 named-namespace generalization). Gated by
   // accessibility: only a *module* scope carries an `accessibleNamespacesByScope`
   // entry, so this collects nothing at child scopes and at module scopes only for
@@ -653,7 +673,7 @@ function walkScopeChain(
   // or an Apex cross-file top-level type) consulted ONLY after the whole scope
   // chain's per-scope declarations are exhausted, so a local/enclosing declaration
   // of the same name shadows the global (universal local-shadows-global scoping).
-  const workspace = scopes.workspaceFqnBindings?.get(name);
+  const workspace = workspaceBindingsFor(name, scopes);
   if (workspace !== undefined) {
     for (const b of workspace) {
       if (predicate(b.def)) return b.def;

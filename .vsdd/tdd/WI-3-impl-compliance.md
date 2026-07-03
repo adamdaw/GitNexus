@@ -79,3 +79,25 @@ Build note: integration tests run the compiled `dist/` worker; each `src/` edit 
 - **NFR-002:** peers + prior Apex **312/312 green** (the reorder changed no peer resolution).
 - **⚠ Owes its own §2.2 review + adversary pass (Adam's condition):** flagged for the Gate-4
   review of the shared edit (generic-seam legitimacy + no unintended peer semantics change).
+
+## Increment 3 — fold-(b): case-fold at the shared workspace lookup (Architect-approved 2026-07-03)
+
+- **Targets (red→green):** the case-varied forms that reach the folded workspace channel with a
+  raw-cased name — `new ENGINE()`, `ENGINE e; e.STOP()`, `CONSTS.FLOOR`, `ACCOUNTHANDLER.notify()`,
+  `ACCOUNTHANDLER cv; cv.wake()`. Integration 71 → 75 passing; **85/111** with unit.
+- **Architect disposition:** the §3/§7 case-fold clusters; Adam chose **fold approach (b)** — thread
+  the language `normalizeIdentifier` into the shared workspace lookup, over per-Apex-path folding.
+- **Changes (SHARED code — generic, no Apex naming):**
+  - `model/scope-resolution-indexes.ts` — `ScopeResolutionIndexes` gains optional
+    `normalizeIdentifier?: (identifier: string) => string`.
+  - `scope-resolution/pipeline/run.ts` — thread `provider.languageProvider.normalizeIdentifier`
+    onto the per-language-run `indexes` object.
+  - `scope-resolution/scope/walkers.ts` — new `workspaceBindingsFor(name, scopes)` helper: try the
+    RAW workspace key, then (only on miss, only when a folding normalizer is present and the folded
+    form differs) the folded key. Used at both workspace-consult sites (`lookupBindingsAt` and the
+    `walkScopeChain` post-loop fallback). **Additive** — case-sensitive languages (identity/absent
+    normalizer) are byte-for-byte unchanged.
+- **Justification:** one generic site; folds ONLY the workspace `.get()`; finalized/augmented
+  channels stay RAW-keyed (exact-case). No Apex-specific control flow (Constitution §2.1).
+- **NFR-002:** peers + prior Apex **312/312 green** (additive fold changed no peer resolution).
+- **⚠ Owes its own §2.2 review + adversary pass** — the SECOND shared edit; batch with increment 2 at Gate 4.
