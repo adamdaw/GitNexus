@@ -102,15 +102,17 @@ detail. Derived from INTENT-001; reviewed against it and the Constitution at Gat
   (verified by the fresh Gate 2 adversary reading SRS+SDD together).
   **Amended v1.11 (2026-07-02)** — heritage-limitation downstream consequences + misfiled-trigger
   collision, extending v1.8–v1.10: (a) WHERE a heritage clause is unresolved under the v1.8(i)/
-  v1.10(iii)/(v) limitations, the subtype's inherited-member and `super` references remain unresolved
-  too (probe-verified determinate consequence — the suppressed inheritance site leaves the MRO without
-  the parent; valid-source liveness). (b) The v1.10(iv) mis-bound-heritage MRO surface is TRIPWIRED,
+  v1.10(iii)/(v) limitations, the subtype's inherited-member references and `super()` remain unresolved
+  too, and `super.method()` can MIS-RESOLVE to the subtype's own override (probe-corrected + re-ratified
+  2026-07-02: a self-loop bind — a valid-source mis-bind bounded to the already-ratified
+  unresolved-heritage shapes; fixture-pinned as documented behaviour). (b) The v1.10(iv) mis-bound-heritage MRO surface is TRIPWIRED,
   not excused: acceptance asserts NO member edge into the mis-bound target; if implementation work
   shows the poisoned MRO mis-resolving members, that is escalated for its own targeted ratification,
   never silently absorbed. (c) WHERE a trigger mis-declared in a `.cls` file (invalid Apex) shares a
   case-folded name with a valid class, the registration conservatively registers neither — the valid
-  class's bindings-channel forms remain unresolved (misfile-triggered, liveness-only; its exact-case
-  forms still resolve via the host's own channel). Deliberate bounded scope reductions;
+  class's bindings-channel forms remain unresolved; for the CASE-VARIANT sub-shape its exact-case forms
+  still resolve via the host's own channel, while the SAME-case sub-shape loses those too (the
+  twin-analog refusal — probe-corrected + re-ratified 2026-07-02; misfile-triggered, liveness-only). Deliberate bounded scope reductions;
   Architect-approved (Adam, 2026-07-02). Re-enters Gate 1 fidelity (verified by the fresh Gate 2
   adversary reading SRS+SDD together).
 - **Classification:** epic (fans out into multiple independently-deployable work items).

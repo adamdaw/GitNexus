@@ -926,8 +926,8 @@ at WI-3.
   nested-parent heritage; v1.11 to their downstream inherited-member consequences + the
   misfiled-trigger collision), and the REQ-010 v1.9 fragment-collision exception;
   the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
-  Architect-approved 2026-06-30; **addenda 4–15**, 2026-07-02 (Addendum 15 supplies the v1.5 per-pass arm probes and the twin
-  static-member probe) — note Addendum 5 corrects Addendum 4's
+  Architect-approved 2026-06-30; **addenda 4–17**, 2026-07-02 (Addendum 15: v1.5 per-pass arm + twin static-member probes;
+  Addendum 16: heritage-downstream + poisoned-MRO probes; Addendum 17: the super-arm self-loop probe) — note Addendum 5 corrects Addendum 4's
   mechanism attribution, Addendum 7 supersedes the v1 discriminant, Addendum 12 retires the §7(8)
   cross-language reliance, and Addendum 13 retracts the exact-case-channel mechanism pin in favour of
   the behavioural shape table) — the cross-file-binding seam
@@ -1395,18 +1395,21 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   its §8 fixture is red:** a cross-file superclass member-walk addition under `languages/apex/` (the same
   class of Apex-local addition as the nested-type and static-receiver fallbacks) — **never** a silent
   conservative-unresolved, which would reduce a REQ-005/007 SHALL without an SRS amendment (Constitution §7).
-- **Heritage-limitation downstream family (SRS v1.11(a)/(b))** — WHERE a heritage clause is unresolved
-  (v1.8(i)/v1.10(iii)/(v) shapes), the subtype's MRO lacks the parent, so its inherited-member and
-  `super` references remain unresolved too (probe-verified determinate consequence — Addendum 16;
-  fixture-pinned as documented liveness behaviour). The v1.10(iv) MIS-BOUND-heritage MRO is
+- **Heritage-limitation downstream family (SRS v1.11(a)/(b), probe-corrected)** — WHERE a heritage
+  clause is unresolved (v1.8(i)/v1.10(iii)/(v) shapes), the subtype's MRO lacks the parent: its
+  inherited-member references and `super()` remain unresolved (Addendum 16), and `super.method()`
+  MIS-RESOLVES to the subtype's own override (Addendum 17 — a probed self-loop, ratified v1.11(a)
+  corrected text; fixture-pinned as documented behaviour). The v1.10(iv) MIS-BOUND-heritage MRO is
   **tripwired**: the fixture asserts NO member edge into the mis-bound target; if Step 3b turns it red
   (the poisoned MRO mis-resolving members), Phase-5 escalation for a targeted ratification — never a
   silent absorption.
-- **Misfiled-trigger collision (SRS v1.11(c))** — a trigger mis-declared in a `.cls` file enters the
-  injection universe (indistinguishable under the extension discriminant, the round-26 trade-off), so a
-  same-folded-name VALID class gets inject-none: its bindings-channel forms remain unresolved
-  (misfile-triggered, liveness-only; its exact-case forms still resolve via the host channel).
-  Fixture-pinned.
+- **Misfiled-trigger collision (SRS v1.11(c), probe-corrected)** — a trigger mis-declared in a `.cls`
+  file enters the injection universe (the round-26 extension-discriminant trade-off), so a
+  same-folded-name VALID class gets inject-none: its bindings-channel forms remain unresolved. The
+  CASE-VARIANT sub-shape's exact-case forms still resolve via the host channel; the SAME-case sub-shape
+  loses those too (the Addendum-13 twin-analog refusal row). Misfile-triggered, liveness-only;
+  fixture-pinned per sub-shape (the §8 fixture pins the case-variant sub-shape; the same-case sub-shape
+  is family-pinned by the Addendum-13 row + the valid-twin fixture, same shape).
 - **Nested-parent heritage (`class Sub extends Outer.Inner` — valid Apex, SRS v1.10)** — rides the
   PRE-hook heritage pass (Addendum 9), unreachable by the injection and every WI-3 fallback; probed
   (Addendum 11): no-decoy → **unresolved** (the v1.10(iii) liveness limitation); with an unrelated
@@ -1799,10 +1802,13 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   under general conservatism, no fixture obligation.)* The **doubly-varied** form (`OUTER.INNER` —
   §7(13) outer folding ∘ §7(5) fold-extended tail lookup, the composition of the two reliance-backed
   mechanisms) is fixtured too — compositions are not assumed free;
-- **heritage-downstream (SRS v1.11(a)) + poisoned-MRO tripwire (v1.11(b))** — under a case-varied
-  heritage clause, the subtype's implicit-this inherited member stays unresolved (pinned liveness);
-  through the v1.10(iv) mis-bound EXTENDS, NO member edge into the mis-bound target (tripwire — red at
-  Step 3b escalates);
+- **heritage-downstream (SRS v1.11(a) corrected) + poisoned-MRO tripwire (v1.11(b))** — under a
+  case-varied heritage clause: the subtype's implicit-this inherited member stays unresolved (pinned
+  liveness); `super.method()` self-loop mis-bind pinned as the documented v1.11(a) behaviour
+  (`CaseKid.greetUp()` → CALLS targeting CaseKid's own override, Addendum 17); through the v1.10(iv)
+  mis-bound EXTENDS, NO member edge into the mis-bound target (tripwire — red at Step 3b escalates);
+  the v1.10(iii)/(v) downstream shapes are family-pinned (same suppressed-MRO mechanism-independent
+  behaviour, per the Addendum-16 determinacy);
 - **misfiled-trigger collision (SRS v1.11(c))** — a `.cls`-misfiled trigger + a same-folded-name valid
   class → the valid class's typed-receiver form stays unresolved (pinned liveness; the misfile poisons
   the key);

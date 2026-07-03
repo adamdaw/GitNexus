@@ -220,6 +220,17 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toEqual([]);
   });
 
+  it('pins the super-method self-loop under an unresolved heritage clause (SRS v1.11(a) corrected)', () => {
+    // Probed (Addendum 17): super.greet() in CaseKid (whose extends BASE is unresolved)
+    // mis-resolves to CaseKid's OWN override — documented behaviour, pinned, not correct
+    // resolution. [already-green pin; see WI-3-red-gate.md]
+    const call = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'greet' && e.sourceFilePath.includes('CaseKid'),
+    );
+    expect(call, 'super.greet() emits (the self-loop)').toBeDefined();
+    expect(call!.rel.targetId, 'targets CaseKid\'s own override (the pinned v1.11(a) behaviour)').toContain('CaseKid');
+  });
+
   it('leaves CASE-VARIED heritage (CaseKid extends BASE implements IFACE) unresolved — SRS v1.8(i) limitation', () => {
     // The heritage pre-emit pass runs BEFORE the hook and suppresses retry (Addendum 9):
     // the workspace keys are unreachable for heritage clauses, so the case-varied forms

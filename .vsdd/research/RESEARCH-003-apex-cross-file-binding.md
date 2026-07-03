@@ -494,3 +494,12 @@ top-level decoy `Inner`, pre-hook `t.decoy()` / `t.ping()` resolve **nothing** �
 yet ride the mis-bound EXTENDS. Whether it does POST-injection (once `TailSub t` binds) is only
 Step-3b-observable → tripwired per SRS v1.11(b): the fixture asserts no member edge into the decoy; a
 red escalates.
+
+## Addendum 17 (2026-07-02) — super-arm downstream probe (drives the v1.11(a) correction)
+
+Under a case-varied (unresolved) heritage clause (`class CvSub2 extends BASE3`): `super()` resolves
+nothing, and `super.greet3()` **mis-resolves to the subtype's own override** —
+`CALLS greet3(CvSub2.cls) → Method:CvSub2.cls:CvSub2.greet3#0`, a self-loop. The super-method arm's
+downstream consequence under the ratified heritage limitations is therefore a valid-source MIS-BIND (to
+self), not mere absence — ratified into the corrected v1.11(a) and fixture-pinned as documented
+behaviour (with the general poisoned-MRO surface still tripwired per v1.11(b)).

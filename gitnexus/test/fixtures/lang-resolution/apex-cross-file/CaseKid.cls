@@ -4,4 +4,10 @@ public class CaseKid extends BASE implements IFACE {
     public String callUp2() {
         return inherited();
     }
+    public override String greet() {
+        return 'kid';
+    }
+    public String greetUp() {
+        return super.greet();
+    }
 }

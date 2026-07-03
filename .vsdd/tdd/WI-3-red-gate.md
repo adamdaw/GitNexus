@@ -55,7 +55,14 @@ mixed fixture downgraded to an NFR-002 regression pin; v1.9 fragment-collision m
 re-derived on the owning-scope discriminant and probe-confirmed, fixture pinned green;
 §7(14) plain-miss-record reliance enumerated; WI-2 Broken.cls watch item settled — the
 malformed outer yields no def) → final
-**50 red / 39 passed of 89** (79 integration + 10 unit); the full
+**50 red / 39 passed of 89**, then rounds 20–33 (behavioural channel re-grounding —
+Addendum 13; §7(11) sharpening — Addendum 14; v1.5 per-pass arm + twin static probes —
+Addendum 15; SRS v1.11 heritage-downstream/misfiled-collision family with probe
+corrections — Addenda 16/17 incl. the super self-loop pin; Interface declaration-only
+observable; trigger-scope composition fixtures (chain, nested-qualified, instance
+overload, inherited member, case-varied declared type, case-varied enum); mixed-fixture
+C# arm; Poison/Victim/Twin-family pins) → final
+**60 red / 44 passed of 104** (93 integration + 11 unit); the full
 pre-existing apex + peer
 suites stay green (312/312 across apex.test, apex-resolution.test, apex-resolution-hardening,
 apex-resolution-unit, java.test). No **test scaffolding** (`// vsdd:scaffold`) was needed —
