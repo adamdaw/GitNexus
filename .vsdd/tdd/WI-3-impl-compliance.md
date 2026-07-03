@@ -212,3 +212,28 @@ Build note: integration tests run the compiled `dist/` worker; each `src/` edit 
   the gated default path is confirmed byte-identical.
 - **⚠ Owes its own §2.2 review + adversary pass** — the THIRD shared edit; batch with increments
   2 + 3 at Gate 4 (generic-seam legitimacy + no unintended peer semantics change).
+
+## Increment 8 — `new Type()` constructor-expression receiver (REQ-008; SHARED-CODE, Architect-approved 2026-07-03)
+
+- **Target (red→green):** `fLit` — `new Target().fLit(42)`, a compound *constructor-expression
+  receiver* chained into an overloaded member call. Suite **96 → 97 passing / 14 red of 111**.
+  Completes mechanism 1 (cross-file overloads) — all five arg kinds + static receiver + both ctor
+  cases + both REQ-006 arms now green.
+- **Root cause (probed 2026-07-03):** `compound-receiver.ts resolveCompoundReceiverClass` handled a
+  trailing `()` by stripping it and treating the head as a function name, so `new Target()` reduced
+  to a lookup for a function literally named `new Target` → miss → the whole `fLit` site was never
+  reached (probe: NO edge, NO record). No language recognized `new X()` as a constructor expression
+  in a receiver position.
+- **Architect disposition (the other half of the 2026-07-03 fork):** Adam chose the shared-code fix.
+- **Change (SHARED code — generic C-family, no Apex naming), `scope-resolution/passes/compound-receiver.ts`:**
+  in the trailing-`)` branch, recognise a `new <Type>(...)` head (`/^new\s+(.+)$/` — the whitespace
+  guard leaves an ordinary `newThing()` identifier untouched): the constructed class IS the receiver
+  type, so a simple type resolves via `findClassBindingInScope` and a qualified/nested type recurses
+  (splitting the dotted head). Additive — the branch only fires on a leading `new ` keyword.
+- **Justification:** generic constructor-expression-receiver support (`new Foo().bar()` is C-family
+  syntax); no language-specific control flow (Constitution §2.1). Pure addition — no peer fixture
+  produces a `new X()` receiver text, so nothing pre-existing changes.
+- **NFR-002:** peers + prior Apex **312/312 green**; broad cross-language run (cpp, csharp ×2,
+  kotlin, typescript ×2, java-1928, php, python, dart, go, ruby, javascript) **1893/1893 green**.
+- **⚠ Owes its own §2.2 review + adversary pass** — the FOURTH shared edit; batch with increments
+  2 + 3 + 7 at Gate 4.
