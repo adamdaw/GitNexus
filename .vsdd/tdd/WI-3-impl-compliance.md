@@ -441,3 +441,36 @@ route, NOT a shipped limitation. Suite **107 → 109 passing / 2 red of 111**; p
   pass, the sole red is the pending #740 tripwire in `apex-cross-file.test.ts`**; every non-Apex file
   (incl. cpp, post-gate) passes → the gated edit is byte-identical for peers. **⚠ SEVENTH shared edit —
   owes §2.2 review + adversary at Gate 4; batch with incs 2, 3, 7, 8, 11, 12.**
+
+## Increment 16 — #740 poisoned-MRO tripwire RATIFY (Phase-5, SRS v1.13) — SPEC + TEST + LEDGER, NO impl change
+
+Not an implementation increment: the v1.11(b) tripwire FIRED at Step 3b exactly as the spec designed
+it to (`red → escalate for targeted ratification, never absorb`). Architect ruled **ratify + commit the
+fix to WI-4** (Adam, 2026-07-04, after a fix-feasibility investigation). Suite **110 → 111 passing / 0
+red of 111** — WI-3 Step 3b is GREEN. Peers untouched (no impl change).
+
+- **Fix-feasibility investigation (why ratify, recorded per the escalation):** the mis-bind is
+  `TailSub extends TOuter.TInner` → the top-level decoy `TInner.cls` (probe: `EXTENDS TailSub → TInner.cls`;
+  `CALLS decoy2 → TInner.cls:TInner.decoy2` from `TailMro`, a TYPED-receiver Case-4 walk — pre-existing,
+  NOT from inc 15). The mismatch signal (written `site.rawQualifiedName` = `TOuter.TInner` vs resolved
+  `targetDef` FQN = `TInner`) is detectable ONLY at the binding site `preEmitInheritanceEdges`
+  (`pipeline/run.ts:172`). But the poison manifests two layers downstream in `buildMro` (`mro.ts:49`,
+  builds the MRO purely from graph `EXTENDS` edges — no clause text) → Case-4's member walk, neither of
+  which can see the signal. A fix must therefore propagate a NEW signal (edge property or a threaded
+  poison-set) into `buildMro`, must KEEP the false EXTENDS edge (pin 767 requires it) yet EXCLUDE that
+  parent from the MRO — a new inconsistency (edge absent from its own MRO) — and needs gating (C++ two-phase
+  lookup just proved "generic-safe" MRO changes aren't; inc 15). = an 8th gated shared edit trading one
+  inconsistency for another, for a triple-narrow pathological shape.
+- **Ruling — RATIFY (internally consistent):** pin 767 already ratifies `TailSub EXTENDS the decoy TInner`;
+  a graph that pins that edge and then resolves the decoy's members through it is self-consistent. The
+  emitted `decoy2` edge is a bounded documented false edge. Not a shipped derivation-fidelity gap — a
+  **de-scope via SRS amendment** (SRS v1.13), the legitimate route, with a **committed** fix owner.
+- **Committed fix path (Architect, Adam 2026-07-04):** the generic **pipeline reorder** (heritage resolved
+  AFTER the WI-3 cross-file registration so `TOuter.TInner` binds the real nested type) is promoted from a
+  *noted candidate* to a **committed WI-4 deliverable** — recorded in `work-items.md` ITEM-004. So the
+  limitation is temporary-until-WI-4 by construction, not open-ended.
+- **Changed artifacts:** `SRS.md` (v1.13 amendment), `SDD.md` (Edge-Case-Catalog tripwire entry + §8
+  acceptance pin → ratified/v1.13), test 740 (`apex-cross-file.test.ts`, flipped to expect the decoy2 edge
+  into `TInner.cls`), `work-items.md` (ITEM-004 committed reorder + limitation link).
+- **⚠ Phase-5 cascade:** changed SRS/SDD (this pin) + tests → re-arm Gates 1 → 2 → 3 for the touched pin
+  (batch with incs 13 + 14's Gate-3 re-attestation). Impl UNCHANGED → no Gate-5 re-fuzz from this edit.

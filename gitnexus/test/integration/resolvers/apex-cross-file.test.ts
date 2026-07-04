@@ -743,12 +743,18 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     ).toEqual([]);
   });
 
-  it('tripwires the poisoned MRO — no member edge into the mis-bound decoy (SRS v1.11(b))', () => {
-    // TailSub's EXTENDS mis-binds the decoy TInner (v1.10(iv)); member lookup must NOT
-    // ride it into decoy2. A red here at Step 3b escalates (Phase 5), never absorbed.
-    expect(
-      getRelationships(result, 'CALLS').filter((e) => e.target === 'decoy2'),
-    ).toEqual([]);
+  it('pins the RATIFIED poisoned-MRO propagation — t.decoy2() rides the mis-bound heritage into the decoy (SRS v1.13, WI-4-owned fix)', () => {
+    // Phase-5 ratify (Adam, 2026-07-04): the v1.11(b) tripwire FIRED at Step 3b, as the spec
+    // anticipated. Given pin 767 ratifies TailSub's EXTENDS mis-binding the decoy TInner
+    // (v1.10(iv)), member lookup rides that mis-bound MRO into the decoy's decoy2 — the
+    // internally-consistent consequence, pinned documented-not-correct as a bounded false edge.
+    // The clean fix (heritage resolved after the WI-3 registration so nested TOuter.TInner binds)
+    // is committed to WI-4 (the pipeline reorder, ITEM-004). [compliance log inc 16]
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'decoy2');
+    expect(call, 'the poison propagates (documented v1.13 limitation)').toBeDefined();
+    expect(call!.targetFilePath, 'into the mis-bound decoy TInner, not the real TOuter.TInner').toContain(
+      'TInner.cls',
+    );
   });
 
   it('pins the misfiled-trigger collision, BOTH halves (SRS v1.11(c))', () => {

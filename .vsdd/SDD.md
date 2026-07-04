@@ -1417,10 +1417,14 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   EXTENDS/IMPLEMENTS *edge* stays unresolved (`CaseKid` → CALLS into `Base.Base`/`Base.greet`, with no
   EXTENDS edge to Base — the two mechanisms have independent cross-file reach). This supersedes the
   earlier v1.11(a) `super()`-unresolved / `super.method()`-self-loop pins for the case-varied shape; the
-  v1.10(iii)/(v) shapes are not re-probed and remain as pinned. The v1.10(iv) MIS-BOUND-heritage MRO is
-  **tripwired**: the fixture asserts NO member edge into the mis-bound target; if Step 3b turns it red
-  (the poisoned MRO mis-resolving members), Phase-5 escalation for a targeted ratification — never a
-  silent absorption.
+  v1.10(iii)/(v) shapes are not re-probed and remain as pinned. The v1.10(iv) MIS-BOUND-heritage MRO
+  **tripwire FIRED at Step 3b and is RATIFIED (SRS v1.13)**: a typed-receiver member call on the subtype
+  (`Sub s; s.decoy2()`) rides the mis-bound MRO into the decoy's member and resolves there — the
+  internally-consistent consequence of the ratified mis-bound EXTENDS edge (pin 767). Pinned as a
+  documented, bounded false edge (the triple-narrow v1.10(iv) shape), NOT suppressed: keeping the EXTENDS
+  edge while dropping its members would trade one inconsistency for another (an edge absent from its own
+  MRO). **Committed fix = the WI-4 pipeline reorder** (heritage resolved after the WI-3 registration binds
+  the real `TOuter.TInner`) — see ITEM-004.
 - **Non-colliding re-parented fragment (error-recovery input; documented behaviour, not a
   limitation)** — a malformed outer's nested fragment re-parents to the Module scope (Addendum 12), so
   when its folded name is UNIQUE the §3 algorithm deterministically injects it: a cross-file reference
@@ -1856,7 +1860,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   (`Base.Base`), both via the heritage-pre-pass-independent `super`-receiver synthesis — so the subtype
   carries `super`-sourced CALLS into Base with NO EXTENDS edge to it. This supersedes the earlier
   v1.11(a) `super()`-unresolved / `super.method()`-self-loop pins for the case-varied shape; through the v1.10(iv)
-  mis-bound EXTENDS, NO member edge into the mis-bound target (tripwire — red at Step 3b escalates);
+  mis-bound EXTENDS, the tripwire FIRED and is RATIFIED (SRS v1.13): a typed-receiver `s.decoy2()` DOES ride
+  the mis-bound MRO into the decoy's member (`TInner.cls:TInner.decoy2`) — pinned as a documented bounded
+  false edge, WI-4 pipeline reorder committed as the fix (ITEM-004);
   the v1.10(iii)/(v) downstream shapes are family-pinned (same suppressed-MRO mechanism-independent
   behaviour, per the Addendum-16 determinacy);
 - **misfiled-trigger collision (SRS v1.11(c), BOTH halves)** — a `.cls`-misfiled trigger + a

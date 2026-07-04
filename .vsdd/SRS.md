@@ -130,6 +130,22 @@ detail. Derived from INTENT-001; reviewed against it and the Constitution at Gat
   heritage shapes are not re-probed here and remain as pinned. Not a shipped limitation — a requirement
   correction (the v1.11(a) pin over-constrained a behaviour the host resolves correctly). Re-enters Gate 1
   fidelity (verified by the fresh Gate 2 adversary reading SRS+SDD together).
+  **Amended v1.13 (2026-07-04)** — resolves the v1.11(b) poisoned-MRO **tripwire**, which fired at
+  Step 3b as the spec anticipated (Architect-approved Adam, 2026-07-04). Under the v1.10(iv) nested-parent
+  heritage mis-bind (`class Sub extends TOuter.TInner` with a same-tail top-level decoy `TInner` present;
+  pin ratified — the EXTENDS edge to the decoy is REQUIRED), a typed-receiver member call on the subtype
+  (`Sub s; s.decoy2()`) **rides the mis-bound MRO into the decoy's member** and resolves there. This is
+  **ratified as a documented limitation** (not suppressed): it is the internally-consistent downstream
+  consequence of the already-ratified mis-bound EXTENDS edge — a graph that pins `Sub extends TInner(decoy)`
+  and then resolves the decoy's members through it is self-consistent; suppressing the member edge while
+  keeping the EXTENDS edge would trade one inconsistency for another (an edge absent from its own MRO). The
+  emitted member edge is a bounded false edge, confined to the triple-narrow v1.10(iv) shape (nested parent
+  + same-tail top-level decoy + heritage). **Committed fix path: WI-4 (ITEM-004).** The correct resolution
+  is the generic **pipeline reorder** — run heritage resolution AFTER the WI-3 cross-file registration so
+  `TOuter.TInner` binds the real nested type instead of falling back to the decoy — which is hereby moved
+  from a *noted candidate* to a **committed WI-4 deliverable** (see ITEM-004 scope + the tracked limitation
+  in `work-items.md`); this limitation is expected to be eliminated there. A deliberate, WI-4-owned bounded
+  scope reduction. Re-enters Gate 1 fidelity (verified by the fresh Gate 2 adversary reading SRS+SDD together).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope

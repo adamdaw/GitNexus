@@ -252,8 +252,21 @@ annotation capture is the deferred REQ-106.)
   from an external one — the same REQ-013 external-type detection WI-4 introduces — without which the §4
   external-arg overload case would mis-resolve. (WI-4 *completes* this REQ-008 sub-case; it does not
   co-own the REQ-008 mechanic, which stays WI-2 — exactly as WI-3/REQ-010 completes WI-2's cross-file forms.)
+- **Committed WI-3-carried limitations to resolve here (Architect-committed, Adam 2026-07-04):**
+  - **Nested-parent cross-file heritage reorder (SRS v1.10(iv)/v1.11(b) → v1.13 documented limitations).**
+    The heritage pre-pass (`preEmitInheritanceEdges`) runs BEFORE the WI-3 cross-file registration, so a
+    nested-parent clause (`class Sub extends TOuter.TInner`) can't see the nested type cross-file and
+    falls back to a same-tail top-level decoy — mis-binding the EXTENDS edge (v1.10(iv), pin 767) and, via
+    the mis-bound MRO, letting `s.decoy2()` resolve into the decoy's member (v1.13 ratified poison). **Fix
+    = the generic pipeline reorder** (resolve heritage AFTER the cross-file registration channel is
+    populated), promoted here from a *noted candidate* to a **committed WI-4 deliverable**. Eliminating the
+    mis-bind removes both the false EXTENDS edge and its poisoned-MRO member consequence; the v1.10(iv)/
+    v1.13 fixtures (`apex-cross-file-collision` TailSub/TailMro/TInner) flip from documented-limitation pins
+    to correct-resolution assertions. Generic (peer-affecting) reorder → its own §2.2 + adversary review.
 - **Requirement links:** REQ-012, REQ-013, NFR-004. (Completes the REQ-008 parameter-arg-narrowing
-  sub-case WI-2 deferred — see WI-2 acceptance criteria above; not a new REQ, a deferred completion.)
+  sub-case WI-2 deferred — see WI-2 acceptance criteria above; not a new REQ, a deferred completion.
+  Plus the committed nested-heritage reorder above — the resolution of the WI-3 v1.10(iv)/v1.13
+  documented limitations.)
 - **Owner / assignee:** claude (Builder) — assigned.
 - **Criticality:** **security-critical = false.** Test fixtures + external-reference classification;
   no parse path or trust boundary. *Architect approval: pending checkpoint sign-off (Adam);
