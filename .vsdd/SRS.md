@@ -111,12 +111,16 @@ from INTENT-001; reviewed against it and the Constitution at Gate 1.*
   unresolved-heritage shapes; fixture-pinned as documented behaviour). **(Superseded for the v1.8(i)
   case-varied shape by v1.12 — see register BL-8** — under a case-varied heritage clause
   `super()`/`super.method()` DO resolve to the parent. This (a) pin now governs only the v1.10(iii)
-  nested-parent and v1.10(v) same-case-twin shapes (**register BL-7**): for those, `super()` and the
+  nested-parent shape (**register BL-7**): for it, `super()` and the
   inherited-member implicit-this reference remain unresolved, while `super.method()` still self-loops to
-  the subtype's own override (a false edge).**)** (b) The v1.10(iv) mis-bound-heritage MRO surface is TRIPWIRED,
-  not excused: acceptance asserts NO member edge into the mis-bound target; if implementation work
-  shows the poisoned MRO mis-resolving members, that is escalated for its own targeted ratification,
-  never silently absorbed. (c) WHERE a trigger mis-declared in a `.cls` file (invalid Apex) shares a
+  the subtype's own override (a false edge). **Further superseded for the v1.10(v) same-case-twin shape by
+  v1.28 F2 — see register BL-8:** its simple-name superclass resolves, so `super()`/`super.method()` DO
+  resolve to the parent (like BL-1); only the inherited-member implicit-this arm stays unresolved.**)** (b) The v1.10(iv) mis-bound-heritage MRO surface was TRIPWIRED,
+  not excused: acceptance asserted NO member edge into the mis-bound target; if implementation work
+  showed the poisoned MRO mis-resolving members, that was to be escalated for its own targeted ratification,
+  never silently absorbed. **(Superseded by v1.13 — the tripwire FIRED at Step 3b; the false member edge is
+  ratified as register BL-6 (REQ-005/REQ-009 v1.15, the §9 poisoned-MRO scenario), so the "NO member edge"
+  assertion no longer holds; WI-4 owns the fix.)** (c) WHERE a trigger mis-declared in a `.cls` file (invalid Apex) shares a
   case-folded name with a valid class, the registration conservatively registers neither — the valid
   class's bindings-channel forms remain unresolved; for the CASE-VARIANT sub-shape its exact-case forms
   still resolve via the host's own channel, while the SAME-case sub-shape loses those too (the
@@ -564,7 +568,7 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   **Amended v1.10 — extended:** (iii) a nested-parent heritage clause remains unresolved (liveness);
   (iv) with a same-named top-level type present it mis-binds to that type (triple-narrow safety);
   (v) the same-case valid trigger/class twin's heritage clause remains unresolved (liveness).)
-  (**§5.1 register:** BL-1..BL-5 catalogue the heritage-edge forms; BL-7/BL-8 the super/inherited-member
+  (**§5.1 register:** BL-1..BL-5 catalogue the heritage-edge forms; BL-7/BL-8 (governed by REQ-005) catalogue the super/inherited-member
   downstream of an unresolved/corrected heritage edge.)
 - **REQ-008** *(head reworded v1.2)* — The system SHALL resolve an overloaded user-defined Apex method at
   a call site to the unique overload remaining after narrowing by parameter count, then — among any
