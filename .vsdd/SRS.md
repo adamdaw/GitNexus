@@ -397,7 +397,7 @@ likewise the correct outcome, not a shortfall. Every valid, correctly-filed refe
 family (BL-1…BL-8)** — case-varied or exact-case, and absent a colliding invalid-source sibling (BL-13/BL-14) — carries the full SHALL and resolves (case-varied
 non-heritage references resolve case-insensitively via the host's case-folding, verified against the
 resolution suite: a case-varied cross-file constructor, method, interface-typed, and `.CLS`-filed reference
-all resolve). So the sole shortfall is the heritage-family boundary (not a case-insensitivity one), and the SRS *meets* INTENT-001's delegated acceptance
+all resolve). So the sole area of non-full-SHALL behaviour is the heritage-family boundary — both liveness under-binds (BL-1/3/5) and ratified over-binds (BL-2/4/6, BL-7 self-loop) — not a case-insensitivity one, and the SRS *meets* INTENT-001's delegated acceptance
 rather than falling short of it.
 
 ## 2. Definitions
@@ -434,8 +434,8 @@ rather than falling short of it.
   names) does NOT record — no positive record for any form (probe-verified 2026-07-06); its edge outcome is
   edge-absence, except a reference whose case uniquely matches one duplicate, which resolves (BL-12 (b)) (REQ-015).
 - **Equal precedence** — two or more in-repository candidates that the resolution rules do not rank one
-  above the others: for overloads, more than one remains after arity + exact-parameter-type narrowing
-  (REQ-008); for name collisions, more than one member or type matches with no unique exact-case tiebreak.
+  above the others: for overloads, more than one arity-matching candidate survives with no unique
+  exact-parameter-type match (REQ-008); for name collisions, more than one member or type matches with no unique exact-case tiebreak.
   An ambiguous **member or overload** reference (two+ equal-precedence candidates) is an ambiguity that
   records (positive unresolved record); a **type-name collision** — equal-precedence, but excluded from the
   record obligation by kind — emits no record (its edge outcome is edge-absence, except the BL-12
