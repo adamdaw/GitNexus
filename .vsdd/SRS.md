@@ -421,8 +421,9 @@ rather than falling short of it.
   means neither form is produced.
 - **Unresolved (unknown) symbol** — a reference for which no resolved edge is emitted (edge-absence). See
   *plain miss* and *unresolved record* for the two distinct unresolved outcomes.
-- **Plain miss** — an unresolved reference for which no in-repository candidate exists at all; its
-  externally-observable acceptance is edge-absence, with no positive record required (REQ-015).
+- **Plain miss** — an unresolved reference for which no in-repository candidate survives resolution (for an
+  overload, no arity-matching candidate; otherwise no name match at all); its externally-observable
+  acceptance is edge-absence, with no positive record required (REQ-015).
 - **Unresolved record** — a positive entry on the analysis result explicitly marking a reference as
   unresolved, distinct from mere edge-absence; required for an ambiguous **member or overload reference**
   — two or more equal-precedence candidates (overload ambiguity, or a member-name case-collision). A
@@ -521,11 +522,12 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   overload reference** — two or more equal-precedence candidates (overload ambiguity, or a member-name
   case-collision) — the system SHALL additionally emit a positive **unresolved
   record** (§2) on the
-  analysis result. A **plain miss** (§2 — no in-repository candidate exists) is discharged by edge-absence
+  analysis result. A **plain miss** (§2 — no candidate survives resolution) is discharged by edge-absence
   alone; a **type-name collision** (a constructor / inheritance / static-type reference to duplicate
-  top-level type names, same-case or case-variant) is likewise discharged by edge-absence alone — no
-  positive record is required for either. (Conservative resolution: prefer no binding over a misleading
-  one — Constitution §1.2.)
+  top-level type names, same-case or case-variant) requires **no positive record** in any form, and is
+  discharged by edge-absence **except** a reference whose case *uniquely* matches one of the duplicates,
+  which resolves to that unique exact-case match (the BL-12 (b) bounded exception). (Conservative
+  resolution: prefer no binding over a misleading one — Constitution §1.2.)
 
   **Bounded exceptions (documented limitations — Constitution §1.2).** Each emits a documented false edge
   (§2) or a bind the conservative default would withhold; each is Architect-ratified, fixture-pinned, and
