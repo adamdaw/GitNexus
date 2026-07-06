@@ -386,9 +386,11 @@ CALLS edge with no EXTENDS edge, so only the inherited-member arm is the shortfa
 (ratified false edges)** — the heritage clause or a downstream member mis-binds (BL-2, BL-4, BL-6, and the
 BL-7 `super.method()` self-loop), documented under Constitution §1.2(a). None is **parity-excluded** (peers are
 case-sensitive and never exhibit these shapes) or **out of scope**; INTENT-001's acceptance is met at epic
-completion, and until then they stand as documented, fixture-pinned limitations. The **invalid-source shapes** (§5.1 register BL-9…BL-14 — references
-reachable only in uncompiled Apex) are genuinely **outside** the settled in-scope set for this cycle (no
-valid Apex reaches them). All are bounded, Architect-ratified limitations. Every valid, correctly-filed
+completion, and until then they stand as documented, fixture-pinned limitations. The **invalid-source limitations** (§5.1 register BL-9…BL-14 — bounded shortfalls or false edges
+reachable only in uncompiled Apex) are genuinely **outside** the settled in-scope set for this cycle. An
+invalid-source shape whose conservative outcome is *correct* — e.g. a member-name case-collision, which
+emits a positive unresolved record with no mis-bind — is not a limitation and remains in scope. The
+BL-9…BL-14 rows are bounded, Architect-ratified limitations. Every valid, correctly-filed
 **non-heritage** reference among user-defined symbols is in-scope and carries the full SHALL — **including
 case-varied non-heritage references, which resolve case-insensitively via the host's case-folding** (Apex is
 case-insensitive; verified against the resolution suite: a case-varied cross-file constructor, method,
@@ -412,6 +414,11 @@ rather than falling short of it.
 - **External symbol** — a symbol not defined in the analysed repository: Salesforce standard library
   (e.g. `System`, `Database`, `Schema`), sObject types (`Account`, `Foo__c`), or managed-package types.
 - **Resolved edge** — a graph relationship from a reference to the node of the symbol it denotes.
+- **Binding** — the resolved association of a reference to the symbol it denotes: for a call, constructor,
+  member access, or heritage reference, a *resolved edge* (CALLS / ACCESSES / EXTENDS / IMPLEMENTS); for a
+  bare declared-type usage, the association of the declared type to the variable's static type — observable
+  via the member access it enables, not a standalone edge (REQ-005 / REQ-012). "Emit no binding" (REQ-015)
+  means neither form is produced.
 - **Unresolved (unknown) symbol** — a reference for which no resolved edge is emitted (edge-absence). See
   *plain miss* and *unresolved record* for the two distinct unresolved outcomes.
 - **Plain miss** — an unresolved reference for which no in-repository candidate exists at all; its
@@ -487,7 +494,7 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
 - **REQ-005** *(type-usage sub-clause clarified v1.3)* — The system SHALL resolve a reference that
   unambiguously denotes another user-defined Apex symbol to that symbol. For a **method invocation,
   constructor invocation, or field/property access**, resolution is a resolved edge to the symbol's node
-  (CALLS / ACCESSES). For a **type usage** (a declared type, e.g. `Account a;`), resolution is the binding
+  (CALLS / ACCESSES). For a **type usage** (a declared type, e.g. `Widget w;`), resolution is the binding
   of the declared type to the variable's static type — observable as the resolution it enables (a member
   access on that variable resolving to the type's members) — consistent with the Java/Kotlin benchmark,
   which emits no standalone edge for a bare type declaration (REQ-012). (The ambiguous case is governed by
@@ -506,8 +513,8 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   implicit-this inherited-member resolution, whose unresolved-heritage-downstream limitations are BL-6
   (poisoned-MRO member edge), BL-7 (unresolved-heritage super/inherited arms), and BL-8 (v1.12 super
   resolves to parent without an EXTENDS edge).)
-- **REQ-006** — The system SHALL NOT report a reference that REQ-005 resolves as an unknown or unresolved
-  symbol. (This is INTENT-001's literal acceptance condition; REQ-005 emits the edge, REQ-006 forbids the
+- **REQ-006** — The system SHALL NOT report a reference that REQ-005 resolves as unresolved — i.e., SHALL
+  emit no positive unresolved record (§2) for it. (This is INTENT-001's literal acceptance condition; REQ-005 emits the edge, REQ-006 forbids the
   false unresolved record for the same reference.)
 - **REQ-015** *(consolidated v1.16)* — IF a reference to a user-defined Apex symbol cannot be resolved to
   a single unambiguous target, THEN the system SHALL emit no binding. AND for an **ambiguous member or
@@ -581,15 +588,15 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   cross-file forms remain unresolved (the source-file-extension discriminant, a deliberate trade-off
   re-affirmed 2026-07-02): a
   documented liveness limitation for those forms; an **exact-case** constructor/inheritance/static-type
-  reference to the mis-filed class, however, resolves to it via the host's file-extension-independent
-  exact-case channel (register BL-9 — a correct bind on invalid source). Correctly-filed types retain the
+  reference whose case uniquely matches the mis-filed class, however, resolves to it (register BL-9 — a
+  correct bind on invalid source). Correctly-filed types retain the
   full SHALL.)
   (**Amended v1.14 — trigger-referenceability exception relocated here from REQ-004 v1.6 (a cross-file
   resolution concern; text corrected 2026-07-02, re-ratified same day):** WHERE a trigger is mis-declared
   in a `.cls` file — invalid Apex, reachable only in uncompiled source — it passes the extension
   discriminant and becomes globally referenceable: a reference to its name binds the trigger. AND
   WHERE a correctly-filed trigger's name is referenced as a type (`new T()`, `extends T` — itself invalid
-  Apex) and no same-named class exists, the host's exact-case single-match channel binds the trigger def
+  Apex) and no same-named class exists, an exact-case reference whose case uniquely matches the trigger binds it
   — a documented limitation. A correctly-filed trigger remains non-referenceable on the language's
   cross-file visibility channel (it is never registered there); a same-EXACT-CASE-named class-like def
   keeps the exact-case guard, while a CASE-VARIANT same-named class does not suppress the exact-case
@@ -609,7 +616,7 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   user-defined Apex type, method, or field, the system SHALL resolve the reference to that symbol. For a
   **method/constructor invocation** (incl. a static `Type.method()` call) or a **field/property access**,
   resolution is a resolved edge from the trigger to the symbol's node (CALLS / ACCESSES). For a **bare
-  declared-type usage** in the trigger body (e.g. `Account a;`), resolution is the binding of the declared
+  declared-type usage** in the trigger body (e.g. `Widget w;`), resolution is the binding of the declared
   type to the variable's static type — observable via the member access it enables — **not** a standalone
   edge, consistent with the Java/Kotlin benchmark and with REQ-005 (no benchmark emits an edge for a bare
   type declaration — REQ-012). (**Amended v1.4 — clarification, re-entering Gate 1:** the prior text demanded
@@ -660,9 +667,9 @@ dated provenance.*
 | BL-6 | typed-receiver member call on a BL-4 subtype (`Sub s; s.decoy2()`) | valid | rides the mis-bound MRO → false member edge into the decoy's member | REQ-005/REQ-009 v1.15 (ratified v1.13) | a | WI-4 |
 | BL-7 | super/inherited arms of an unresolved-heritage subtype (BL-3 nested-parent shape — qualified/dotted superclass) | valid | `super()` + inherited-member implicit-this unresolved; `super.method()` self-loops to the subtype's own override (false edge) | REQ-005 v1.11(a) | a (self-loop) / — (unresolved arms) | WI-4 |
 | BL-8 | super arms of a BL-1 or BL-5 subtype (simple-name superclass) (v1.12/v1.28 correction) | valid | `super()`/`super.method()` RESOLVE to the parent → subtype carries super-sourced CALLS edges into the parent with NO EXTENDS edge (documented consequence, not a defect); inherited-member implicit-this still unresolved | REQ-007/REQ-005 v1.12 | — | WI-4 |
-| BL-9 | class/interface/enum mis-declared in a `.trigger` file | invalid | an exact-case constructor/inheritance/static-type reference resolves to the mis-filed class via the host's exact-case single-match channel (a correct bind on invalid source — the class is a real node); its typed-receiver (instance-member) and case-varied cross-file forms remain unresolved | REQ-010 v1.6 | — | — |
+| BL-9 | class/interface/enum mis-declared in a `.trigger` file | invalid | an exact-case constructor/inheritance/static-type reference whose case uniquely matches resolves to the mis-filed class (a correct bind on invalid source — the class is a real node); its typed-receiver (instance-member) and case-varied cross-file forms remain unresolved | REQ-010 v1.6 | — | — |
 | BL-10 | trigger mis-declared in a `.cls` file | invalid | becomes globally referenceable — a name reference binds the trigger | REQ-010 v1.14 (ratified v1.6) | b | — |
-| BL-11 | correctly-filed trigger's name referenced as a type, no same-named class exists | invalid | host exact-case single-match channel binds the trigger def | REQ-010 v1.14 (ratified v1.6) | b | — |
+| BL-11 | correctly-filed trigger's name referenced as a type, no same-named class exists | invalid | an exact-case reference whose case uniquely matches binds the trigger def | REQ-010 v1.14 (ratified v1.6) | b | — |
 | BL-12 | duplicate case-folded-colliding top-level type names (case-variant and same-case sub-arms) | invalid | an exactly-case-matching constructor/inheritance/static-type reference binds the unique exact-case match; a same-case duplicate reference binds nothing and emits no record — a type-name collision is discharged by edge-absence alone (probe-verified 2026-07-06); no mis-bind (liveness) | REQ-015 v1.16 (ratified v1.5) | b (exact-case arm) / — (same-case arm = type-name collision, no record) | — |
 | BL-13 | malformed file re-parents a nested-type fragment to file scope, case-folded name collides with a legit top-level type | invalid | registration registers neither → the valid type's typed-receiver/case-varied cross-file forms unresolved (liveness) | REQ-010 v1.9 | — | — |
 | BL-14 | trigger mis-declared in a `.cls` file sharing a case-folded name with a valid class | invalid | registration registers neither → the valid class's cross-file forms unresolved; a case-variant sub-shape's exact-case forms still resolve, a same-case sub-shape loses those too (liveness) | REQ-010 v1.11(c) | — | — |
@@ -739,10 +746,10 @@ Scenario: An in-repository constructor invocation resolves
 
 # REQ-005, REQ-011, REQ-012 (v1.3/v1.4 binding-not-edge)
 Scenario: A bare declared-type usage binds the static type but emits no standalone edge
-  Given a user-defined class Account and a variable declared `Account a;` whose member `a.foo()` is called
+  Given a user-defined class Widget and a variable declared `Widget w;` whose member `w.foo()` is called
   When GitNexus analyses the repository
-  Then the member access `a.foo()` resolves to Account's foo method
-  And no standalone resolved edge is emitted for the bare `Account a` declaration (REQ-012 no-edge parity)
+  Then the member access `w.foo()` resolves to Widget's foo method
+  And no standalone resolved edge is emitted for the bare `Widget w` declaration (REQ-012 no-edge parity)
 
 # REQ-015
 Scenario: An ambiguous member or overload reference is left unresolved, not mis-bound
@@ -765,7 +772,7 @@ Scenario: A member reference colliding by case on two members is left unresolved
   # mis-bind — IS delivered, so it is a live REQ-015 obligation, not a bounded limitation.
 
 # REQ-015 (amended v1.5 — the bounded fallback-channel exception)
-Scenario: Case-variant duplicate types referenced via the host's exact-case channel (documented limitation)
+Scenario: Case-variant duplicate types — a unique exact-case reference resolves, other forms do not (documented limitation)
   Given two user-defined top-level Apex types whose names differ only by case (invalid Apex, uncompiled source)
   And a constructor, inheritance, or static type-name reference matching one of them exactly by case
   When GitNexus analyses the repository
@@ -791,7 +798,7 @@ Scenario: A case-varied cross-file heritage clause is left unresolved (documente
   # exact-case cross-file heritage resolves; the case-varied form is the v1.8(i) liveness limitation
 
 # REQ-010 v1.6 / register BL-9 — invalid-source misfile liveness limitation
-Scenario: A class mis-declared in a .trigger file resolves only via the exact-case channel (documented limitation)
+Scenario: A class mis-declared in a .trigger file resolves only to a unique exact-case reference (documented limitation)
   Given a class/interface/enum mis-declared inside a `.trigger` file (invalid Apex, uncompiled source)
   When GitNexus analyses the repository
   Then its typed-receiver and case-varied cross-file references from other files emit no binding
