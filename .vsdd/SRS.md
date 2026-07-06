@@ -397,7 +397,7 @@ likewise the correct outcome, not a shortfall. Every valid, correctly-filed refe
 family (BL-1…BL-8)** — case-varied or exact-case, and absent a colliding invalid-source sibling (BL-13/BL-14) — carries the full SHALL and resolves (case-varied
 non-heritage references resolve case-insensitively via the host's case-folding, verified against the
 resolution suite: a case-varied cross-file constructor, method, interface-typed, and `.CLS`-filed reference
-all resolve). So the sole area of non-full-SHALL behaviour is the heritage-family boundary — both liveness under-binds (BL-1/3/5) and ratified over-binds (BL-2/4/6, BL-7 self-loop) — not a case-insensitivity one, and the SRS *meets* INTENT-001's delegated acceptance
+all resolve). So the sole area of non-full-SHALL behaviour is the heritage-family boundary (BL-1…BL-8; the §5.1 register gives each arm's under-bind or over-bind outcome), not a case-insensitivity one, and the SRS *meets* INTENT-001's delegated acceptance
 rather than falling short of it.
 
 ## 2. Definitions
@@ -475,8 +475,9 @@ rather than falling short of it.
 - **BR-1 (Must):** GitNexus analyses an Apex codebase and produces a knowledge graph of its
   user-defined symbols. *Success:* a repository of Apex files yields class/method/trigger nodes.
 - **BR-2 (Must):** References among user-defined Apex symbols resolve, so Apex no longer reports unknown
-  symbols for in-repository targets. *Success:* zero unresolved references to unambiguous in-repository
-  Apex symbols across the acceptance scenarios (§9), **except the bounded, Architect-ratified limitations
+  symbols for in-repository targets. *Success:* no deviation from clean in-repository parity in either
+  direction — neither an unresolved reference where resolution is due nor a mis-resolution — for unambiguous
+  in-repository Apex symbols across the acceptance scenarios (§9), **except the bounded, Architect-ratified limitations
   catalogued in the §5.1 register (with their governing REQs in its Gov-REQ column) (the valid-source heritage-family limitations BL-1…BL-8 — the heritage edges plus their
   BL-7/BL-8 super/inherited-member arms; and the invalid-source shapes BL-9…BL-14) — each a documented, fixture-pinned exception, not open
   drift.**
