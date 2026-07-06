@@ -394,7 +394,7 @@ this cycle; an invalid-source shape whose conservative outcome is *correct* (e.g
 case-collision — a positive unresolved record, no mis-bind) is not a limitation and remains in scope, and a
 BL row's correct-conservative arm (e.g. BL-12's same-case no-mis-bind default, BL-9's exact-case bind) is
 likewise the correct outcome, not a shortfall. Every valid, correctly-filed reference **outside the heritage
-family (BL-1…BL-8)** — case-varied or exact-case — carries the full SHALL and resolves (case-varied
+family (BL-1…BL-8)** — case-varied or exact-case, and absent a colliding invalid-source sibling (BL-13/BL-14) — carries the full SHALL and resolves (case-varied
 non-heritage references resolve case-insensitively via the host's case-folding, verified against the
 resolution suite: a case-varied cross-file constructor, method, interface-typed, and `.CLS`-filed reference
 all resolve). So the sole shortfall is the heritage-family boundary (not a case-insensitivity one), and the SRS *meets* INTENT-001's delegated acceptance
@@ -477,7 +477,7 @@ rather than falling short of it.
 - **BR-2 (Must):** References among user-defined Apex symbols resolve, so Apex no longer reports unknown
   symbols for in-repository targets. *Success:* zero unresolved references to unambiguous in-repository
   Apex symbols across the acceptance scenarios (§9), **except the bounded, Architect-ratified limitations
-  recorded in REQ-007/REQ-010/REQ-015 and catalogued in the §5.1 register (the valid-source heritage-family limitations BL-1…BL-8 — the heritage edges plus their
+  catalogued in the §5.1 register (with their governing REQs in its Gov-REQ column) (the valid-source heritage-family limitations BL-1…BL-8 — the heritage edges plus their
   BL-7/BL-8 super/inherited-member arms; and the invalid-source shapes BL-9…BL-14) — each a documented, fixture-pinned exception, not open
   drift.**
 - **BR-3 (Must):** Apex resolution quality matches the Java/Kotlin benchmark for applicable capabilities.
@@ -685,7 +685,7 @@ dated provenance.*
 | BL-5 | same-case valid trigger/class twin heritage (`Foo.trigger`+`Foo.cls`) | valid | EXTENDS edge absent (liveness); super arms resolve to parent — see BL-8; inherited-member implicit-this unresolved | REQ-007 v1.10(v) | — | WI-4 |
 | BL-6 | typed-receiver member call on a BL-4 subtype (`Sub s; s.decoy2()`) | valid | rides the mis-bound MRO → false member edge into the decoy's member | REQ-005/REQ-009 v1.15 (ratified v1.13) | a | WI-4 |
 | BL-7 | super/inherited arms of an unresolved-heritage subtype (BL-3 nested-parent shape — qualified/dotted superclass) | valid | `super()` + inherited-member implicit-this unresolved; `super.method()` self-loops to the subtype's own override (false edge) | REQ-005 v1.11(a) | a (self-loop) / — (unresolved arms) | WI-4 |
-| BL-8 | super arms of a BL-1 or BL-5 subtype (simple-name superclass) (v1.12/v1.28 correction) | valid | `super()`/`super.method()` RESOLVE to the parent → subtype carries super-sourced CALLS edges into the parent with NO EXTENDS edge (documented consequence, not a defect); inherited-member implicit-this still unresolved | REQ-007/REQ-005 v1.12 | — | WI-4 |
+| BL-8 | super arms of a BL-1 or BL-5 subtype (simple-name superclass) (v1.12/v1.28 correction) | valid | `super()`/`super.method()` RESOLVE to the parent → subtype carries super-sourced CALLS edges into the parent with NO EXTENDS edge (documented consequence, not a defect); inherited-member implicit-this still unresolved | REQ-007/REQ-005 v1.28 (ratified v1.12) | — | WI-4 |
 | BL-9 | class/interface/enum mis-declared in a `.trigger` file | invalid | an exact-case constructor/inheritance/static-type reference whose case uniquely matches resolves to the mis-filed class (a correct bind on invalid source — the class is a real node); its typed-receiver (instance-member) and case-varied cross-file forms remain unresolved | REQ-010 v1.22 (ratified v1.6) | — | — |
 | BL-10 | trigger mis-declared in a `.cls` file | invalid | becomes globally referenceable — a name reference binds the trigger | REQ-010 v1.14 (ratified v1.6) | b | — |
 | BL-11 | correctly-filed trigger's name referenced as a type, no same-named class exists | invalid | an exact-case reference whose case uniquely matches binds the trigger def | REQ-010 v1.14 (ratified v1.6) | b | — |
