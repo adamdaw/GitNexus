@@ -423,7 +423,9 @@ rather than falling short of it.
   bare declared-type usage, the association of the declared type to the variable's static type — observable
   via the member access it enables, not a standalone edge (REQ-005 / REQ-012). "Emit no binding" (REQ-015)
   means neither form is produced.
-- **Unresolved (unknown) symbol** — a reference for which no resolved edge is emitted (edge-absence). See
+- **Unresolved (unknown) symbol** — a reference that resolution binds to no target — neither a resolved
+  edge nor a bare-type-usage *binding* (§2). Edge-absence alone does not make a reference unresolved: a
+  correctly-bound bare declared-type usage emits no standalone edge yet is resolved (REQ-005/REQ-006). See
   *plain miss* and *unresolved record* for the two distinct unresolved outcomes.
 - **Plain miss** — an unresolved reference for which no in-repository candidate survives resolution (for an
   overload, no arity-matching candidate; otherwise no name match at all); its externally-observable
@@ -443,8 +445,10 @@ rather than falling short of it.
   record obligation by kind — emits no record (its edge outcome is edge-absence, except the BL-12
   exact-case-unique bind), and a reference with no candidate at all is a
   plain miss (edge-absence).
-- **Static type** — the declared type of a variable or argument expression (not an inferred, promoted, or
-  runtime type); the basis for REQ-005 type-usage binding and REQ-008 exact-type overload narrowing.
+- **Static type** — the statically-known (compile-time) type of a variable or expression: a variable's
+  declared type, a constructor expression's type (`new Widget()` → Widget), a literal's type, or a method's
+  declared return type — not a runtime or promoted type; the basis for REQ-005 type-usage binding and
+  REQ-008 exact-type overload narrowing.
 - **Documented false edge** — a resolved edge deliberately emitted to a wrong-but-internally-consistent
   target under a ratified bounded limitation (Constitution §1.2), reachable only in a narrow named shape
   and carrying a committed fix path; not a conservatism waiver.
@@ -699,7 +703,7 @@ dated provenance.*
 - **NFR-004 (Maintainability)** — Apex resolution SHALL be covered by an automated resolution test that
   exercises every §9 **resolution scenario** — the scenarios tagged REQ-005, REQ-006, REQ-007, REQ-008,
   REQ-009, REQ-010, REQ-011, REQ-012, REQ-013, or REQ-015 (the reference-resolution requirements), as
-  distinct from the recognition / graph-population (REQ-001…004), compatibility/non-regression (NFR-002), and reliability
+  distinct from the recognition / graph-population (REQ-001…004), metadata (REQ-014), compatibility/non-regression (NFR-002), and reliability
   (NFR-001) scenarios. (The concrete artifact is the auto-discovered `apex-resolution`
   suite, auto-discovered by the same CI parity glob as the peer-language resolution suites, per Constitution
   §2.5 — a mechanism reference, not part of the obligation.)
