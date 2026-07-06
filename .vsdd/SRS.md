@@ -648,8 +648,8 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   REQ-007/REQ-010/REQ-015 bounded limitations (§5.1 register). Parity applies only where an equivalent
   benchmark construct exists.)
 - **REQ-013** — IF an Apex reference targets an external symbol, THEN the system SHALL treat it as an
-  external unresolved reference in the same manner as the benchmark treats its standard library, and
-  SHALL NOT report it as an Apex-specific defect.
+  external unresolved reference in the same manner as the benchmark treats its standard library — its
+  observable acceptance being that no Apex-specific defect is reported for it.
 
 **Metadata**
 - **REQ-014** — The system SHALL capture annotations declared on Apex **members** (methods,
@@ -679,7 +679,7 @@ dated provenance.*
 | BL-6 | typed-receiver member call on a BL-4 subtype (`Sub s; s.decoy2()`) | valid | rides the mis-bound MRO → false member edge into the decoy's member | REQ-005/REQ-009 v1.15 (ratified v1.13) | a | WI-4 |
 | BL-7 | super/inherited arms of an unresolved-heritage subtype (BL-3 nested-parent shape — qualified/dotted superclass) | valid | `super()` + inherited-member implicit-this unresolved; `super.method()` self-loops to the subtype's own override (false edge) | REQ-005 v1.11(a) | a (self-loop) / — (unresolved arms) | WI-4 |
 | BL-8 | super arms of a BL-1 or BL-5 subtype (simple-name superclass) (v1.12/v1.28 correction) | valid | `super()`/`super.method()` RESOLVE to the parent → subtype carries super-sourced CALLS edges into the parent with NO EXTENDS edge (documented consequence, not a defect); inherited-member implicit-this still unresolved | REQ-007/REQ-005 v1.12 | — | WI-4 |
-| BL-9 | class/interface/enum mis-declared in a `.trigger` file | invalid | an exact-case constructor/inheritance/static-type reference whose case uniquely matches resolves to the mis-filed class (a correct bind on invalid source — the class is a real node); its typed-receiver (instance-member) and case-varied cross-file forms remain unresolved | REQ-010 v1.6 | — | — |
+| BL-9 | class/interface/enum mis-declared in a `.trigger` file | invalid | an exact-case constructor/inheritance/static-type reference whose case uniquely matches resolves to the mis-filed class (a correct bind on invalid source — the class is a real node); its typed-receiver (instance-member) and case-varied cross-file forms remain unresolved | REQ-010 v1.22 (ratified v1.6) | — | — |
 | BL-10 | trigger mis-declared in a `.cls` file | invalid | becomes globally referenceable — a name reference binds the trigger | REQ-010 v1.14 (ratified v1.6) | b | — |
 | BL-11 | correctly-filed trigger's name referenced as a type, no same-named class exists | invalid | an exact-case reference whose case uniquely matches binds the trigger def | REQ-010 v1.14 (ratified v1.6) | b | — |
 | BL-12 | duplicate case-folded-colliding top-level type names (case-variant and same-case sub-arms) | invalid | an exactly-case-matching constructor/inheritance/static-type reference binds the unique exact-case match; a same-case duplicate reference binds nothing and emits no record — a type-name collision is discharged by edge-absence alone (probe-verified 2026-07-06); no mis-bind (liveness) | REQ-015 v1.16 (ratified v1.5) | b (exact-case arm) / — (same-case arm = type-name collision, no record) | — |
@@ -699,7 +699,7 @@ dated provenance.*
 - **NFR-004 (Maintainability)** — Apex resolution SHALL be covered by an automated resolution test that
   exercises every §9 **resolution scenario** — the scenarios tagged REQ-005, REQ-006, REQ-007, REQ-008,
   REQ-009, REQ-010, REQ-011, REQ-012, REQ-013, or REQ-015 (the reference-resolution requirements), as
-  distinct from the recognition / graph-population (REQ-001…004), parity (NFR-002), and reliability
+  distinct from the recognition / graph-population (REQ-001…004), compatibility/non-regression (NFR-002), and reliability
   (NFR-001) scenarios. (The concrete artifact is the auto-discovered `apex-resolution`
   suite, auto-discovered by the same CI parity glob as the peer-language resolution suites, per Constitution
   §2.5 — a mechanism reference, not part of the obligation.)
