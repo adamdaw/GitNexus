@@ -149,7 +149,7 @@ All bindings-channel targets: no Apex `populateNamespaceSiblings` is registered,
   until the class-only injection lands (probed: the fallback channel resolves neither twin
   form pre-impl); its REQ-004 no-edge-into-the-trigger guard is the paired negative.
 - §7 unit anchors (`apex-cross-file-unit.test.ts`, coverage-attributable per dogfood #16):
-  all 8 fail via dynamic-import rejection — `languages/apex/namespace-siblings.ts` does not
+  all 10 fail via dynamic-import rejection — `languages/apex/namespace-siblings.ts` does not
   exist. They pin the §3 [structural] selection/folding/guard behaviour directly.
 
 ## Already-green acceptance (no-red justification — SDD-003 §1 fallback channel)

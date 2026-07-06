@@ -176,8 +176,15 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
 
   // cross-file inherited member (REQ-005/007 ∘ member lookup) ────────────────
   it('resolves a member declared on a cross-file parent (c.inherited() via Child extends Base) (REQ-005/007)', () => {
+    // Source-pinned to InhCaller: the implicit-this form (Child.callUp -> Base.inherited,
+    // asserted below) resolves to the SAME target, so without the source pin this typed-receiver
+    // find would green off that edge even if InhCaller's c.inherited() path were broken (§8 names
+    // the two as materially different paths).
     const call = getRelationships(result, 'CALLS').find(
-      (e) => e.target === 'inherited' && e.targetFilePath.includes('Base'),
+      (e) =>
+        e.target === 'inherited' &&
+        e.targetFilePath.includes('Base') &&
+        e.sourceFilePath.includes('InhCaller'),
     );
     expect(call, 'the MRO walks the cross-file parent').toBeDefined();
   });
@@ -940,7 +947,12 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     // Twin.trigger + Twin.cls are VALID Apex. The §3 exclusion keeps the trigger out of the
     // injection, so `Twin t = new Twin(); t.spin()` resolves to the class (genuinely red
     // pre-impl — probed 2026-07-02: the fallback channel resolves neither twin form).
-    const spin = getRelationships(result, 'CALLS').find((e) => e.target === 'spin');
+    // Source-pinned to TwinCaller: the v1.28 TwinSub super.spin() BL-8 pin (same fixture dir)
+    // also resolves to Twin.cls:Twin.spin, so without the source pin this find could green off
+    // that super edge even if TwinCaller's t.spin() were broken.
+    const spin = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'spin' && e.sourceFilePath.includes('TwinCaller'),
+    );
     expect(spin, 't.spin() resolves to the class member').toBeDefined();
     expect(spin!.targetFilePath, 'declared in Twin.cls').toContain('Twin.cls');
     // The ctor arm — asserted under the §7(11) callsite-folding reliance (same policy as
