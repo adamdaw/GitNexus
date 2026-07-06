@@ -690,7 +690,7 @@ dated provenance.*
 | BL-9 | class/interface/enum mis-declared in a `.trigger` file | invalid | an exact-case constructor/inheritance/static-type reference whose case uniquely matches resolves to the mis-filed class (a correct bind on invalid source — the class is a real node); its typed-receiver (instance-member) and case-varied cross-file forms remain unresolved | REQ-010 v1.22 (ratified v1.6) | — | — |
 | BL-10 | trigger mis-declared in a `.cls` file | invalid | becomes globally referenceable — a name reference binds the trigger | REQ-010 v1.14 (ratified v1.6) | b | — |
 | BL-11 | correctly-filed trigger's name referenced as a type, no same-named class exists | invalid | an exact-case reference whose case uniquely matches binds the trigger def | REQ-010 v1.14 (ratified v1.6) | b | — |
-| BL-12 | duplicate case-folded-colliding top-level type names (case-variant and same-case sub-arms) | invalid | an exactly-case-matching constructor/inheritance/static-type reference binds the unique exact-case match; a same-case duplicate reference binds nothing and emits no record — a type-name collision is discharged by edge-absence alone (probe-verified 2026-07-06); no mis-bind (liveness) | REQ-015 v1.16 (ratified v1.5) | b (exact-case arm) / — (same-case arm = type-name collision, no record) | — |
+| BL-12 | duplicate case-folded-colliding top-level type names (case-variant and same-case sub-arms) | invalid | an exactly-case-matching constructor/inheritance/static-type reference binds the unique exact-case match; a same-case duplicate reference binds nothing and emits no record — a type-name collision is discharged by edge-absence alone (probe-verified 2026-07-06); no mis-bind (the correct conservative default, not a shortfall) | REQ-015 v1.16 (ratified v1.5) | b (exact-case arm) / — (same-case arm = type-name collision, no record) | — |
 | BL-13 | malformed file re-parents a nested-type fragment to file scope, case-folded name collides with a legit top-level type | invalid | registration registers neither → the valid type's typed-receiver/case-varied cross-file forms unresolved (liveness) | REQ-010 v1.18 (ratified v1.9) | — | — |
 | BL-14 | trigger mis-declared in a `.cls` file sharing a case-folded name with a valid class | invalid | registration registers neither → the valid class's cross-file forms unresolved; a case-variant sub-shape's exact-case forms still resolve, a same-case sub-shape loses those too (liveness) | REQ-010 v1.18 (ratified v1.11(c)) | — | — |
 
@@ -810,7 +810,7 @@ Scenario: A member reference colliding by case on two members is left unresolved
   Then no resolved edge is emitted for that reference
   And a positive unresolved record is emitted for it (two equal-precedence member candidates)
   # Like the BL-12 type-name collision, this shape arises only on invalid case-duplicate source; UNLIKE
-  # BL-12 (a no-record liveness limitation), its required outcome — a positive unresolved record and no
+  # BL-12 (a no-record correct conservative default), its required outcome — a positive unresolved record and no
   # binding — is a live REQ-015 obligation, not a bounded limitation.
 
 # REQ-015 (amended v1.5 — the bounded fallback-channel exception)
