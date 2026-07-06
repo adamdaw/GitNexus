@@ -4,9 +4,10 @@
 approved SRS-001 and the work-item decomposition. One SDD section per work item; authored in
 dependency order. **WI-1 (ITEM-001) first.***
 
-- **Constitution version:** CONST-gitnexus-apex **v1.1.1** (v1.1.0 at SDD-001 authoring — the
+- **Constitution version:** CONST-gitnexus-apex **v1.1.3** (v1.1.0 at SDD-001 authoring — the
   2026-06-29 §2.2 generic-seams refinement; v1.1.1 since 2026-06-30 — §2.1/§2.2 isolation scoped to
-  logic, not comments; SDD-003 is authored under v1.1.1). Each SDD section is authored under, and Gate 2
+  logic, not comments; v1.1.2/v1.1.3 since 2026-07-04/05 — §1.2 admits the bounded documented-limitation
+  classes (a)/(b); SDD-003 is authored under v1.1.3). Each SDD section is authored under, and Gate 2
   checks it against, the Constitution version its own header declares.
 - **Consumes:** RESEARCH-001 (§A.6 grammar feasibility, Architect-approved 2026-06-28).
 
@@ -919,20 +920,26 @@ at WI-3.
 
 # SDD-003 — WI-3: Cross-file binding & trigger resolution
 
-- **Consumes:** SRS-001 (**v1.11**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
-  resolution), with REQ-015 as amended v1.5 (the bounded exact-case-channel exception, probe-corrected) and
-  v1.7 (the record-observability interpretation), the REQ-010/REQ-004 v1.6 bounded misfile exceptions
-  (probe-corrected), the REQ-007/REQ-010 v1.8 heritage-form limitations (extended v1.10 to
-  nested-parent heritage; v1.11 to their downstream inherited-member consequences + the
-  misfiled-trigger collision), and the REQ-010 v1.9 fragment-collision exception;
-  the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
+- **Consumes:** SRS-001 (**v1.27**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
+  resolution). The bounded limitations this SDD's §3/§4 handling implements are now catalogued in the SRS
+  **§5.1 Bounded Limitations Register (BL-1…BL-14)** — the single normative source of truth; the
+  amendment-version citations retained in §3/§4 below each trace to a BL row via the register's Source
+  column. In register terms: the **valid-source heritage-form limitations** BL-1…BL-8 (REQ-007 v1.8/v1.10,
+  with the v1.12 super-arm correction and the v1.13 poisoned-MRO ratification folded into REQ-005/REQ-009
+  v1.15), and the **invalid-source shapes** — BL-9 class-in-`.trigger` (REQ-010 v1.6), BL-10/BL-11
+  misfiled / type-referenced trigger (**REQ-010 v1.14** — relocated here from the former REQ-004 v1.6),
+  BL-12 duplicate case-fold collision (**REQ-015 v1.16** — the consolidation of the former v1.5 exact-case
+  exception + v1.7 observability split), BL-13 fragment collision (REQ-010 v1.9), and BL-14 misfiled-trigger
+  collision (REQ-010 v1.11(c)); the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
   Architect-approved 2026-06-30; **addenda 4–17**, 2026-07-02 (Addendum 15: v1.5 per-pass arm + twin static-member probes;
   Addendum 16: heritage-downstream + poisoned-MRO probes; Addendum 17: the super-arm self-loop probe) — note Addendum 5 corrects Addendum 4's
   mechanism attribution, Addendum 7 supersedes the v1 discriminant, Addendum 12 retires the §7(8)
   cross-language reliance, and Addendum 13 retracts the exact-case-channel mechanism pin in favour of
   the behavioural shape table) — the cross-file-binding seam
   (A-3 confirmed; Seam B chosen) + the channel-model probe evidence.
-- **Constitution:** CONST-gitnexus-apex v1.1.1. **Security-critical = false** (operates on WI-1's safe-parsed
+- **Constitution:** CONST-gitnexus-apex v1.1.3 (§1.2 admits the bounded documented-limitation classes
+  **(a) valid-source false edges** and **(b) invalid-source channel binds**, cited by BL-row against the
+  SRS §5.1 register). **Security-critical = false** (operates on WI-1's safe-parsed
   output + WI-2's resolution model; introduces no new untrusted-source parse path — SECT-001 stays WI-1's).
   No new SEC clause.
 - **Builds on / completes:** WI-2's resolution mechanics (SDD-002), all verified within a **single
@@ -967,8 +974,8 @@ resolves cross-file names through two distinct channels, and WI-3 controls only 
   constants, and EVERY case-varied form; mis-binds — nested-parent heritage onto a same-tail top-level
   decoy (the v1.10(iv) limitation). Every limitation boundary and already-green justification below
   keys on that table, not on a mechanism narrative. One heritage-chain surface IS read-pinned as
-  Apex-inert: `resolveAmbiguousInheritanceBaseViaImports` (call site `walkers.ts:339`; declaration `:505`, doc
-  block `:477-504`) keys on finalized
+  Apex-inert: `resolveAmbiguousInheritanceBaseViaImports` (call site `walkers.ts:364`; declaration `:530`, doc
+  block `:501-529`) keys on finalized
   `ImportEdge[]`, which Apex never emits (`resolveImportTarget: () => null`). Through this
   channel the host already resolves, with no WI-3 code: cross-file **constructor calls** (`new B()`),
   **top-level `extends`/`implements`** (incl. the EXTENDS/IMPLEMENTS edge-label selection, §7(6)),
@@ -977,17 +984,17 @@ resolves cross-file names through two distinct channels, and WI-3 controls only 
   forms, with the edge source natively attributed to the trigger container — §7(3) static arms and the
   REQ-011 edge-source obligation hold on the real host).
 - **The bindings channel (what WI-3 registers).** `walkScopeChain`'s local-first walk (per-scope
-  `scope.bindings`, `walkers.ts:628-639`) over `lookupBindingsAt`'s finalized → augmented → namespace →
-  `workspaceFqnBindings` channels (`walkers.ts:56-96` — the lookup itself has NO local arm; local
+  `scope.bindings`, `walkers.ts:639-657`) over `lookupBindingsAt`'s finalized → augmented → namespace →
+  `workspaceFqnBindings` channels (`walkers.ts:76-107` — the lookup itself has NO local arm; local
   precedence is the walk's per-scope check, which is exactly why §7(2)'s enclosing-scope risk exists) —
   the workspace channel is what `populateNamespaceSiblings` feeds. **Channel
   interaction (Addendum 5, ordering corrected Addendum 9):** the POST-HOOK exact-case-channel passes
-  (free-call/ctor `run.ts:753`, receiver-bound `run.ts:728` — both after the hook at `run.ts:636`) run
+  (free-call/ctor `run.ts:757`, receiver-bound `run.ts:732` — both after the hook at `run.ts:640`) run
   this same lookup BEFORE their QualifiedNameIndex fallback, so WI-3's folded workspace keys are
   reachable by them — iff each callsite's lookup name is folded (the WI-2 §2.2 seam folded the
   receiver-bound-calls and declared-type keyspaces; the SHARED ctor/free-call callsite is read-pinned
   RAW — Addendum 14 — and the reliance is whether the WI-2 Apex folding ctor path reaches the workspace
-  key and precedes the raw channel, §7(11)). **The heritage pre-emit pass is PRE-hook** (`run.ts:573` < `:636`) and
+  key and precedes the raw channel, §7(11)). **The heritage pre-emit pass is PRE-hook** (`run.ts:573` < `:640`) and
   suppresses every `inherits` site from downstream retry (`run.ts:155-163`) — the workspace keys are
   structurally UNREACHABLE for heritage clauses, so the case-varied heritage forms are the ratified
   SRS v1.8 limitations, not §7(11) arms. The §3 inject-none guard governs everything the workspace
@@ -1002,8 +1009,8 @@ resolves cross-file names through two distinct channels, and WI-3 controls only 
   **trigger-scope instance receivers**.
 
 **REQ-010 — the cross-file enabler (Seam B, `populateNamespaceSiblings`).** WI-3 registers the host's
-per-language `populateNamespaceSiblings` hook (contract `scope-resolver.ts:902`) on the Apex resolver. The
-hook runs after `finalizeScopeModel` and before `resolveReferenceSites` (`run.ts:636` → `:683`), and injects
+per-language `populateNamespaceSiblings` hook (contract `scope-resolver.ts:928`) on the Apex resolver. The
+hook runs after `finalizeScopeModel` and before `resolveReferenceSites` (`run.ts:640` → `:687`), and injects
 **every top-level user-defined Apex type** (class, interface, enum) into the host global registry
 `workspaceFqnBindings`, keyed by its **`normalizeIdentifier`-folded simple name** (so the §2.2
 case-insensitivity seam composes — a cross-file `ACCOUNT`/`account` reference folds to the same global key).
@@ -1022,7 +1029,10 @@ WI-2's validated receiver-typing path; **a *static type-name* receiver** (`B.f(a
 static-type-name-receiver resolution reliance (§2 REQ-011, §4) with its one committed fallback. **Scope
 boundary:** WI-3's overload completion covers the **four argument kinds WI-2 supports** — local-variable,
 **field**, literal, and constructor-expression — reached cross-file (§8); a cross-file overload whose
-disambiguating argument is itself a **method-parameter** (the one kind WI-2 defers) is the intersection of
+disambiguating argument is itself a **method-parameter** (the one kind WI-2 defers, per the ratified
+SDD-002 §2 WI-2/WI-4 argument-typing boundary — parameter-typed narrowing is owned by WI-4 because it
+requires WI-4's REQ-013 external-type detection to tell a user-defined parameter type from an external one)
+is the intersection of
 WI-3 (cross-file receiver) and WI-4 (parameter-typed-arg narrowing) and **completes at WI-4** — until then
 it stays conservatively unresolved (never mis-bound), owned by neither prematurely. **Seam B over Seam A
 (`emitImplicitImportEdges`):** Apex has no imports, so synthetic `IMPORTS` edges would be beyond-parity graph
@@ -1086,9 +1096,12 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     The postcondition is further bounded by the ratified SRS v1.5–v1.11 exceptions — in particular the
     v1.6 class-misfiled-in-`.trigger` exclusion, the v1.9 fragment-collision inject-none, the v1.11(c)
     misfiled-trigger collision (a `.cls`-misfiled trigger poisons a valid class's folded key), and the
-    v1.11(a) heritage-downstream shapes (inherited members unresolved; `super.method()` self-loop — a
-    ratified mis-bind carve-out that rides the receiver-binding synthesis, NOT the bindings-channel
-    lookup, so the clause's bindings-channel no-mis-bind invariant stands) also defeat resolution for
+    heritage-downstream shapes (per §5.1 register: **BL-7** for the v1.10(iii)/(v) shapes — `super()` +
+    inherited-member unresolved AND the `super.method()` self-loop, a ratified mis-bind carve-out that
+    rides the receiver-binding synthesis, NOT the bindings-channel lookup, so the clause's bindings-channel
+    no-mis-bind invariant stands; **BL-8** for the v1.8(i) case-varied shape (v1.12-corrected) —
+    `super()`/`super.method()` instead RESOLVE to the parent, only the inherited-member arm unresolved, as
+    §4/§8 state) also defeat resolution for
     their target shapes, exactly as §3/§4 catalogue — the host's inheritance
     pre-pass precedes the registration and suppresses retry, so case-varied `extends`/`implements` is
     the ratified SRS v1.8(i) bounded liveness limitation (exact-case heritage resolves via the host's
@@ -1110,11 +1123,17 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     resolution flows through `lookupBindingsAt` and finds no unique global target (none, or two
     folded-same-name top-level types) emits no edge and is recorded unresolved (REQ-015). **The single record-observability rule (ratified as the SRS
     v1.7 REQ-015 observability interpretation; §8 aligns to it):** a positive `suppressed` outcome on the pipeline result is
-    assertable **iff the ambiguity reaches the host resolver** (overload-ambiguity among live candidates,
-    case-collision member ambiguity); a **guard-miss** (the §3 inject-none guard never creates the key, so
-    the lookup plain-misses) has edge ABSENCE as its black-box observable — the epic's established
-    REQ-015 observability interpretation (WI-2, Gate-3-accepted): a plain miss's record is
-    host-internal, not exposed on the pipeline result. Whether the host's internal unresolved counter
+    assertable **iff the ambiguity reaches the host resolver** — competing in-repository candidates of
+    equal precedence (§2): overload-ambiguity among live candidates, member-name case-collision, AND — on
+    the §1 exact-case channel — a **same-case duplicate top-level type name** (two equal-precedence
+    candidates reach the resolver: BL-12's same-case arm, a competing-candidate ambiguity emitting the
+    positive record per REQ-015, Gate-3-verified); a **guard-suppressed collision** (a duplicate/colliding folded key: two in-repository
+    candidates exist, but the §3 inject-none guard never creates the key, so the ambiguity is stopped
+    BEFORE it reaches the resolver — a competing-candidate ambiguity per §2, NOT a plain miss, which by §2
+    requires no in-repository candidate at all) has edge ABSENCE as its black-box observable: because the
+    ambiguity never reaches the resolver on the bindings channel, the positive-record obligation (which
+    §2/REQ-015 attach to an ambiguity that DOES reach the resolver) does not fire there — the record, if
+    any, is host-internal, not exposed on the pipeline result. Whether the host's internal unresolved counter
     fires for a pass-level typed-receiver miss is unprobed — a non-blocking **[Gate-3 reliance]** on the
     record's internal mechanism; the *observable* contract (edge absence, no mis-bind) is what §8
     asserts. So the
@@ -1129,9 +1148,12 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     registry instances — Addendum 12; §7(8) retired), covered by the §8 mixed-language NFR-002
     regression pin, not by a reliance. **The invariant does
     NOT extend to the §1 exact-case channel** (ctor/heritage/static-receiver forms): a
-    case-variant duplicate binds its unique exact-case key there; a same-case duplicate binds nothing
-    (the Addendum-13 shape-table rows — probed behaviour, not a mechanism pin) — the documented §3 limitation (invalid-source-only, Architect-accepted +
-    probe-corrected 2026-07-02), not a WI-3-controllable outcome.
+    case-variant duplicate binds its unique exact-case key there (BL-12's exact-case arm, Constitution
+    §1.2(b)); a same-case duplicate binds nothing AND — two equal-precedence candidates having reached the
+    resolver — emits a positive unresolved record (BL-12's same-case arm: a competing-candidate ambiguity,
+    the retained REQ-015 conservative default, Gate-3-verified) (the Addendum-13 shape-table rows — probed
+    behaviour, not a mechanism pin) — the documented §3 limitation (the exact-case bind is
+    invalid-source-only, Architect-accepted + probe-corrected 2026-07-02), not a WI-3-controllable outcome.
 - **REQ-011 (trigger body references a user-defined type/method/field → resolved edge).**
   - *Precondition:* a user-defined Apex trigger whose body references a user-defined Apex type, method, or
     field (canonically a static-style call on a user-defined handler type, or `new Handler()`).
@@ -1270,7 +1292,7 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   host's language-uniform channel. Member resolution through a typed receiver stays guarded (the
   declared-type binding comes from the bindings channel, where inject-none holds). Same disposition for
   the `.trigger` exclusion below: it governs injection only; the exact-case channel binds a class-like
-  def wherever it parses — one misfiled in a `.trigger` file, and (REQ-004 v1.6 corrected exception) a
+  def wherever it parses — one misfiled in a `.trigger` file, and (REQ-010 v1.14 corrected exception, ratified v1.6) a
   correctly-filed LONE trigger referenced as a type from invalid source (`new T()` → the trigger def;
   probe-verified) — while a trigger twinned with a same-EXACT-CASE-named class binds nothing (probed — Addendum 5/13); a
   CASE-VARIANT same-named class does NOT suppress the exact-case channel (the trigger's key stays
@@ -1290,13 +1312,21 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   defs. (A trigger is a *referencing* container, never a *referenced* type; injecting one would let
   `new Foo()` / `Foo.x` mis-bind to a trigger — REQ-004 non-referenceability / REQ-015.)
   **Mirror limitation — trigger misfiled in a `.cls` file (§A.13, Architect-accepted 2026-07-02; ratified
-  at SRS level as the REQ-004 v1.6 bounded exception; ground corrected + re-affirmed same day):** the
+  at SRS level as the REQ-010 v1.14 bounded exception (ratified v1.6); ground corrected + re-affirmed same day):** the
   extension discriminant is a **deliberate, Architect-owned trade-off**, not an impossibility: the hook
-  ctx's `treeCache` (`scope-resolver.ts:902-913` — the hook signature; the `treeCache` field at `:913`) would permit a registration-conformant
+  ctx's `treeCache` (`scope-resolver.ts:928-939` — the hook signature; the `treeCache` field at `:939`) would permit a registration-conformant
   declaration-node-kind check, but it costs a cache-miss re-parse fallback + worker-path complexity to
   fix INVALID-SOURCE-ONLY corner shapes (triggers and classes share `type=Class` on the resolution-side
   def; `apexConstruct` is graph-only) — rejected on cost/complexity grounds, re-affirmed by the
-  Architect with the corrected ground. So a
+  Architect with the corrected ground. **(Constitution §1.2 basis, R3-clarified:** the suppression the
+  discriminant forgoes is genuinely Apex-local (a `treeCache` AST node-kind check, the pattern the csharp
+  namespace hook uses) but NOT cheap — in worker mode `treeCache` is empty (native tree-sitter Trees cannot
+  cross MessageChannels), so a robust check needs a bespoke Apex-local worker-mode fallback scanner, exactly
+  as csharp built `extractCsharpStructureViaScanner` (`csharp/namespace-siblings.ts:294,308`); that build
+  cost, for an INVALID-SOURCE-ONLY corner, is BL-10's departure ground. Constitution §1.2's enumerated
+  grounds — shared-code coupling / trade-one-inconsistency — are the *illustrative* typical cases, not an
+  exhaustive gate; BL-10 is admitted under §1.2's general Architect-ratified, fixture-pinned, narrow,
+  uncompiled-source-only bounded-limitation framing.)** So a
   `trigger_declaration` *mis-declared* in a `.cls` file passes both predicates and **is injected** as a
   referenceable global name: a reference to that name can bind the trigger def (for a correctly-filed
   trigger the exclusion prevents exactly this). **Invalid Apex** (a trigger is declared only in a
@@ -1310,12 +1340,14 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   reliance]** that a non-exported top-level type so injected actually resolves cross-file — i.e. that the host
   global lookup does **not** itself visibility-filter (WI-1 built an `exportChecker` precisely because the
   host tracks `isExported`, so whether the lookup honours it is an unprobed host behaviour, not pinned).
-  **Two distinct dispositions (do not conflate):** (a) *whether it resolves* — a non-exported type is a
-  user-defined symbol REQ-010 SHALL resolve, so a host visibility-filter blocking it is a **WI-3 REQ-010
-  gap** with a reserved remediation (§7(7)), symmetric with the other REQ-010/011 reliances — **not** a WI-4
-  matter; (b) *whether resolving it is parity-correct* — a **WI-4 REQ-012** question (WI-4 may add a
-  visibility filter to match the benchmark), a disclosed forward-dependency in the manner SDD-001 disclosed
-  for the `Property` label. The §8 acceptance is the hard "resolves cross-file" of (a). **Injection algorithm (one procedure, no get-or-create-then-push):** first
+  **Two distinct dispositions (do not conflate):** (a) *whether it resolves* — a cross-file reference to a
+  `private`/no-modifier top-level type is **invalid Apex** (outside §1's valid-source SHALL boundary), so
+  its resolution is a **disclosed forward-dependency**, not a committed REQ-010 SHALL: WI-3 does not
+  visibility-filter (inject-all is the code-graph default), so it resolves *under the current design*, but
+  the resolve-vs-filter decision is deferred; (b) *whether resolving it is parity-correct* — a **WI-4
+  REQ-012** question (WI-4 may add a visibility filter to match the benchmark), a disclosed
+  forward-dependency in the manner SDD-001 disclosed for the `Property` label. The §8 acceptance therefore
+  pins only no-throw and no-mis-bind; the resolve/filter outcome is not a committed WI-3 SHALL. **Injection algorithm (one procedure, no get-or-create-then-push):** first
   **group the def universe** (every class-like def owned by a Module-parented class-kind scope, MINUS
   `.trigger`-filed defs — the case-folded extension filter runs before grouping) by the
   `normalizeIdentifier`-folded simple name; then for each key
@@ -1337,7 +1369,7 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   Addendum 12 — retires the formerly Architect-accepted §7(8) reliance):** `workspaceFqnBindings` is a
   FRESH per-language-run map (`finalizeScopeModel` constructs `new Map()` per call,
   `finalize-orchestrator.ts:155`; the phase runs `runScopeResolution` once per registered language over
-  extension-partitioned files, `phase.ts:306,425`) — the `scope-resolution-indexes.ts:90` doc's "shared"
+  extension-partitioned files, `phase.ts:306,425`) — the `scope-resolution-indexes.ts:81` doc's "shared"
   means shared across SCOPES, not languages. A peer entry and an Apex reference can never meet in one
   map, so NFR-002 safety on this surface is **pinned structurally**; the §8 mixed-language fixture is an
   ordinary NFR-002 regression pin, not a reliance vehicle. **Single-registry pin (R4-2, Architect-approved 2026-07-02):** WI-3 writes `workspaceFqnBindings`
@@ -1561,13 +1593,16 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   case (which *is* injected) but dropped from injection because the extension is the only available
   trigger discriminant. No throw.
 - **Same-case duplicate type name (`class Samey` in two files)** — the exact-case channel binds
-  **nothing** (the Addendum-13 same-case-duplicate row — probed), and the §3
-  inject-none guard keeps the bindings channel empty for the folded key → all forms conservatively
-  unresolved; pinned by fixture (the REQ-015 main scenario governs, no v1.5 exception fires).
+  **nothing** but, two equal-precedence candidates having reached the resolver, emits a positive
+  unresolved record (BL-12's same-case arm — the retained REQ-015 conservative default, not a (b)
+  exception; Gate-3-verified) (the Addendum-13 same-case-duplicate row — probed); and the §3
+  inject-none guard keeps the bindings channel empty for the folded key → the typed-receiver member form
+  is edge-absent there → all forms conservatively unresolved (no bind); pinned by fixture (the REQ-015
+  main scenario governs, no v1.5 exception fires).
 - **Lone correctly-filed trigger referenced as a type (`new T()`/`extends T`, only `T.trigger` in the
   repo)** — invalid referencing source; the exact-case channel **binds the trigger** (the Addendum-13
   lone-trigger row — probed behaviour) (probed: CALLS/EXTENDS into `Class:T.trigger:T`)
-  — the REQ-004 v1.6 corrected exception, pinned by fixture as documented-limitation behaviour. The
+  — the REQ-010 v1.14 corrected exception (ratified v1.6), pinned by fixture as documented-limitation behaviour. The
   bindings channel never serves it (the §3 exclusion), and a same-named class flips it to the twin case
   below.
 - **Case-variant trigger/class twin (`Twist.trigger` + `class TWIST` — valid Apex)** — the trigger's
@@ -1601,7 +1636,7 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   committed fallback class as the `new ENGINE()` fixture (consistent §8 assertion policy for the two
   mechanically identical forms).
 - **Trigger misfiled in a `.cls` file (documented §A.13 limitation, the mirror case; ratified as the
-  REQ-004 v1.6 bounded exception)** — a
+  REQ-010 v1.14 bounded exception, ratified v1.6)** — a
   `trigger_declaration` saved in a `.cls` file passes the §3 predicates (`type=Class`, bare
   `qualifiedName`, `.cls` extension) and **is injected**: a reference to its name — including a
   case-varied one via the folded key — binds the trigger def (a REQ-004 non-referenceability breach,
@@ -1728,11 +1763,11 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   folds the member segment if the host lookup does not; (6) the host edge-label selection (EXTENDS vs IMPLEMENTS by target kind) for a cross-file
   interface-extends-interface source (the REQ-012-parity behaviour); (7) whether a non-exported top-level
   type so injected actually **resolves cross-file** — that the host global lookup does not visibility-filter.
-  A non-exported type is a *user-defined* symbol, so a host filter blocking it is a **WI-3 REQ-010 resolution
-  gap** (a Phase-5 gap), **not** a WI-4 parity refinement — with a **reserved remediation** symmetric with the
-  other REQ-010/011 reliances: an Apex-local adjustment or, failing that, a reserved §2.2 lookup-visibility
-  seam (subject to §2.2 review at selection) to make WI-3's injected user-defined bindings resolve. (Distinct
-  from the *parity* question — whether a private type *should* resolve — which is WI-4's REQ-012.); (8)
+  A cross-file reference to a non-exported top-level type is **invalid Apex** (outside §1's valid-source
+  SHALL), so its resolution is a **disclosed forward-dependency**, not a committed REQ-010 SHALL: WI-3 does
+  not visibility-filter (inject-all default), and whether a private type *should* resolve or be filtered is
+  the deferred **WI-4 REQ-012** parity question. The §8 fixture pins only no-throw and no-mis-bind, not a
+  resolve outcome; if WI-4 elects to filter, that is a parity refinement, not a WI-3 gap; (8)
   **RETIRED (2026-07-02, Addendum 12)** — the formerly Architect-accepted cross-language registry
   partitioning reliance is moot: `workspaceFqnBindings` is a per-language-run instance (fresh map per
   `finalizeScopeModel` call; one `runScopeResolution` per language over extension-partitioned files), so
@@ -1770,12 +1805,14 @@ no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The c
   key (the WI-2 seam folded the receiver-bound and declared-type keyspaces, not the dotted-name path;
   distinct from (5), the member-lookup half) — committed fallback class: the §3 nested-type
   member-resolution addition under `languages/apex/` (the same mechanism class as (5)'s), extended to
-  fold the outer segment. (14) **Plain-miss internal record** — whether the host's internal unresolved
+  fold the outer segment. (14) **Guard-suppressed-collision internal record** — whether the host's internal unresolved
   counter fires for a
-  pass-level typed-receiver guard-miss (§2; non-blocking for the black-box contract, whose observable is
-  edge absence per SRS v1.7). Validation vehicle: inspect the host's resolve stats/log output at Gate 3;
-  **if no internal record fires**, the disposition is a named escalation to re-ratify the SRS v1.7
-  interpretation as "no record exists for plain misses" — never a silent discharge. (15) **Receiver-bound
+  pass-level typed-receiver guard-suppressed collision (a duplicate folded key the §3 guard stops before
+  the resolver — a competing-candidate ambiguity per §2, not a plain miss; non-blocking for the black-box
+  contract, whose observable is edge absence). Validation vehicle: inspect the host's resolve stats/log
+  output at Gate 3; **if no internal record fires**, the disposition is a named escalation to ratify at the
+  SRS level that a guard-suppressed collision (ambiguity stopped before the resolver) discharges by
+  edge-absence with no positive record — never a silent discharge. (15) **Receiver-bound
   static-type-name-member workspace reach** — whether the WI-2 folded receiver-bound path resolves a
   static member through a workspace-injected type binding (`Twist.buzz()`, `Foo.stat2()` — the twin
   static-member arms; distinct from (11)'s ctor/free-call arm and from (3)'s single-segment reliance):
@@ -1900,9 +1937,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   WI-1-precedent-consistent (asserted as behaviour on invalid source, not correct-Apex resolution);
 - **collision / non-poisoning (REQ-015)** — two defs folding to one key (duplicate-named types, or a
   re-parented fragment colliding with a valid type) → **no member edge** through a typed receiver
-  (`Dupe d; d.hit()` — the §3 inject-none guard; the REQ-015 record obligation is dischargeable
-  host-internally per the SRS v1.7 plain-miss interpretation — the fixture asserts the observable, edge
-  ABSENCE, only). The **case-varied/mismatched forms to the colliding pair** (`new dupe()`, `dupe d;` —
+  (`Dupe d; d.hit()` — the §3 inject-none guard; two candidates exist but the guard stops the ambiguity
+  before the resolver — a competing-candidate ambiguity per §2, not a plain miss — so no positive record
+  fires on the bindings channel and the fixture asserts the observable, edge ABSENCE, only). The **case-varied/mismatched forms to the colliding pair** (`new dupe()`, `dupe d;` —
   the exact-case channel misses both keys, the folded key is guard-suppressed) emit nothing: asserted as
   exactly ONE ctor edge from the caller to the pair (the exact-case v1.5-exception bind) and zero member
   edges — the v1.5 scenario's second Then-clause. **All three v1.5 forms are per-pass probed and fixtured** (Addendum 15 — the family's arms ride
@@ -1923,9 +1960,11 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   forms unresolved — the REQ-010 v1.6 bounded exception) while its exact-case ctor form binds via the
   fallback channel — both asserted as the §4 documented-limitation behaviour;
 - **non-exported top-level type** — black-box: a cross-file reference to a `private`/no-modifier top-level
-  type **resolves** (WI-3 inject-all + the §7(7) [Gate-3 reliance] that the host lookup does not
-  visibility-filter). Whether resolving it is *parity-correct* is a **WI-4 REQ-012** question (WI-4 owns the
-  benchmark comparison and may add a visibility filter) — not asserted here;
+  type is injected inject-all; a private cross-file reference being **invalid Apex** (outside §1's
+  valid-source SHALL), its resolution is a **disclosed forward-dependency** — WI-3 does not visibility-filter,
+  so it resolves under the current design, but the resolve-vs-filter decision is the deferred **WI-4 REQ-012**
+  question. The fixture asserts only **no throw and no mis-bind**, not a committed "resolves" acceptance
+  (SDD-001 `Property`-label forward-dependency precedent);
 - **static field / enum-constant via a type-name receiver** — a cross-file (and trigger-body) `MyClass.FIELD`
   / `MyEnum.VALUE` → `ACCESSES` to the user-defined field/constant (the static-receiver field arm, §2 — same
   reliance + fallback as the static call);
@@ -1973,9 +2012,12 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   parent → CALLS to the parent member from the trigger container (REQ-011 ∘ §7(10), the MRO walk from
   trigger scope — compositions are not assumed free);
 - **same-case duplicate** — two `class Samey` files → all reference forms conservatively unresolved
-  (the Addendum-13 same-case-duplicate row + the §3 inject-none guard), never a bind;
+  (the Addendum-13 same-case-duplicate row + the §3 inject-none guard), never a bind; the exact-case-channel
+  arm (ctor/heritage/static) additionally asserts a positive `suppressed`/unresolved record — BL-12's
+  same-case arm, two equal-precedence candidates reaching the resolver (Gate-3-verified) — while the
+  bindings-channel typed-receiver form is edge-absence (guard-miss);
 - **lone-trigger reference** — `new Lone()` with only `Lone.trigger` present → binds the trigger def via
-  the exact-case channel (pinned REQ-004 v1.6 corrected-exception behaviour, not correct resolution);
+  the exact-case channel (pinned REQ-010 v1.14 corrected-exception behaviour, ratified v1.6 — not correct resolution);
   BOTH arms are fixtured (the two arms ride different passes, so representativeness was not assumed —
   the Addendum-15 policy): the ctor form and the `extends` arm (`class LoneSub extends Lone` → EXTENDS
   into the trigger def, per the Addendum-5 probe) each pinned as documented-limitation behaviour;
@@ -1984,8 +2026,8 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   pre-impl, the probe shows the trigger bound); its **heritage arm** (`class Sub extends Twist`) →
   EXTENDS into the trigger def, asserted as the documented SRS v1.8(ii) limitation behaviour (the
   pre-hook pass; NOT correct resolution);
-- **trigger misfiled in a `.cls` file** — pinned §A.13 limitation behaviour (the REQ-004 v1.6 bounded
-  exception): the misfiled trigger def is
+- **trigger misfiled in a `.cls` file** — pinned §A.13 limitation behaviour (the REQ-010 v1.14 bounded
+  exception, ratified v1.6): the misfiled trigger def is
   injected, so a (case-varied) reference to its name binds it (documented breach of REQ-004
   non-referenceability, invalid-source-only — asserted as the limitation, not as correct resolution);
 - **valid twin (trigger + class sharing a name)** — `Foo f = …; f.run()` from another file → resolves to
