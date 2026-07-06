@@ -428,13 +428,15 @@ rather than falling short of it.
   unresolved, distinct from mere edge-absence; required for an ambiguous **member or overload reference**
   — two or more equal-precedence candidates (overload ambiguity, or a member-name case-collision). A
   **type-name collision** (a constructor / inheritance / static-type reference to duplicate top-level type
-  names) does NOT record — its acceptance is edge-absence alone (probe-verified 2026-07-06) (REQ-015).
+  names) does NOT record — no positive record for any form (probe-verified 2026-07-06); its edge outcome is
+  edge-absence, except a reference whose case uniquely matches one duplicate, which resolves (BL-12 (b)) (REQ-015).
 - **Equal precedence** — two or more in-repository candidates that the resolution rules do not rank one
   above the others: for overloads, more than one remains after arity + exact-parameter-type narrowing
   (REQ-008); for name collisions, more than one member or type matches with no unique exact-case tiebreak.
   An ambiguous **member or overload** reference (two+ equal-precedence candidates) is an ambiguity that
-  records (positive unresolved record); a **type-name collision** is discharged by edge-absence alone (no
-  record), and a reference with no candidate at all is a plain miss (edge-absence).
+  records (positive unresolved record); a **type-name collision** emits no record (its edge outcome is
+  edge-absence, except the BL-12 exact-case-unique bind), and a reference with no candidate at all is a
+  plain miss (edge-absence).
 - **Static type** — the declared type of a variable or argument expression (not an inferred, promoted, or
   runtime type); the basis for REQ-005 type-usage binding and REQ-008 exact-type overload narrowing.
 - **Documented false edge** — a resolved edge deliberately emitted to a wrong-but-internally-consistent
@@ -466,6 +468,8 @@ rather than falling short of it.
   under v1.8/v1.10; the invalid-source shapes) — each a documented, fixture-pinned exception, not open
   drift.**
 - **BR-3 (Must):** Apex resolution quality matches the Java/Kotlin benchmark for applicable capabilities.
+  *Success:* the §9 parity scenario (REQ-012) resolves each applicable construct equivalently to the
+  Java/Kotlin fixture (REQ-012 defines the applicable-capability set).
 - **BR-4 (Must):** Adding Apex does not regress any other language. *Success:* the existing suite stays
   green.
 
