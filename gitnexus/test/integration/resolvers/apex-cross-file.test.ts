@@ -313,13 +313,8 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
       getRelationships(result, 'CALLS').find(
         (e) => e.target === 'assist' && e.targetFilePath.includes('Utils'),
       ),
+      'h.assist() binds the top-level Utils.Helper, not the nested Outer.Helper (a mis-bind to the nested def has no assist member and would MISS here)',
     ).toBeDefined();
-    // and the nested Helper's member is never bound from the misfile caller
-    expect(
-      getRelationships(result, 'CALLS').filter(
-        (e) => e.target === 'fake' && e.sourceFilePath.includes('MisfileCaller'),
-      ),
-    ).toEqual([]);
   });
 
   it('resolves nested-enum constants (Outer.Mood.UP exact + OUTER.MOOD.DOWN case-varied) (REQ-010/§7(5)∘§2)', () => {
@@ -427,16 +422,18 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toBeDefined();
   });
 
-  it('resolves a cross-file reference to a non-exported top-level type (hd.reveal()) (REQ-010/§7(7))', () => {
-    // Black-box form of the §7(7) [Gate-3 reliance]: the host global lookup must not
-    // visibility-filter the injected user-defined binding. Parity (whether it SHOULD
-    // resolve) is WI-4 REQ-012 — not asserted here.
-    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'reveal');
-    expect(call, 'the injected non-exported binding resolves').toBeDefined();
+  it('does not MIS-BIND a cross-file non-exported-type reference (hd.reveal()) — §8 pins no-throw + no-mis-bind only (§7(7))', () => {
+    // SDD-003 §7(7)/§8 (line 1355): the §8 acceptance pins ONLY no-throw and no-mis-bind; whether
+    // the non-exported type RESOLVES is a disclosed forward-dependency deferred to WI-4 REQ-012,
+    // NOT a committed WI-3 SHALL. So assert only that no `reveal` edge mis-binds to a NON-Hidden
+    // target (run-completion is implicit in the shared beforeAll). A future WI-4 visibility filter
+    // that stops resolving it must NOT fail this test.
     expect(
-      call!.targetFilePath,
-      'targets the non-exported Hidden.cls specifically (§7(7) reliance)',
-    ).toContain('Hidden');
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'reveal' && !e.targetFilePath.includes('Hidden'),
+      ),
+      'no mis-bind: any reveal edge targets Hidden.cls, never another type',
+    ).toEqual([]);
   });
 
   // static field / enum-constant via a type-name receiver (§2 static-receiver arm)
@@ -809,14 +806,11 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
   // record. Ratified pin (probed 2026-07-06 — the sole suppressed record is the unrelated CaseColl
   // member arm). [conservative pin; see WI-3-red-gate.md]
   it('binds NOTHING and records NOTHING for a same-case duplicate TYPE name (Samey) — BL-12 (SRS v1.28)', () => {
-    // edge-absence: neither `new Samey()` nor `s.hitA()` resolves
+    // edge-absence: neither `new Samey()` nor `s.hitA()` resolves (both are CALLS forms —
+    // SameCaller has no field-access site, so the CALLS filter is the exhaustive edge check)
     expect(
       getRelationships(result, 'CALLS').filter((e) => e.sourceFilePath.includes('SameCaller')),
-      'new Samey() binds nothing',
-    ).toEqual([]);
-    expect(
-      getRelationships(result, 'ACCESSES').filter((e) => e.sourceFilePath.includes('SameCaller')),
-      's.hitA() binds nothing (no receiver type)',
+      'new Samey() + s.hitA() bind nothing',
     ).toEqual([]);
     // and NO record: the same-case type collision emits no suppressed resolutionOutcome
     expect(
@@ -1270,7 +1264,7 @@ describe.skipIf(!apexAvailable)('Apex cross-language registry partitioning (NFR-
     result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-cross-file-mixed'), () => {});
   }, 120000);
 
-  it('resolves the Apex reference only to the Apex def despite a peer symbol on the same folded key (§7(8))', () => {
+  it('resolves the Apex reference only to the Apex def despite a peer symbol on the same folded key (NFR-002 registry partitioning)', () => {
     // Motor folds to 'motor'; mod.py declares class motor. The Apex m.rev() must bind
     // the Apex member (red until the injection lands; a bind into mod.py is a §7(8) FAIL).
     const rev = getRelationships(result, 'CALLS').find((e) => e.target === 'rev');
@@ -1278,7 +1272,7 @@ describe.skipIf(!apexAvailable)('Apex cross-language registry partitioning (NFR-
     expect(rev!.targetFilePath, 'targets the Apex def').toContain('Motor.cls');
   });
 
-  it('partitions the peer-ENTRY direction: C# and Apex each bind only their own def (§7(8))', () => {
+  it('partitions the peer-ENTRY direction: C# and Apex each bind only their own def (NFR-002 registry partitioning)', () => {
     // motor.cs is a GLOBAL-namespace C# type: its hook WRITES workspaceFqnBindings, so a
     // peer entry genuinely occupies the folded key 'motor'. The C# m.Whir() must bind the
     // C# member, and no Apex-sourced edge may land on the .cs def (nor C#-sourced on .cls).

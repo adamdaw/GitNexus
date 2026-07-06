@@ -240,6 +240,31 @@ override, and a `super.<m>()` call site; Twin gained an explicit ctor + `virtual
 the override/super distinction is expressible. The pre-existing EXTENDS-absence pins over these
 fixtures stay green — the bodies do not change heritage resolution.)
 
+## Gate-3 v1.28 re-review — round-1 dispositions (2026-07-06, all fixed-only)
+
+The cold `vsdd-test-validator` re-review surfaced 4 test-level fidelity/tautology findings
+(Architect-dispositioned FIX, 2026-07-06):
+
+- **F1 — non-exported `hd.reveal()` over-asserted resolution → reclassified to a no-mis-bind
+  conservative-negative.** SDD-003 §7(7)/§8 (line 1355): *"the §8 acceptance pins only no-throw
+  and no-mis-bind; the resolve/filter outcome is not a committed WI-3 SHALL"* (the resolve-vs-
+  filter decision is the disclosed WI-4 REQ-012 forward-dependency). The test formerly hard-pinned
+  resolution to `Hidden.cls` (a Gate-3-v1.11 R2-F3 strengthening that the Gate-2 v127 SDD softening
+  cascade-invalidated). Now asserts only that no `reveal` edge mis-binds to a non-Hidden target —
+  green under the current inject-all design AND green if WI-4 adds the sanctioned visibility filter.
+  **This supersedes the genuinely-RED `hd.reveal()` listing above** (that was the Step-3a resolves-
+  assertion); the test is now a conservative-negative regression guard.
+- **F2 — dead `fake`-absence guard removed.** The `CALLS target==='fake' from MisfileCaller` guard
+  was vacuous (MisfileCaller only references `h.assist()`); the `assist → Utils.cls` positive is
+  the real name-share discriminator (a mis-bind to the nested `Outer.Helper` has no `assist` member
+  and would MISS there). Sub-assertion deleted; the positive carries the intent in its message.
+- **F3 — dead Samey `ACCESSES` guard removed** (from the v1.28 BL-12 pin above). SameCaller has no
+  field-access site, so the ACCESSES filter was always-empty; the CALLS filter + no-record check
+  are the exhaustive BL-12 edge-absence-and-no-record evidence.
+- **F4 — mixed-language `it`-titles retitled off retired §7(8).** Both titles cited "(§7(8))", a
+  reliance SDD-003 retires (Addendum 12; per-language-run registry instances); retitled to the
+  NFR-002 registry-partitioning framing the describe header already carries. Assertions unchanged.
+
 ## Conservative-negative assertions (no-red justification — Principle 3 residual)
 
 Absence-of-binding assertions that pass pre-impl because the asserted miss is a miss both
