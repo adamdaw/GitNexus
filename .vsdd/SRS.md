@@ -225,6 +225,9 @@ from INTENT-001; reviewed against it and the Constitution at Gate 1.*
   2026-07-05); register-wiring completeness, no behaviour change. (F1) BL-12's same-case-duplicate arm
   reclassified from "plain miss" to a competing-candidate ambiguity → unresolved record (two candidates
   exist; Gate 3 verifies the host emits the positive record), aligning BL-12 with §2, REQ-015, and §9.
+  **(Superseded by v1.28 F1 — a Gate-3 probe (2026-07-06) showed the host emits NO record for a same-case
+  type duplicate; the arm reverted to edge-absence, no record, and "type-name case-collision" was removed
+  from the recording set.)**
   (F2) the stale REQ-004 citation dropped from BR-2 and REQ-012 v1.15 (REQ-004 governs node representation
   only since v1.14 and cites no register row) → the lists read REQ-007/REQ-010/REQ-015. (F3) REQ-010 —
   governing REQ for the most register rows — gains a §5.1 pointer and surfaces BL-13 (v1.9 fragment
@@ -276,8 +279,9 @@ from INTENT-001; reviewed against it and the Constitution at Gate 1.*
   pins both arms; §1.2 class stays "—" (a correct bind, not a misleading one). (F3) the register's "—" class
   reworded to key on "emits no misleading binding" (dropping "edge-absent"), footnoting BL-8's correct
   super-CALLS-without-EXTENDS edge and BL-9's exact-case bind. (F4) a §9 **member-name case-collision**
-  scenario added (the third ambiguity trigger, alongside overload ambiguity and type-name case-collision,
-  previously unpinned). Behaviour-neutral text-fidelity (F1/F3/F4) + one probe-verified register completion
+  scenario added (the third ambiguity trigger, alongside overload ambiguity and — as then classified —
+  type-name case-collision, previously unpinned). **(v1.28 F1 later removed type-name case-collision from
+  the recording set — it records nothing.)** Behaviour-neutral text-fidelity (F1/F3/F4) + one probe-verified register completion
   (F2). Re-enters Gate 1 fidelity (verified by the fresh Gate 2 adversary reading SRS+SDD together).
   **Amended v1.23 (2026-07-05)** — Gate-1 Phase-5 cascade round-10 reconciliation (Architect-approved Adam,
   2026-07-05). (F1/F2) **§1 case-insensitivity scope corrected**: the in-scope boundary had restricted the
@@ -403,6 +407,10 @@ rather than falling short of it.
 - **User-defined Apex symbol** — a class, interface, enum, inner class, method, constructor, property,
   field, enum constant, or trigger declared within the **analysed repository**.
 - **Container node** — a graph node that owns member nodes (e.g. a class, interface, enum, or trigger).
+- **Heritage** — the `extends` inheritance and `implements` interface-implementation relationship between
+  user-defined Apex types, collectively; the *heritage clause* is the `extends`/`implements` declaration,
+  and a *heritage-family* limitation (BL-1…BL-8) covers the clause and its `super`/inherited-member/
+  poisoned-MRO downstream.
 - **External symbol** — a symbol not defined in the analysed repository: Salesforce standard library
   (e.g. `System`, `Database`, `Schema`), sObject types (`Account`, `Foo__c`), or managed-package types.
 - **Resolved edge** — a graph relationship from a reference to the node of the symbol it denotes.
@@ -609,10 +617,10 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   WHERE a correctly-filed trigger's name is referenced as a type (`new T()`, `extends T` — itself invalid
   Apex) and no same-named class exists, an exact-case reference whose case uniquely matches the trigger binds it
   — a documented limitation. A correctly-filed trigger remains non-referenceable on the language's
-  cross-file visibility channel (it is never registered there); a same-EXACT-CASE-named class-like def
-  keeps the exact-case guard, while a CASE-VARIANT same-named class does not suppress the exact-case
-  channel — the twin's constructor and member forms are committed to resolve to the CLASS, its heritage
-  form is the v1.8(ii) bounded limitation.)
+  cross-file visibility registration (a correctly-filed trigger is never registered there); a
+  same-exact-case-named class-like def takes exact-case precedence, while a case-variant same-named class
+  does not block it — the twin's constructor and member forms are committed to resolve to the CLASS, its
+  heritage form is the v1.8(ii) bounded limitation.)
   (**§5.1 register:** REQ-010 is the governing REQ for BL-9, BL-10, BL-11, BL-13, BL-14 — BL-9
   (class-in-`.trigger`, v1.6), BL-10/BL-11 (misfiled/referenced trigger, v1.14), and two
   registration-collision liveness limitations previously in the amendment log only: **BL-13** (v1.9 —
@@ -756,6 +764,12 @@ Scenario: A trigger body's bare declared-type usage and field access resolve
   When GitNexus analyses the repository
   Then the field access resolves to the user-defined type's field (ACCESSES from the trigger)
   And no standalone resolved edge is emitted for the bare declared-type usage (REQ-012 no-edge parity)
+
+# REQ-011 — trigger-body static Type.method() call
+Scenario: A trigger body's static call to a user-defined type resolves
+  Given an Apex trigger whose body makes a static `Type.method()` call to a user-defined Apex class
+  When GitNexus analyses the repository
+  Then there is a resolved edge from the trigger to the user-defined static method (CALLS)
 
 # REQ-005, REQ-006
 Scenario: An in-repository method call resolves with no unknown symbol
