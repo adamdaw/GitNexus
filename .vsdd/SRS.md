@@ -394,7 +394,7 @@ completion, and until then they stand as documented, fixture-pinned limitations.
 reachable only in uncompiled Apex) are genuinely **outside** the settled in-scope set for this cycle. An
 invalid-source shape whose conservative outcome is *correct* — e.g. a member-name case-collision, which
 emits a positive unresolved record with no mis-bind — is not a limitation and remains in scope. The
-BL-9…BL-14 rows are bounded, Architect-ratified limitations. Every valid, correctly-filed
+BL-9…BL-14 rows catalogue these bounded limitations; where a row also documents a correct-conservative arm (e.g. BL-12's same-case no-mis-bind default, or BL-9's exact-case correct bind), that arm is the correct outcome per the criterion above, not a shortfall. Every valid, correctly-filed
 **non-heritage** reference among user-defined symbols is in-scope and carries the full SHALL — **including
 case-varied non-heritage references, which resolve case-insensitively via the host's case-folding** (Apex is
 case-insensitive; verified against the resolution suite: a case-varied cross-file constructor, method,
@@ -429,8 +429,9 @@ rather than falling short of it.
   overload, no arity-matching candidate; otherwise no name match at all); its externally-observable
   acceptance is edge-absence, with no positive record required (REQ-015).
 - **Unresolved record** — a positive entry on the analysis result explicitly marking a reference as
-  unresolved, distinct from mere edge-absence; required for an ambiguous **member or overload reference**
-  — two or more equal-precedence candidates (overload ambiguity, or a member-name case-collision). A
+  unresolved, distinct from mere edge-absence; required only where an ambiguous **member or overload
+  reference** has two or more equal-precedence candidates (overload ambiguity, or a member-name
+  case-collision) — the obligation is gated by reference kind, not candidate count alone. A
   **type-name collision** (a constructor / inheritance / static-type reference to duplicate top-level type
   names) does NOT record — no positive record for any form (probe-verified 2026-07-06); its edge outcome is
   edge-absence, except a reference whose case uniquely matches one duplicate, which resolves (BL-12 (b)) (REQ-015).
@@ -438,8 +439,9 @@ rather than falling short of it.
   above the others: for overloads, more than one remains after arity + exact-parameter-type narrowing
   (REQ-008); for name collisions, more than one member or type matches with no unique exact-case tiebreak.
   An ambiguous **member or overload** reference (two+ equal-precedence candidates) is an ambiguity that
-  records (positive unresolved record); a **type-name collision** emits no record (its edge outcome is
-  edge-absence, except the BL-12 exact-case-unique bind), and a reference with no candidate at all is a
+  records (positive unresolved record); a **type-name collision** — equal-precedence, but excluded from the
+  record obligation by kind — emits no record (its edge outcome is edge-absence, except the BL-12
+  exact-case-unique bind), and a reference with no candidate at all is a
   plain miss (edge-absence).
 - **Static type** — the declared type of a variable or argument expression (not an inferred, promoted, or
   runtime type); the basis for REQ-005 type-usage binding and REQ-008 exact-type overload narrowing.
@@ -568,7 +570,7 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   **Amended v1.10 — extended:** (iii) a nested-parent heritage clause remains unresolved (liveness);
   (iv) with a same-named top-level type present it mis-binds to that type (triple-narrow safety);
   (v) the same-case valid trigger/class twin's heritage clause remains unresolved (liveness).)
-  (**§5.1 register:** BL-1..BL-5 catalogue the heritage-edge forms; BL-7/BL-8 (governed by REQ-005) catalogue the super/inherited-member
+  (**§5.1 register:** BL-1..BL-5 catalogue the heritage-edge forms; BL-7 (governed by REQ-005) and BL-8 (co-governed by REQ-007/REQ-005) catalogue the super/inherited-member
   downstream of an unresolved/corrected heritage edge.)
 - **REQ-008** *(head reworded v1.2)* — The system SHALL resolve an overloaded user-defined Apex method at
   a call site to the unique overload remaining after narrowing by parameter count, then — among any
