@@ -348,17 +348,17 @@ from INTENT-001; reviewed against it and the Constitution at Gate 1.*
   corrections (Architect-approved Adam, 2026-07-06); the SRS claimed host behaviour the real host does not
   exhibit. (F1) **BL-12 same-case arm + the type-name-collision recording claim corrected.** The v1.18
   reclassification had modelled a same-case duplicate top-level type as a competing-candidate ambiguity
-  emitting a positive unresolved record; a Gate-3 probe (2026-07-06) shows the exact-case single-match guard
-  suppresses the tie BEFORE the recording resolver — edge-absence, NO record (a guard-suppressed collision,
-  mirroring the §3 inject-none guard). Reverts the v1.18 addition of "type-name case-collision" to the
+  emitting a positive unresolved record; a Gate-3 probe (2026-07-06) shows the host emits NO record for a
+  same-case duplicate type reference — edge-absence alone, no mis-bind (a type-name collision, discharged
+  like the case-variant duplicate). Reverts the v1.18 addition of "type-name case-collision" to the
   recording set back to v1.7's overload+member-collision-only set; §2 (Unresolved record / Equal precedence),
   REQ-015 head + §1.2(b), register BL-12, and the §9 v1.5 scenario aligned. No mis-bind either way (the
   no-binding SHALL holds); only the unverified record obligation is dropped. (F2) **BL-5 twin super arms
   re-attributed from BL-7 to BL-8.** BL-7 (v1.11(a)) had lumped the nested-parent (BL-3) and same-case-twin
   (BL-5) shapes as `super.method()` self-loops; a probe shows the twin's simple-name superclass (`Twin`)
-  folds to the bindings channel so `super()`/`super.method()` RESOLVE to the parent — exactly the v1.12/BL-8
+  binds like BL-1's, so `super()`/`super.method()` RESOLVE to the parent — exactly the v1.12/BL-8
   correction applied to BL-1 but never re-probed for BL-5. BL-7 now governs the BL-3 nested-parent shape only
-  (dotted superclass → self-loop); BL-8 covers BL-1 + BL-5 (simple-name superclass → resolves); §1 + register
+  (qualified/dotted superclass → self-loop); BL-8 covers BL-1 + BL-5 (simple-name superclass → resolves); §1 + register
   BL-5/BL-7/BL-8 aligned. Both surfaced by the Gate-3 verification-split (a Gate-2 adversary reasoned host
   behaviour from spec logic; only Gate-3-against-the-real-host falsifies it). Re-enters Gate 1 fidelity
   (verified by the fresh Gate 2 adversary reading SRS+SDD together).
@@ -389,10 +389,11 @@ case-sensitive and never exhibit these shapes) or **out of scope**; INTENT-001's
 completion, and until then they stand as documented, fixture-pinned limitations. The **invalid-source shapes** (§5.1 register BL-9…BL-14 — references
 reachable only in uncompiled Apex) are genuinely **outside** the settled in-scope set for this cycle (no
 valid Apex reaches them). All are bounded, Architect-ratified limitations. Every valid, correctly-filed
-reference among user-defined symbols is in-scope and carries the full SHALL — **including case-varied
-references, which resolve case-insensitively via the host's case-folding** (Apex is case-insensitive;
-verified against the resolution suite: a case-varied cross-file constructor, method, interface-typed, and
-`.CLS`-filed reference all resolve). The **sole** valid-source **heritage-edge** shortfall is BL-1/BL-3/BL-5
+**non-heritage** reference among user-defined symbols is in-scope and carries the full SHALL — **including
+case-varied non-heritage references, which resolve case-insensitively via the host's case-folding** (Apex is
+case-insensitive; verified against the resolution suite: a case-varied cross-file constructor, method,
+interface-typed, and `.CLS`-filed reference all resolve); the case-varied **heritage** clause (BL-1) is the
+WI-4-deferred shortfall named next. The **sole** valid-source **heritage-edge** shortfall is BL-1/BL-3/BL-5
 — a **case-varied** heritage clause (BL-1) plus two **exact-case** heritage clauses (nested-parent
 `extends Outer.Inner`, BL-3; same-case twin `Foo.trigger`+`Foo.cls`, BL-5); its downstream unresolved arms
 are BL-7 (`super()` + inherited-member, v1.10(iii) nested-parent) and BL-8 (inherited-member only, v1.8(i)
@@ -416,16 +417,16 @@ rather than falling short of it.
 - **Plain miss** — an unresolved reference for which no in-repository candidate exists at all; its
   externally-observable acceptance is edge-absence, with no positive record required (REQ-015).
 - **Unresolved record** — a positive entry on the analysis result explicitly marking a reference as
-  unresolved, distinct from mere edge-absence; required where an ambiguity reaches the resolver (competing
-  in-repository candidates of equal precedence — overload ambiguity, member case-collision). A type-name
-  collision does NOT record — it is suppressed by a guard (the exact-case single-match guard, or the §3
-  inject-none guard on the folded key) before reaching the resolver (probe-verified 2026-07-06) (REQ-015).
+  unresolved, distinct from mere edge-absence; required for an ambiguous **member or overload reference**
+  — two or more equal-precedence candidates (overload ambiguity, or a member-name case-collision). A
+  **type-name collision** (a constructor / inheritance / static-type reference to duplicate top-level type
+  names) does NOT record — its acceptance is edge-absence alone (probe-verified 2026-07-06) (REQ-015).
 - **Equal precedence** — two or more in-repository candidates that the resolution rules do not rank one
   above the others: for overloads, more than one remains after arity + exact-parameter-type narrowing
   (REQ-008); for name collisions, more than one member or type matches with no unique exact-case tiebreak.
-  Equal-precedence candidates that reach the resolver are an ambiguity (positive unresolved record —
-  overload, member case-collision); a type-name collision is guard-suppressed before the resolver
-  (edge-absence, no record), and a reference with no candidate at all is a plain miss (edge-absence).
+  An ambiguous **member or overload** reference (two+ equal-precedence candidates) is an ambiguity that
+  records (positive unresolved record); a **type-name collision** is discharged by edge-absence alone (no
+  record), and a reference with no candidate at all is a plain miss (edge-absence).
 - **Static type** — the declared type of a variable or argument expression (not an inferred, promoted, or
   runtime type); the basis for REQ-005 type-usage binding and REQ-008 exact-type overload narrowing.
 - **Documented false edge** — a resolved edge deliberately emitted to a wrong-but-internally-consistent
@@ -509,14 +510,15 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   symbol. (This is INTENT-001's literal acceptance condition; REQ-005 emits the edge, REQ-006 forbids the
   false unresolved record for the same reference.)
 - **REQ-015** *(consolidated v1.16)* — IF a reference to a user-defined Apex symbol cannot be resolved to
-  a single unambiguous target, THEN the system SHALL emit no binding. AND where an **ambiguity reaches the
-  resolver** — competing in-repository candidates of equal precedence (overload ambiguity, member
+  a single unambiguous target, THEN the system SHALL emit no binding. AND for an **ambiguous member or
+  overload reference** — two or more equal-precedence candidates (overload ambiguity, or a member-name
   case-collision) — the system SHALL additionally emit a positive **unresolved
   record** (§2) on the
   analysis result. A **plain miss** (§2 — no in-repository candidate exists) is discharged by edge-absence
-  alone; a **type-name collision** (same-case or case-variant) is guard-suppressed before the resolver and
-  likewise discharged by edge-absence — no positive record is required for either. (Conservative
-  resolution: prefer no binding over a misleading one — Constitution §1.2.)
+  alone; a **type-name collision** (a constructor / inheritance / static-type reference to duplicate
+  top-level type names, same-case or case-variant) is likewise discharged by edge-absence alone — no
+  positive record is required for either. (Conservative resolution: prefer no binding over a misleading
+  one — Constitution §1.2.)
 
   **Bounded exceptions (documented limitations — Constitution §1.2).** Each emits a documented false edge
   (§2) or a bind the conservative default would withhold; each is Architect-ratified, fixture-pinned, and
@@ -526,10 +528,8 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   - **(b) Invalid-source channel binds** — BL-10, BL-11, and the **BL-12 exact-case arm** (§5.1 register);
     reachable only in uncompiled Apex. Suppressing these would require Apex-specific coupling in shared host
     code (Constitution §2). BL-12's **same-case arm is NOT a (b) exception** — it emits no binding and no
-    record: the exact-case single-match guard suppresses the tie before the recording resolver (a
-    guard-suppressed collision; probe-verified 2026-07-06), which is edge-absence, no mis-bind — the
-    conservative default. The full mechanics (the exact-case single-match guard, the guard-suppressed
-    collision) are in the register rows.
+    record: a type-name collision is discharged by edge-absence alone (probe-verified 2026-07-06), which is
+    no mis-bind — the conservative default. The register rows carry the per-arm detail.
 
   **Retained obligation.** Every reference of an in-scope observable shape — a typed-receiver member
   access, a correctly-filed cross-file reference (exact-case or case-varied, per case-insensitive folding —
@@ -658,12 +658,12 @@ dated provenance.*
 | BL-4 | nested-parent heritage + an unrelated same-tail top-level decoy present | valid | heritage mis-binds to the top-level decoy | REQ-007 v1.10(iv) | a | WI-4 |
 | BL-5 | same-case valid trigger/class twin heritage (`Foo.trigger`+`Foo.cls`) | valid | EXTENDS edge absent (liveness); super arms resolve to parent — see BL-8; inherited-member implicit-this unresolved | REQ-007 v1.10(v) | — | WI-4 |
 | BL-6 | typed-receiver member call on a BL-4 subtype (`Sub s; s.decoy2()`) | valid | rides the mis-bound MRO → false member edge into the decoy's member | REQ-005/REQ-009 v1.15 (ratified v1.13) | a | WI-4 |
-| BL-7 | super/inherited arms of an unresolved-heritage subtype (BL-3 nested-parent shape) | valid | `super()` + inherited-member implicit-this unresolved; `super.method()` self-loops to the subtype's own override (false edge) | REQ-005 v1.11(a) | a (self-loop) / — (unresolved arms) | WI-4 |
-| BL-8 | super arms of a BL-1 or BL-5 subtype (simple-name superclass folds to the bindings channel) (v1.12/v1.28 correction) | valid | `super()`/`super.method()` RESOLVE to the parent → subtype carries super-sourced CALLS edges into the parent with NO EXTENDS edge (documented consequence, not a defect); inherited-member implicit-this still unresolved | REQ-007/REQ-005 v1.12 | — | WI-4 |
+| BL-7 | super/inherited arms of an unresolved-heritage subtype (BL-3 nested-parent shape — qualified/dotted superclass) | valid | `super()` + inherited-member implicit-this unresolved; `super.method()` self-loops to the subtype's own override (false edge) | REQ-005 v1.11(a) | a (self-loop) / — (unresolved arms) | WI-4 |
+| BL-8 | super arms of a BL-1 or BL-5 subtype (simple-name superclass) (v1.12/v1.28 correction) | valid | `super()`/`super.method()` RESOLVE to the parent → subtype carries super-sourced CALLS edges into the parent with NO EXTENDS edge (documented consequence, not a defect); inherited-member implicit-this still unresolved | REQ-007/REQ-005 v1.12 | — | WI-4 |
 | BL-9 | class/interface/enum mis-declared in a `.trigger` file | invalid | an exact-case constructor/inheritance/static-type reference resolves to the mis-filed class via the host's exact-case single-match channel (a correct bind on invalid source — the class is a real node); its typed-receiver (instance-member) and case-varied cross-file forms remain unresolved | REQ-010 v1.6 | — | — |
 | BL-10 | trigger mis-declared in a `.cls` file | invalid | becomes globally referenceable — a name reference binds the trigger | REQ-010 v1.14 (ratified v1.6) | b | — |
 | BL-11 | correctly-filed trigger's name referenced as a type, no same-named class exists | invalid | host exact-case single-match channel binds the trigger def | REQ-010 v1.14 (ratified v1.6) | b | — |
-| BL-12 | duplicate case-folded-colliding top-level type names (case-variant and same-case sub-arms) | invalid | an exactly-case-matching constructor/inheritance/static-type reference binds the unique exact-case match; a same-case duplicate binds nothing and emits no record — the exact-case single-match guard suppresses the tie before the recording resolver (a guard-suppressed collision, mirroring the §3 inject-none guard; probe-verified 2026-07-06); edge-absence, no mis-bind (liveness) | REQ-015 v1.16 (ratified v1.5) | b (exact-case arm) / — (same-case arm = guard-suppressed, no record) | — |
+| BL-12 | duplicate case-folded-colliding top-level type names (case-variant and same-case sub-arms) | invalid | an exactly-case-matching constructor/inheritance/static-type reference binds the unique exact-case match; a same-case duplicate reference binds nothing and emits no record — a type-name collision is discharged by edge-absence alone (probe-verified 2026-07-06); no mis-bind (liveness) | REQ-015 v1.16 (ratified v1.5) | b (exact-case arm) / — (same-case arm = type-name collision, no record) | — |
 | BL-13 | malformed file re-parents a nested-type fragment to file scope, case-folded name collides with a legit top-level type | invalid | registration registers neither → the valid type's typed-receiver/case-varied cross-file forms unresolved (liveness) | REQ-010 v1.9 | — | — |
 | BL-14 | trigger mis-declared in a `.cls` file sharing a case-folded name with a valid class | invalid | registration registers neither → the valid class's cross-file forms unresolved; a case-variant sub-shape's exact-case forms still resolve, a same-case sub-shape loses those too (liveness) | REQ-010 v1.11(c) | — | — |
 
@@ -745,22 +745,24 @@ Scenario: A bare declared-type usage binds the static type but emits no standalo
   And no standalone resolved edge is emitted for the bare `Account a` declaration (REQ-012 no-edge parity)
 
 # REQ-015
-Scenario: An ambiguous in-repository reference is left unresolved, not mis-bound
-  Given two user-defined Apex symbols of equal precedence a single reference could equally denote
-  And neither is a unique exact-case match for the reference
+Scenario: An ambiguous member or overload reference is left unresolved, not mis-bound
+  Given a reference to a user-defined member or method with two or more equal-precedence candidates the resolution rules cannot rank (a member-name case-collision, or an overload set arity + exact-type narrowing leaves ambiguous)
   When GitNexus analyses the repository
   Then no resolved edge is emitted for that reference
-  And a positive unresolved record is emitted for it where the ambiguity reaches the resolver (overload or member case-collision) rather than a binding to a wrong target
-  # A type-name collision (same-case or case-variant duplicate top-level type) is guard-suppressed BEFORE
-  # the resolver (exact-case single-match guard / §3 inject-none guard) — edge-absence, no record.
+  And a positive unresolved record is emitted for it rather than a binding to a wrong target
+  # A type-name collision (duplicate top-level type names, same-case or case-variant) is discharged by
+  # edge-absence alone — no record (see the case-variant / BL-12 scenario below).
 
 # REQ-015 — member-name case-collision ambiguity (positive unresolved record)
 Scenario: A member reference colliding by case on two members is left unresolved with a record
-  Given a user-defined Apex class with two members whose names differ only by case
+  Given a user-defined Apex class with two members whose names differ only by case (invalid Apex, uncompiled source)
   And a reference to that member name that matches neither uniquely by exact case
   When GitNexus analyses the repository
   Then no resolved edge is emitted for that reference
-  And a positive unresolved record is emitted for it (competing equal-precedence candidates reach the resolver)
+  And a positive unresolved record is emitted for it (two equal-precedence member candidates)
+  # Like the BL-12 type-name collision, this shape arises only on invalid case-duplicate source; UNLIKE
+  # BL-12 (a no-record liveness limitation), its correct conservative outcome — a positive record, no
+  # mis-bind — IS delivered, so it is a live REQ-015 obligation, not a bounded limitation.
 
 # REQ-015 (amended v1.5 — the bounded fallback-channel exception)
 Scenario: Case-variant duplicate types referenced via the host's exact-case channel (documented limitation)
@@ -768,9 +770,9 @@ Scenario: Case-variant duplicate types referenced via the host's exact-case chan
   And a constructor, inheritance, or static type-name reference matching one of them exactly by case
   When GitNexus analyses the repository
   Then that reference emits a resolved edge to its unique exact-case match (documented limitation)
-  And every other reference form to the colliding name emits no binding and no record — a type-name collision is guard-suppressed before the recording resolver (probe-verified 2026-07-06)
-  # A SAME-case duplicate has no unique key: the exact-case single-match guard suppresses the tie BEFORE
-  # the recording resolver — edge-absence, NO record. The recording main-REQ-015 scenario does NOT govern.
+  And every other reference form to the colliding name emits no binding and no record — a type-name collision is discharged by edge-absence alone (probe-verified 2026-07-06)
+  # A SAME-case duplicate has no unique exact-case match: it binds nothing and records nothing — a
+  # type-name collision is discharged by edge-absence alone. The member/overload recording scenario does NOT govern it.
 
 # REQ-007
 Scenario: Inheritance and interface implementation resolve
