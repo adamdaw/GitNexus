@@ -81,6 +81,18 @@ count===2 assertion over both the exact-case `v.act()` and the case-varied `w.ac
 (measured 0 edges pre-impl → red; a single-arm resolution now fails rather than greening). No
 `it` count change — both fixes tightened existing red tests.
 
+**Phase-5 v1.28 re-arm (2026-07-06):** the SRS-v1.28 F1/F2 corrections (BL-12 same-case type
+duplicate = NO record; BL-5 same-case twin super arms RESOLVE to the parent, re-attributed
+BL-7→BL-8, BL-7 now the BL-3 dotted shape only) required NEW behavioural coverage the suite
+lacked — the NestSub/TwinSub fixtures were empty-bodied and the Samey fixtures were unexercised.
+**5 pins added** (`apex-cross-file.test.ts`: **106 integration + 10 unit = 116**; peers 312/312):
+two NestSub super arms (BL-7 self-loop / no-ctor), two TwinSub super arms (BL-8 resolve to parent
+member + ctor), one Samey same-case no-record. All assert already-implemented, **probe-verified
+(2026-07-06)** behaviour — they are ratified regression pins, green by construction (Step 3b is
+DONE at 111/111; there is no pre-impl red state for a Phase-5 addition to a shipped work item —
+the inc-14 CaseKid-super precedent). No impl touched; no `it` regressed. See the dedicated
+subsection below for their no-red justifications.
+
 **Step-3a finding (Architect-dispositioned 2026-07-02 — see `WI-3-step3a-findings.md`):**
 the host resolves several cross-file forms with NO WI-3 code, via the exact-case first-match
 workspace fallback (`workspace-index.ts` `simpleName → first module-local callable def`,
@@ -178,13 +190,55 @@ behaviour; they are kept as acceptance + regression guards (Architect-approved 2
 - Non-existent type (Gate-2 R2-7): `new Missing(); m.poke()` → zero edges, run completes —
   a conservative-negative (a miss pre- and post-impl); anchored red by its describe's
   resolving its.
-- Same-case duplicate (`class Samey` ×2, R4): zero edges — the exact-case channel's
-  single-match guard (probed) + the §3 inject-none guard; a conservative-negative pin that
-  must STAY green at Step 3b (the injection must not create a bindable key for the tie).
+- Same-case duplicate (`class Samey` ×2, R4 / v1.28-F1): zero edges from SameCaller AND no
+  `suppressed` record — the exact-case channel's single-match guard (probed) + the §3
+  inject-none guard bind nothing, and a same-case TYPE-name collision is discharged by
+  EDGE-ABSENCE ALONE (BL-12 same-case arm; distinct from the member-name case-collision, which
+  DOES record). The assertion was added in the v1.28 re-arm (2026-07-06) — see the Phase-5
+  subsection; must STAY green at any future change (the injection must not create a bindable
+  key for the tie, and the tie must not manufacture a REQ-015 record).
 - Lone-trigger reference (`new Lone()`, R4): binds the trigger def via the exact-case
   channel's unique key — already-green pin of the REQ-004 v1.6 corrected-exception
   behaviour (probed + re-ratified 2026-07-02); must stay green at Step 3b (the exclusion
   keeps it off the bindings channel; the exact-case channel is untouched).
+
+## Phase-5 v1.28 heritage-super pins (2026-07-06 re-arm — no-red justification)
+
+SRS v1.28 (F2/F3) split the heritage-downstream super arms by superclass SHAPE, and the suite
+had no assertion exercising the split — the NestSub/TwinSub fixtures carried only an
+EXTENDS-absence pin over an empty body. These 5 pins assert already-implemented,
+**probe-verified (2026-07-06)** behaviour; there is no pre-impl red state because Step 3b is
+DONE (111/111) — a Phase-5 addition to a shipped work item is green by construction (the same
+category as inc-14's CaseKid super pins and the dogfood-#20 fallback-channel greens). Exemption
+ladder: rung (1) — behaviourally consequential AND tested; the failing state is a regression
+(a future mis-attribution of a super arm), not a pre-impl red. Each is a regression guard that
+fails if the BL-7/BL-8 distinction is ever collapsed. No impl was touched to add them.
+
+- **NestSub super.ping() SELF-LOOPS (BL-7, SRS v1.10(iii)).** The dotted `Outer.Inner`
+  superclass folds to `outer.inner` — no simple-name workspace key — so the super-receiver
+  synthesis misses the bindings channel and falls back to the enclosing class: `super.ping()`
+  binds `Method:NestSub.cls:NestSub.ping` (its OWN override), NEVER `Outer.Inner.ping`. Probe:
+  `CALLS callPing -> ping @ NestSub.cls`. Fails if a future change resolves the dotted super
+  arm to the nested parent (which would silently contradict the pinned BL-3 limitation).
+- **NestSub super() resolves NOTHING (BL-7, SRS v1.10(iii)).** No ctor CALLS edge from NestSub
+  to a parent type — edge-absence, consistent with the unresolved dotted heritage. Probe: no
+  `NestSub -> Inner/Outer` edge. Fails if super() ever manufactures a ctor edge to the
+  unreachable nested parent.
+- **TwinSub super.spin() RESOLVES to the parent (BL-8, SRS v1.10(v)).** Unlike the dotted
+  shape, the same-case twin's SIMPLE-NAME superclass `Twin` folds to a single bindings-channel
+  hit (the twin trigger is §3-excluded), so `super.spin()` binds `Method:Twin.cls:Twin.spin`
+  (the parent), NOT TwinSub's own override — the two channels have independent reach (the
+  heritage EXTENDS edge still refuses, per the v1.10(v) pin above). Probe: `CALLS callSpin ->
+  spin @ Twin.cls`. Fails if the twin super arm self-loops (the BL-7 behaviour) or stays
+  unresolved.
+- **TwinSub super() RESOLVES to the parent ctor (BL-8, SRS v1.10(v)).** `super()` binds
+  `Constructor:Twin.cls:Twin.Twin`. Probe: `CALLS TwinSub -> Twin @ Twin.cls`. Fails if the
+  twin super() ctor arm stops resolving.
+
+(These required minimal fixture bodies: NestSub/TwinSub gained a ctor `super()`, an own-method
+override, and a `super.<m>()` call site; Twin gained an explicit ctor + `virtual` on `spin` so
+the override/super distinction is expressible. The pre-existing EXTENDS-absence pins over these
+fixtures stay green — the bodies do not change heritage resolution.)
 
 ## Conservative-negative assertions (no-red justification — Principle 3 residual)
 

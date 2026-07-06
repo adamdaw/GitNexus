@@ -359,6 +359,37 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toEqual([]);
   });
 
+  // BL-7 heritage-downstream super arms (SRS v1.10(iii), SDD-003 §8): the dotted `Outer.Inner`
+  // superclass folds to `outer.inner` — no simple-name workspace key — so the super arms
+  // SELF-LOOP: super.ping() binds NestSub's OWN override, super() resolves nothing. This is the
+  // load-bearing v1.28-F3 contrast with the same-case-twin TwinSub (BL-8), whose simple-name
+  // superclass DOES resolve to the parent. Ratified pins (probed 2026-07-06; green pre- and
+  // post-impl — no bindings channel reaches the dotted key). [conservative pin; WI-3-red-gate.md]
+  it('SELF-LOOPS NestSub super.ping() to its OWN override, not Outer.Inner.ping — BL-7 (SRS v1.10(iii))', () => {
+    const pingCalls = getRelationships(result, 'CALLS').filter(
+      (e) => e.target === 'ping' && e.sourceFilePath.includes('NestSub'),
+    );
+    const selfLoop = pingCalls.find((e) => e.targetFilePath.includes('NestSub.cls'));
+    expect(selfLoop, 'super.ping() self-loops to NestSub.ping').toBeDefined();
+    expect(selfLoop!.rel.targetId, "NestSub's own ping").toContain('NestSub.ping');
+    expect(
+      pingCalls.filter((e) => e.targetFilePath.includes('Outer.cls')),
+      'never reaches the unresolved nested parent Outer.Inner.ping',
+    ).toEqual([]);
+  });
+
+  it('resolves NO super() ctor for NestSub — the dotted parent is unreachable — BL-7 (SRS v1.10(iii))', () => {
+    // super() emits nothing (edge-absence): no ctor CALLS edge from NestSub to a parent type.
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) =>
+          e.sourceFilePath.includes('NestSub') &&
+          (e.target === 'Inner' || e.target === 'Outer'),
+      ),
+      'super() resolves nothing',
+    ).toEqual([]);
+  });
+
   it('resolves DOUBLY-VARIED qualified nested access (OUTER.INNER → new OUTER.INNER() + e.ping()) (REQ-010/§7(13)∘§7(5), §8 both kinds)', () => {
     // The composition of the outer-folding and tail-folding mechanisms — fixtured because
     // compositions are not assumed free. Both reference kinds asserted (§8:1839-1841).
@@ -740,6 +771,57 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     // [conservative pin; see WI-3-red-gate.md]
     expect(
       getRelationships(result, 'EXTENDS').filter((e) => e.source === 'TwinSub'),
+    ).toEqual([]);
+  });
+
+  // BL-8 heritage-downstream super arms (SRS v1.10(v), SDD-003 §8): unlike the dotted nested
+  // shape (NestSub/BL-7), the same-case twin's SIMPLE-NAME superclass `Twin` folds to a single
+  // bindings-channel workspace hit (the twin trigger is §3-excluded), so the super arms RESOLVE
+  // to the parent even though the EXTENDS edge stays unresolved — the two channels have
+  // independent reach (like the case-varied CaseKid/BL-1). This is the v1.28-F3 pin that
+  // distinguishes BL-8 (resolves) from BL-7 (self-loops). Ratified pins (probed 2026-07-06).
+  it('RESOLVES TwinSub super.spin() to the PARENT Twin.spin, not its own override — BL-8 (SRS v1.10(v))', () => {
+    const spinCalls = getRelationships(result, 'CALLS').filter(
+      (e) => e.target === 'spin' && e.sourceFilePath.includes('TwinSub'),
+    );
+    const resolved = spinCalls.find((e) => e.targetFilePath.includes('Twin.cls'));
+    expect(resolved, 'super.spin() resolves across the twin boundary').toBeDefined();
+    expect(resolved!.rel.targetId, "the parent Twin's spin").toContain('Twin.spin');
+    expect(
+      spinCalls.filter((e) => e.targetFilePath.includes('TwinSub.cls')),
+      "never self-loops to TwinSub's own override",
+    ).toEqual([]);
+  });
+
+  it('RESOLVES TwinSub super() to the PARENT Twin ctor — BL-8 (SRS v1.10(v))', () => {
+    const superCtor = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'Twin' && e.sourceFilePath.includes('TwinSub'),
+    );
+    expect(superCtor, 'super() resolves to the parent ctor').toBeDefined();
+    expect(superCtor!.rel.targetId, 'Twin.Twin').toContain('Twin.Twin');
+  });
+
+  // BL-12 same-case arm (SRS v1.28-F1, SDD-003 §2/§4/§8): SameA.cls and SameB.cls both declare
+  // top-level `Samey` under the identical exact-case key -> the exact-case channel's single-match
+  // guard and the §3 inject-none guard both bind NOTHING. Unlike an overload-ambiguous suppression
+  // OR the distinct member-name case-collision (which DO emit a REQ-015 record), a same-case
+  // TYPE-name collision is discharged by EDGE-ABSENCE ALONE — no mis-bind, and NO resolution
+  // record. Ratified pin (probed 2026-07-06 — the sole suppressed record is the unrelated CaseColl
+  // member arm). [conservative pin; see WI-3-red-gate.md]
+  it('binds NOTHING and records NOTHING for a same-case duplicate TYPE name (Samey) — BL-12 (SRS v1.28)', () => {
+    // edge-absence: neither `new Samey()` nor `s.hitA()` resolves
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.sourceFilePath.includes('SameCaller')),
+      'new Samey() binds nothing',
+    ).toEqual([]);
+    expect(
+      getRelationships(result, 'ACCESSES').filter((e) => e.sourceFilePath.includes('SameCaller')),
+      's.hitA() binds nothing (no receiver type)',
+    ).toEqual([]);
+    // and NO record: the same-case type collision emits no suppressed resolutionOutcome
+    expect(
+      suppressed(result).filter((o) => o.name === 'Samey' || o.name === 'hitA'),
+      'no REQ-015 record for the same-case type-name collision (edge-absence discharges it)',
     ).toEqual([]);
   });
 
