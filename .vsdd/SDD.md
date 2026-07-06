@@ -920,16 +920,19 @@ at WI-3.
 
 # SDD-003 — WI-3: Cross-file binding & trigger resolution
 
-- **Consumes:** SRS-001 (**v1.27**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
+- **Consumes:** SRS-001 (**v1.28**) **REQ-010** (cross-file binding enabler) and **REQ-011** (trigger-body
   resolution). The bounded limitations this SDD's §3/§4 handling implements are now catalogued in the SRS
   **§5.1 Bounded Limitations Register (BL-1…BL-14)** — the single normative source of truth; the
   amendment-version citations retained in §3/§4 below each trace to a BL row via the register's Source
   column. In register terms: the **valid-source heritage-form limitations** BL-1…BL-8 (REQ-007 v1.8/v1.10,
-  with the v1.12 super-arm correction and the v1.13 poisoned-MRO ratification folded into REQ-005/REQ-009
+  with the v1.12/v1.28 super-arm correction — BL-8 covers the BL-1 case-varied AND BL-5 same-case-twin
+  simple-name-superclass shapes, whose `super` arms resolve to the parent; BL-7 the BL-3 nested/dotted
+  shape — and the v1.13 poisoned-MRO ratification folded into REQ-005/REQ-009
   v1.15), and the **invalid-source shapes** — BL-9 class-in-`.trigger` (REQ-010 v1.6), BL-10/BL-11
   misfiled / type-referenced trigger (**REQ-010 v1.14** — relocated here from the former REQ-004 v1.6),
   BL-12 duplicate case-fold collision (**REQ-015 v1.16** — the consolidation of the former v1.5 exact-case
-  exception + v1.7 observability split), BL-13 fragment collision (REQ-010 v1.9), and BL-14 misfiled-trigger
+  exception + v1.7 observability split; the same-case arm records nothing per v1.28 F1), BL-13 fragment
+  collision (REQ-010 v1.9), and BL-14 misfiled-trigger
   collision (REQ-010 v1.11(c)); the NFR-001 **resolution-stage slice** + NFR-002 (cross-cutting). **RESEARCH-003** (§A.6 host-API spike,
   Architect-approved 2026-06-30; **addenda 4–17**, 2026-07-02 (Addendum 15: v1.5 per-pass arm + twin static-member probes;
   Addendum 16: heritage-downstream + poisoned-MRO probes; Addendum 17: the super-arm self-loop probe) — note Addendum 5 corrects Addendum 4's
@@ -1096,12 +1099,14 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     The postcondition is further bounded by the ratified SRS v1.5–v1.11 exceptions — in particular the
     v1.6 class-misfiled-in-`.trigger` exclusion, the v1.9 fragment-collision inject-none, the v1.11(c)
     misfiled-trigger collision (a `.cls`-misfiled trigger poisons a valid class's folded key), and the
-    heritage-downstream shapes (per §5.1 register: **BL-7** for the v1.10(iii)/(v) shapes — `super()` +
+    heritage-downstream shapes (per §5.1 register: **BL-7** for the v1.10(iii) nested-parent shape only
+    (qualified/dotted superclass) — `super()` +
     inherited-member unresolved AND the `super.method()` self-loop, a ratified mis-bind carve-out that
     rides the receiver-binding synthesis, NOT the bindings-channel lookup, so the clause's bindings-channel
-    no-mis-bind invariant stands; **BL-8** for the v1.8(i) case-varied shape (v1.12-corrected) —
-    `super()`/`super.method()` instead RESOLVE to the parent, only the inherited-member arm unresolved, as
-    §4/§8 state) also defeat resolution for
+    no-mis-bind invariant stands; **BL-8** for the v1.8(i) case-varied AND the v1.10(v) same-case-twin
+    shapes (simple-name superclass; v1.12/v1.28-corrected) —
+    `super()`/`super.method()` instead RESOLVE to the parent, only the inherited-member implicit-this arm
+    unresolved, as §4/§8 state) also defeat resolution for
     their target shapes, exactly as §3/§4 catalogue — the host's inheritance
     pre-pass precedes the registration and suppresses retry, so case-varied `extends`/`implements` is
     the ratified SRS v1.8(i) bounded liveness limitation (exact-case heritage resolves via the host's
@@ -1124,10 +1129,11 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     folded-same-name top-level types) emits no edge and is recorded unresolved (REQ-015). **The single record-observability rule (ratified as the SRS
     v1.7 REQ-015 observability interpretation; §8 aligns to it):** a positive `suppressed` outcome on the pipeline result is
     assertable **iff the ambiguity reaches the host resolver** — competing in-repository candidates of
-    equal precedence (§2): overload-ambiguity among live candidates, member-name case-collision, AND — on
-    the §1 exact-case channel — a **same-case duplicate top-level type name** (two equal-precedence
-    candidates reach the resolver: BL-12's same-case arm, a competing-candidate ambiguity emitting the
-    positive record per REQ-015, Gate-3-verified); a **guard-suppressed collision** (a duplicate/colliding folded key: two in-repository
+    equal precedence (§2): overload-ambiguity among live candidates, or a member-name case-collision. A
+    **type-name collision** — including a same-case duplicate top-level type name on the §1 exact-case
+    channel — does **NOT** record: it binds nothing and emits no positive record, discharged by
+    edge-absence alone (BL-12's same-case arm, probe-verified 2026-07-06; no mis-bind — the conservative
+    default, not a §1.2(b) exception, per SRS §2/REQ-015/§9). A **guard-suppressed collision** (a duplicate/colliding folded key: two in-repository
     candidates exist, but the §3 inject-none guard never creates the key, so the ambiguity is stopped
     BEFORE it reaches the resolver — a competing-candidate ambiguity per §2, NOT a plain miss, which by §2
     requires no in-repository candidate at all) has edge ABSENCE as its black-box observable: because the
@@ -1149,9 +1155,9 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
     regression pin, not by a reliance. **The invariant does
     NOT extend to the §1 exact-case channel** (ctor/heritage/static-receiver forms): a
     case-variant duplicate binds its unique exact-case key there (BL-12's exact-case arm, Constitution
-    §1.2(b)); a same-case duplicate binds nothing AND — two equal-precedence candidates having reached the
-    resolver — emits a positive unresolved record (BL-12's same-case arm: a competing-candidate ambiguity,
-    the retained REQ-015 conservative default, Gate-3-verified) (the Addendum-13 shape-table rows — probed
+    §1.2(b)); a same-case duplicate binds nothing and emits **no record** — a type-name collision
+    discharged by edge-absence alone (BL-12's same-case arm, probe-verified 2026-07-06; no mis-bind — the
+    retained REQ-015 conservative default, NOT a §1.2(b) exception) (the Addendum-13 shape-table rows — probed
     behaviour, not a mechanism pin) — the documented §3 limitation (the exact-case bind is
     invalid-source-only, Architect-accepted + probe-corrected 2026-07-02), not a WI-3-controllable outcome.
 - **REQ-011 (trigger body references a user-defined type/method/field → resolved edge).**
@@ -1439,17 +1445,20 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   its §8 fixture is red:** a cross-file superclass member-walk addition under `languages/apex/` (the same
   class of Apex-local addition as the nested-type and static-receiver fallbacks) — **never** a silent
   conservative-unresolved, which would reduce a REQ-005/007 SHALL without an SRS amendment (Constitution §7).
-- **Heritage-limitation downstream family (SRS v1.11(a)/(b) → v1.12-corrected)** — WHERE a heritage
+- **Heritage-limitation downstream family (SRS v1.11(a)/(b) → v1.12/v1.28-corrected)** — WHERE a heritage
   clause is unresolved (v1.8(i)/v1.10(iii)/(v) shapes), the subtype's MRO lacks the parent, so its
   **MRO-dependent inherited-member implicit-this** references remain unresolved (Addendum 16). The
-  **`super` arms diverge from the MRO path (SRS v1.12, Step-3b probe-confirmed for the v1.8(i)
-  case-varied shape):** `super()` and `super.method()` DO resolve to the parent — the `super`-receiver
+  **`super` arms diverge from the MRO path for the simple-name-superclass shapes (SRS v1.12/v1.28,
+  Step-3b probe-confirmed — the v1.8(i) case-varied shape AND the v1.10(v) same-case twin, register
+  BL-8):** `super()` and `super.method()` DO resolve to the parent — the `super`-receiver
   synthesis folds the superclass identifier from the `extends` clause and consults the cross-file
   registration channel independently of the heritage pre-pass, reaching the parent even though the
   EXTENDS/IMPLEMENTS *edge* stays unresolved (`CaseKid` → CALLS into `Base.Base`/`Base.greet`, with no
   EXTENDS edge to Base — the two mechanisms have independent cross-file reach). This supersedes the
-  earlier v1.11(a) `super()`-unresolved / `super.method()`-self-loop pins for the case-varied shape; the
-  v1.10(iii)/(v) shapes are not re-probed and remain as pinned. The v1.10(iv) MIS-BOUND-heritage MRO
+  earlier v1.11(a) `super()`-unresolved / `super.method()`-self-loop pins for BOTH simple-name-superclass
+  shapes (v1.8(i) case-varied at v1.12, v1.10(v) same-case twin at v1.28); **only the v1.10(iii)
+  nested-parent shape (qualified/dotted superclass, register BL-7) remains on those pins** — `super()` +
+  inherited unresolved, `super.method()` self-loops to the subtype's own override. The v1.10(iv) MIS-BOUND-heritage MRO
   **tripwire FIRED at Step 3b and is RATIFIED (SRS v1.13)**: a typed-receiver member call on the subtype
   (`Sub s; s.decoy2()`) rides the mis-bound MRO into the decoy's member and resolves there — the
   internally-consistent consequence of the ratified mis-bound EXTENDS edge (pin 767). Pinned as a
@@ -1593,12 +1602,12 @@ same-unit. WI-3 reuses every WI-2 mechanic; it adds no resolution algorithm.
   case (which *is* injected) but dropped from injection because the extension is the only available
   trigger discriminant. No throw.
 - **Same-case duplicate type name (`class Samey` in two files)** — the exact-case channel binds
-  **nothing** but, two equal-precedence candidates having reached the resolver, emits a positive
-  unresolved record (BL-12's same-case arm — the retained REQ-015 conservative default, not a (b)
-  exception; Gate-3-verified) (the Addendum-13 same-case-duplicate row — probed); and the §3
+  **nothing** and emits **no record** — a type-name collision discharged by edge-absence alone (BL-12's
+  same-case arm, probe-verified 2026-07-06; no mis-bind — the retained REQ-015 conservative default, not a
+  §1.2(b) exception) (the Addendum-13 same-case-duplicate row — probed); and the §3
   inject-none guard keeps the bindings channel empty for the folded key → the typed-receiver member form
-  is edge-absent there → all forms conservatively unresolved (no bind); pinned by fixture (the REQ-015
-  main scenario governs, no v1.5 exception fires).
+  is edge-absent there → all forms conservatively unresolved (no bind, no record); pinned by fixture (the
+  REQ-015 type-name-collision no-record shape governs, no v1.5 exception fires).
 - **Lone correctly-filed trigger referenced as a type (`new T()`/`extends T`, only `T.trigger` in the
   repo)** — invalid referencing source; the exact-case channel **binds the trigger** (the Addendum-13
   lone-trigger row — probed behaviour) (probed: CALLS/EXTENDS into `Class:T.trigger:T`)
@@ -1889,19 +1898,22 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   this shape and ARE valid — `Outer.Level.HIGH` — covered by the nested-enum bullet below.)* The **doubly-varied** form (`OUTER.INNER` —
   §7(13) outer folding ∘ §7(5) fold-extended tail lookup, the composition of the two reliance-backed
   mechanisms) is fixtured too — compositions are not assumed free;
-- **heritage-downstream (SRS v1.11(a) → v1.12-corrected) + poisoned-MRO tripwire (v1.11(b))** — under a
+- **heritage-downstream (SRS v1.11(a) → v1.12/v1.28-corrected) + poisoned-MRO tripwire (v1.11(b))** — under a
   case-varied heritage clause: the subtype's **MRO-dependent implicit-this inherited member** stays
   unresolved (pinned liveness — the MRO lacks the parent). The **`super` arms resolve to the parent**
   (SRS v1.12, Step-3b probe-confirmed): `super.method()` → CALLS into the parent's member
   (`CaseKid.greetUp()` → `Base.greet`, NOT the self-loop) and `super()` → CALLS into the parent ctor
   (`Base.Base`), both via the heritage-pre-pass-independent `super`-receiver synthesis — so the subtype
   carries `super`-sourced CALLS into Base with NO EXTENDS edge to it. This supersedes the earlier
-  v1.11(a) `super()`-unresolved / `super.method()`-self-loop pins for the case-varied shape; through the v1.10(iv)
+  v1.11(a) `super()`-unresolved / `super.method()`-self-loop pins for BOTH simple-name-superclass shapes
+  (v1.8(i) case-varied at v1.12, v1.10(v) same-case twin at v1.28); through the v1.10(iv)
   mis-bound EXTENDS, the tripwire FIRED and is RATIFIED (SRS v1.13): a typed-receiver `s.decoy2()` DOES ride
   the mis-bound MRO into the decoy's member (`TInner.cls:TInner.decoy2`) — pinned as a documented bounded
   false edge, WI-4 pipeline reorder committed as the fix (ITEM-004);
-  the v1.10(iii)/(v) downstream shapes are family-pinned (same suppressed-MRO mechanism-independent
-  behaviour, per the Addendum-16 determinacy);
+  the v1.10(iii) and v1.10(v) downstream **inherited-member implicit-this** arms are family-pinned
+  unresolved (same suppressed-MRO mechanism-independent behaviour, per the Addendum-16 determinacy), but
+  their **`super` arms differ**: v1.10(v)'s simple-name superclass resolves to the parent (BL-8, like the
+  case-varied shape above) while v1.10(iii)'s qualified/dotted superclass self-loops (BL-7);
 - **misfiled-trigger collision (SRS v1.11(c), BOTH halves)** — a `.cls`-misfiled trigger + a
   same-folded-name valid class (case-variant sub-shape) → the valid class's typed-receiver form stays
   unresolved (the limitation's interior) AND its exact-case ctor form still binds via the host channel
@@ -2013,9 +2025,9 @@ automated), completing the WI-2-deferred §9 cross-file scenarios:
   trigger scope — compositions are not assumed free);
 - **same-case duplicate** — two `class Samey` files → all reference forms conservatively unresolved
   (the Addendum-13 same-case-duplicate row + the §3 inject-none guard), never a bind; the exact-case-channel
-  arm (ctor/heritage/static) additionally asserts a positive `suppressed`/unresolved record — BL-12's
-  same-case arm, two equal-precedence candidates reaching the resolver (Gate-3-verified) — while the
-  bindings-channel typed-receiver form is edge-absence (guard-miss);
+  arm (ctor/heritage/static) emits **no edge and no record** — BL-12's same-case arm, a type-name collision
+  discharged by edge-absence alone (probe-verified 2026-07-06, no mis-bind) — and the
+  bindings-channel typed-receiver form is likewise edge-absence (guard-miss);
 - **lone-trigger reference** — `new Lone()` with only `Lone.trigger` present → binds the trigger def via
   the exact-case channel (pinned REQ-010 v1.14 corrected-exception behaviour, ratified v1.6 — not correct resolution);
   BOTH arms are fixtured (the two arms ride different passes, so representativeness was not assumed —
