@@ -919,8 +919,10 @@ export function pickUniqueGlobalClass(
  *  in the same file (Codex PR #1497 review, finding 2).
  *
  *  Exported for unit testing — language-agnostic logic, exercised
- *  via synthetic stubs in `pick-implicit-this-overload.test.ts`. The
- *  production call site is `applyFreeCallFallback` immediately above. */
+ *  via synthetic stubs in `pick-implicit-this-overload.test.ts`. In
+ *  production, `emitFreeCallFallback` calls the underlying
+ *  `resolveImplicitThisCall` (below) directly; this wrapper only
+ *  exposes the overload-narrowing outcome for those tests. */
 export function pickImplicitThisOverload(
   site: {
     readonly inScope: ScopeId;
