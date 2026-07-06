@@ -685,9 +685,16 @@ dated provenance.*
   threshold to Apex files as to other supported languages: a file exceeding that threshold is skipped at
   the same limit, with no Apex-specific exemption.
 - **NFR-004 (Maintainability)** — Apex resolution SHALL be covered by an automated resolution test that
-  exercises every §9 resolution scenario. (The concrete artifact is the auto-discovered `apex-resolution`
+  exercises every §9 **resolution scenario** — the scenarios tagged REQ-005, REQ-006, REQ-007, REQ-008,
+  REQ-009, REQ-010, REQ-011, REQ-012, REQ-013, or REQ-015 (the reference-resolution requirements), as
+  distinct from the recognition / graph-population (REQ-001…004), parity (NFR-002), and reliability
+  (NFR-001) scenarios. (The concrete artifact is the auto-discovered `apex-resolution`
   suite, auto-discovered by the same CI parity glob as the peer-language resolution suites, per Constitution
   §2.5 — a mechanism reference, not part of the obligation.)
+- **Considered, not separately constrained (host-inherited).** Usability and Portability were reviewed
+  (ISO 25010) and judged not to warrant Apex-specific requirements this cycle — both are inherited from the
+  host GitNexus platform. (Security is covered by Constitution SECT-001 for untrusted input; recorded in
+  the §A.19 elicitation-facts.)
 
 ## 7. Constraints
 
@@ -711,10 +718,11 @@ dated provenance.*
 ```gherkin
 # REQ-001, REQ-002, REQ-003
 Scenario: Apex classes and members enter the graph
-  Given a repository containing an Apex class with a method and a field
+  Given a repository containing an Apex class with a method, a constructor, a property, and a field, and an enum with a constant
   When GitNexus analyses the repository
   Then the graph contains a node for the class
-  And the graph contains nodes for its method and field associated with the class
+  And the graph contains nodes for the class's method, constructor, property, and field associated with the class
+  And the graph contains a node for the enum constant associated with its enum
 
 # REQ-002 — interfaces, enums, and nested types as container nodes
 Scenario: Interfaces, enums, and nested types enter the graph as container nodes
@@ -729,6 +737,13 @@ Scenario: A trigger resolves a call to a user-defined handler
   When GitNexus analyses the repository
   Then the graph contains a container node for the trigger
   And there is a resolved edge from the trigger to the user-defined method
+
+# REQ-011 — trigger-body bare type usage + field access
+Scenario: A trigger body's bare declared-type usage and field access resolve
+  Given an Apex trigger whose body declares a variable of a user-defined class type and accesses a field on that variable
+  When GitNexus analyses the repository
+  Then the field access resolves to the user-defined type's field (ACCESSES from the trigger)
+  And no standalone resolved edge is emitted for the bare declared-type usage (REQ-012 no-edge parity)
 
 # REQ-005, REQ-006
 Scenario: An in-repository method call resolves with no unknown symbol
