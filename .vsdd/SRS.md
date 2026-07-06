@@ -403,7 +403,7 @@ WI-4-deferred shortfall named next. The **sole** valid-source **heritage-edge** 
 — a **case-varied** heritage clause (BL-1) plus two **exact-case** heritage clauses (nested-parent
 `extends Outer.Inner`, BL-3; same-case twin `Foo.trigger`+`Foo.cls`, BL-5); its downstream unresolved arms
 are BL-7 (`super()` + inherited-member, v1.10(iii) nested-parent) and BL-8 (inherited-member only, v1.8(i)
-case-varied + v1.10(v) same-case twin — `super()`/`super.method()` resolve). Every other reference — every reference outside the heritage family (BL-1…BL-8), case-varied or exact-case — resolves. So the shortfall is a heritage-pre-pass
+case-varied + v1.10(v) same-case twin — `super()`/`super.method()` resolve). Every other valid, correctly-filed reference outside the heritage family (BL-1…BL-8), case-varied or exact-case, resolves (the invalid-source BL-9…BL-14 shapes are governed by their register rows). So the shortfall is a heritage-pre-pass
 limitation (not purely a case-insensitivity one), and the SRS *meets* INTENT-001's delegated acceptance
 rather than falling short of it.
 
@@ -477,8 +477,8 @@ rather than falling short of it.
 - **BR-2 (Must):** References among user-defined Apex symbols resolve, so Apex no longer reports unknown
   symbols for in-repository targets. *Success:* zero unresolved references to unambiguous in-repository
   Apex symbols across the acceptance scenarios (§9), **except the bounded, Architect-ratified limitations
-  recorded in REQ-007/REQ-010/REQ-015 and catalogued in the §5.1 register (valid-source heritage liveness
-  under v1.8/v1.10; the invalid-source shapes) — each a documented, fixture-pinned exception, not open
+  recorded in REQ-007/REQ-010/REQ-015 and catalogued in the §5.1 register (the valid-source heritage-family limitations BL-1…BL-8 — the heritage edges plus their
+  BL-7/BL-8 super/inherited-member arms; and the invalid-source shapes BL-9…BL-14) — each a documented, fixture-pinned exception, not open
   drift.**
 - **BR-3 (Must):** Apex resolution quality matches the Java/Kotlin benchmark for applicable capabilities.
   *Success:* the §9 parity scenario (REQ-012) resolves each applicable construct equivalently to the
