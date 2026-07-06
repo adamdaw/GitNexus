@@ -395,7 +395,7 @@ reachable only in uncompiled Apex) are genuinely **outside** the settled in-scop
 invalid-source shape whose conservative outcome is *correct* — e.g. a member-name case-collision, which
 emits a positive unresolved record with no mis-bind — is not a limitation and remains in scope. The
 BL-9…BL-14 rows catalogue these bounded limitations; where a row also documents a correct-conservative arm (e.g. BL-12's same-case no-mis-bind default, or BL-9's exact-case correct bind), that arm is the correct outcome per the criterion above, not a shortfall. Every valid, correctly-filed
-**non-heritage** reference among user-defined symbols is in-scope and carries the full SHALL — **including
+reference **outside the heritage family (BL-1…BL-8 — the heritage clause and its super/inherited-member/poisoned-MRO downstream)** among user-defined symbols is in-scope and carries the full SHALL — **including
 case-varied non-heritage references, which resolve case-insensitively via the host's case-folding** (Apex is
 case-insensitive; verified against the resolution suite: a case-varied cross-file constructor, method,
 interface-typed, and `.CLS`-filed reference all resolve); the case-varied **heritage** clause (BL-1) is the
@@ -403,8 +403,7 @@ WI-4-deferred shortfall named next. The **sole** valid-source **heritage-edge** 
 — a **case-varied** heritage clause (BL-1) plus two **exact-case** heritage clauses (nested-parent
 `extends Outer.Inner`, BL-3; same-case twin `Foo.trigger`+`Foo.cls`, BL-5); its downstream unresolved arms
 are BL-7 (`super()` + inherited-member, v1.10(iii) nested-parent) and BL-8 (inherited-member only, v1.8(i)
-case-varied + v1.10(v) same-case twin — `super()`/`super.method()` resolve). Every other reference — every case-varied non-heritage
-reference, and every exact-case non-heritage reference — resolves. So the shortfall is a heritage-pre-pass
+case-varied + v1.10(v) same-case twin — `super()`/`super.method()` resolve). Every other reference — every reference outside the heritage family (BL-1…BL-8), case-varied or exact-case — resolves. So the shortfall is a heritage-pre-pass
 limitation (not purely a case-insensitivity one), and the SRS *meets* INTENT-001's delegated acceptance
 rather than falling short of it.
 
@@ -449,6 +448,10 @@ rather than falling short of it.
   declared type, a constructor expression's type (`new Widget()` → Widget), a literal's type, or a method's
   declared return type — not a runtime or promoted type; the basis for REQ-005 type-usage binding and
   REQ-008 exact-type overload narrowing.
+- **Liveness limitation** — an under-bind: a reference the SHALL would resolve emits no edge (edge-absence);
+  a bounded shortfall, not a mis-bind.
+- **Safety limitation** — an over-bind: a ratified *documented false edge* — a resolved edge to a
+  wrong-but-internally-consistent target, emitted where the SHALL would withhold or redirect it.
 - **Documented false edge** — a resolved edge deliberately emitted to a wrong-but-internally-consistent
   target under a ratified bounded limitation (Constitution §1.2), reachable only in a narrow named shape
   and carrying a committed fix path; not a conservatism waiver.
@@ -687,8 +690,8 @@ dated provenance.*
 | BL-10 | trigger mis-declared in a `.cls` file | invalid | becomes globally referenceable — a name reference binds the trigger | REQ-010 v1.14 (ratified v1.6) | b | — |
 | BL-11 | correctly-filed trigger's name referenced as a type, no same-named class exists | invalid | an exact-case reference whose case uniquely matches binds the trigger def | REQ-010 v1.14 (ratified v1.6) | b | — |
 | BL-12 | duplicate case-folded-colliding top-level type names (case-variant and same-case sub-arms) | invalid | an exactly-case-matching constructor/inheritance/static-type reference binds the unique exact-case match; a same-case duplicate reference binds nothing and emits no record — a type-name collision is discharged by edge-absence alone (probe-verified 2026-07-06); no mis-bind (liveness) | REQ-015 v1.16 (ratified v1.5) | b (exact-case arm) / — (same-case arm = type-name collision, no record) | — |
-| BL-13 | malformed file re-parents a nested-type fragment to file scope, case-folded name collides with a legit top-level type | invalid | registration registers neither → the valid type's typed-receiver/case-varied cross-file forms unresolved (liveness) | REQ-010 v1.9 | — | — |
-| BL-14 | trigger mis-declared in a `.cls` file sharing a case-folded name with a valid class | invalid | registration registers neither → the valid class's cross-file forms unresolved; a case-variant sub-shape's exact-case forms still resolve, a same-case sub-shape loses those too (liveness) | REQ-010 v1.11(c) | — | — |
+| BL-13 | malformed file re-parents a nested-type fragment to file scope, case-folded name collides with a legit top-level type | invalid | registration registers neither → the valid type's typed-receiver/case-varied cross-file forms unresolved (liveness) | REQ-010 v1.18 (ratified v1.9) | — | — |
+| BL-14 | trigger mis-declared in a `.cls` file sharing a case-folded name with a valid class | invalid | registration registers neither → the valid class's cross-file forms unresolved; a case-variant sub-shape's exact-case forms still resolve, a same-case sub-shape loses those too (liveness) | REQ-010 v1.18 (ratified v1.11(c)) | — | — |
 
 ## 6. Non-Functional Requirements (ISO 25010, measurable)
 
@@ -799,8 +802,8 @@ Scenario: A member reference colliding by case on two members is left unresolved
   Then no resolved edge is emitted for that reference
   And a positive unresolved record is emitted for it (two equal-precedence member candidates)
   # Like the BL-12 type-name collision, this shape arises only on invalid case-duplicate source; UNLIKE
-  # BL-12 (a no-record liveness limitation), its correct conservative outcome — a positive record, no
-  # mis-bind — IS delivered, so it is a live REQ-015 obligation, not a bounded limitation.
+  # BL-12 (a no-record liveness limitation), its required outcome — a positive unresolved record and no
+  # binding — is a live REQ-015 obligation, not a bounded limitation.
 
 # REQ-015 (amended v1.5 — the bounded fallback-channel exception)
 Scenario: Case-variant duplicate types — a unique exact-case reference resolves, other forms do not (documented limitation)
