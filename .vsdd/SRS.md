@@ -378,33 +378,22 @@ languages model no standard library, and parity excludes it.
 
 **In-scope boundary (settled per INTENT-001's delegation).** INTENT-001's acceptance condition
 delegates the precise scope of "in-scope" to this SRS ("the precise scope of 'in-scope' is settled in
-deliberation and recorded in the SRS"). Discharging that delegation: the **valid-source heritage
-limitations** (§5.1 register BL-1…BL-8), all forced by the host's **inheritance pre-pass** running before
-cross-file registration, are **epic-deferred with a committed in-epic fix at WI-4/ITEM-004** (the pipeline
-reorder). They fall in two sub-classes: **under-binds (shortfalls)** — the heritage `extends`/`implements`
-edge is absent (BL-1 case-varied, BL-3 nested-parent, BL-5 same-case-twin) and a subtype's inherited-member
-implicit-this arm stays unresolved (BL-7 for the v1.10(iii) nested-parent shape, where `super()` is
-unresolved too and `super.method()` self-loops; BL-8 for the v1.8(i) case-varied AND v1.10(v)
-same-case-twin shapes, where `super()`/`super.method()` instead **resolve** to the parent — a correct
-CALLS edge with no EXTENDS edge, so only the inherited-member arm is the shortfall there); and **over-binds
-(ratified false edges)** — the heritage clause or a downstream member mis-binds (BL-2, BL-4, BL-6, and the
-BL-7 `super.method()` self-loop), documented under Constitution §1.2(a). None is **parity-excluded** (peers are
-case-sensitive and never exhibit these shapes) or **out of scope**; INTENT-001's acceptance is met at epic
-completion, and until then they stand as documented, fixture-pinned limitations. The **invalid-source limitations** (§5.1 register BL-9…BL-14 — bounded shortfalls or false edges
-reachable only in uncompiled Apex) are genuinely **outside** the settled in-scope set for this cycle. An
-invalid-source shape whose conservative outcome is *correct* — e.g. a member-name case-collision, which
-emits a positive unresolved record with no mis-bind — is not a limitation and remains in scope. The
-BL-9…BL-14 rows catalogue these bounded limitations; where a row also documents a correct-conservative arm (e.g. BL-12's same-case no-mis-bind default, or BL-9's exact-case correct bind), that arm is the correct outcome per the criterion above, not a shortfall. Every valid, correctly-filed
-reference **outside the heritage family (BL-1…BL-8 — the heritage clause and its super/inherited-member/poisoned-MRO downstream)** among user-defined symbols is in-scope and carries the full SHALL — **including
-case-varied non-heritage references, which resolve case-insensitively via the host's case-folding** (Apex is
-case-insensitive; verified against the resolution suite: a case-varied cross-file constructor, method,
-interface-typed, and `.CLS`-filed reference all resolve); the case-varied **heritage** clause (BL-1) is the
-WI-4-deferred shortfall named next. The **sole** valid-source **heritage-edge** shortfall is BL-1/BL-3/BL-5
-— a **case-varied** heritage clause (BL-1) plus two **exact-case** heritage clauses (nested-parent
-`extends Outer.Inner`, BL-3; same-case twin `Foo.trigger`+`Foo.cls`, BL-5); its downstream unresolved arms
-are BL-7 (`super()` + inherited-member, v1.10(iii) nested-parent) and BL-8 (inherited-member only, v1.8(i)
-case-varied + v1.10(v) same-case twin — `super()`/`super.method()` resolve). Every other valid, correctly-filed reference outside the heritage family (BL-1…BL-8), case-varied or exact-case, resolves (the invalid-source BL-9…BL-14 shapes are governed by their register rows). So the shortfall is a heritage-pre-pass
-limitation (not purely a case-insensitivity one), and the SRS *meets* INTENT-001's delegated acceptance
+deliberation and recorded in the SRS"). Discharging that delegation: the **valid-source heritage-family limitations** (§5.1 register **BL-1…BL-8** —
+the heritage `extends`/`implements` edge and its `super`/inherited-member/poisoned-MRO downstream) are
+**epic-deferred with a committed in-epic fix at WI-4/ITEM-004**. Each is a documented, fixture-pinned
+limitation — an under-bind (a liveness shortfall) or a ratified over-bind (a documented false edge under
+Constitution §1.2(a)); the §5.1 register carries each row's observable outcome and §1.2 class. None is
+**parity-excluded** (peers are case-sensitive and never exhibit these shapes) or **out of scope** —
+INTENT-001's acceptance is met at epic completion. The **invalid-source shapes** (§5.1 register
+**BL-9…BL-14** — reachable only in uncompiled Apex) are genuinely **outside** the settled in-scope set for
+this cycle; an invalid-source shape whose conservative outcome is *correct* (e.g. a member-name
+case-collision — a positive unresolved record, no mis-bind) is not a limitation and remains in scope, and a
+BL row's correct-conservative arm (e.g. BL-12's same-case no-mis-bind default, BL-9's exact-case bind) is
+likewise the correct outcome, not a shortfall. Every valid, correctly-filed reference **outside the heritage
+family (BL-1…BL-8)** — case-varied or exact-case — carries the full SHALL and resolves (case-varied
+non-heritage references resolve case-insensitively via the host's case-folding, verified against the
+resolution suite: a case-varied cross-file constructor, method, interface-typed, and `.CLS`-filed reference
+all resolve). So the sole shortfall is the heritage-family boundary (not a case-insensitivity one), and the SRS *meets* INTENT-001's delegated acceptance
 rather than falling short of it.
 
 ## 2. Definitions
@@ -448,6 +437,9 @@ rather than falling short of it.
   declared type, a constructor expression's type (`new Widget()` → Widget), a literal's type, or a method's
   declared return type — not a runtime or promoted type; the basis for REQ-005 type-usage binding and
   REQ-008 exact-type overload narrowing.
+- **Assignable** — a static type the benchmark's overload rules would accept for a parameter's declared
+  type without exact identity (e.g. a subtype, or a widening the benchmark permits); contrasted with an
+  *exact* (identical) static-type match. REQ-008 narrows by exact identity, not assignability.
 - **Liveness limitation** — an under-bind: a reference the SHALL would resolve emits no edge (edge-absence);
   a bounded shortfall, not a mis-bind.
 - **Safety limitation** — an over-bind: a ratified *documented false edge* — a resolved edge to a
@@ -706,8 +698,9 @@ dated provenance.*
 - **NFR-004 (Maintainability)** — Apex resolution SHALL be covered by an automated resolution test that
   exercises every §9 **resolution scenario** — the scenarios tagged REQ-005, REQ-006, REQ-007, REQ-008,
   REQ-009, REQ-010, REQ-011, REQ-012, REQ-013, or REQ-015 (the reference-resolution requirements), as
-  distinct from the recognition / graph-population (REQ-001…004), metadata (REQ-014), compatibility/non-regression (NFR-002), and reliability
-  (NFR-001) scenarios. (The concrete artifact is the auto-discovered `apex-resolution`
+  distinct from the other §9 scenarios — recognition / graph-population (REQ-001…004), metadata (REQ-014),
+  reliability (NFR-001), and over-budget (NFR-003). (NFR-002 non-regression has no §9 scenario — its
+  acceptance is the peer suite staying green.) (The concrete artifact is the auto-discovered `apex-resolution`
   suite, auto-discovered by the same CI parity glob as the peer-language resolution suites, per Constitution
   §2.5 — a mechanism reference, not part of the obligation.)
 - **Considered, not separately constrained (host-inherited).** Usability and Portability were reviewed
