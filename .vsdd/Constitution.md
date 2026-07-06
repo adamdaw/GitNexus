@@ -5,7 +5,7 @@ Builder from the host project's existing conventions; **ratified by the Architec
 2026-06-28**. Changed only by the amendment process below.*
 
 - **Identifier:** CONST-gitnexus-apex
-- **Version:** 1.1.1 · **Date:** 2026-06-30 · **Status:** ratified · **Supersedes:** 1.1.0
+- **Version:** 1.1.3 · **Date:** 2026-07-05 · **Status:** ratified · **Supersedes:** 1.1.2
 - **Ratified:** Adam (Architect), 2026-06-28. §6 fuzz budget right-sized pre-ratification (saturation
   exit + parity bar, replacing the 500k-execution count) — a draft revision, not a §7 amendment.
 - **Amendment v1.1.0 (2026-06-29, Architect Adam):** §2.2 refined — generic, language-agnostic
@@ -22,6 +22,22 @@ Builder from the host project's existing conventions; **ratified by the Architec
   stays absolutely forbidden; naming Apex in a comment is permitted (and consistent with host convention).
   Surfaced by a WI-2 Gate-4 Pass-1 reviewer split (one reviewer read the literal ban as violated by the
   seam comments, one read it as conformant) — the ambiguity was in the Constitution text, not the code.
+- **Amendment v1.1.2 (2026-07-04, Architect Adam):** §1.2 (Conservatism) admits a bounded set of
+  documented limitations that depart from the conservative default. Surfaced by a WI-3 Gate-1 Phase-5
+  cascade cold re-review: rounds of SRS bounded exceptions had ratified both **(a) valid-source false
+  edges** and **(b) invalid-source channel binds** while §1.2's head still forbade any misleading binding
+  unconditionally — the head stood contradicted by its own ratified exceptions. §1.2 now records both
+  classes as Architect-ratified, fixture-pinned documented limitations (valid-source class with a committed
+  WI-4 fix path), not a licence to invent misleading bindings. The exact exception membership is the §1.2
+  clause body's BL-row citations against the SRS §5.1 register (the single source of truth) — not
+  re-enumerated here. This does **not** weaken a
+  non-waivable baseline (§7 — SECT-001 and the empty-Prove floor are untouched); the conservatism default
+  stands everywhere else.
+- **Amendment v1.1.3 (2026-07-05, Architect Adam):** editorial — §1.2's exception citations re-pointed to
+  the SRS §5.1 Bounded Limitations Register (the single source of truth for the exception catalog) and the
+  exact-case-arm split noted for BL-12. No guarantee is altered and no exception is added or removed (the
+  (a)/(b) membership is unchanged); a §7-editorial citation re-point, versioned per §7's "committed as a new
+  dated version" rule.
 
 This project is a fork of `abhigyanpatwari/GitNexus` adding Apex language support. Its prime
 directive: **honour the host project's standing conventions** (`DoD.md`, `CONTRIBUTING.md`,
@@ -34,6 +50,17 @@ govern. Nothing here weakens a host-project gate.
    OOP support for user-defined symbols. It does not invent a richer model than peer languages have.
 2. **Conservatism under ambiguity** (host roadmap principle): prefer emitting *no* binding over a
    misleading one. An unresolved external reference is correct behaviour, not a defect.
+   *(Amended v1.1.2, 2026-07-04, Adam.)* A bounded, **Architect-ratified, fixture-pinned** set of
+   limitations departs from the conservative default — each catalogued in the **SRS §5.1 Bounded
+   Limitations Register** and reachable only in a narrow named shape: **(a) valid-source false edges** —
+   register **BL-2, BL-4, BL-6, and the BL-7 `super.method()` self-loop** (committed fix path WI-4); and
+   **(b) invalid-source channel binds** — register **BL-10, BL-11, and the BL-12 exact-case arm** (BL-12's
+   same-case arm is the retained conservative default, not a (b) exception), reachable only in uncompiled
+   Apex. Both classes arise because suppressing them would require Apex-specific coupling in shared host
+   code (forbidden by §2) or trade one graph inconsistency for another (an EXTENDS edge absent from its own
+   MRO). These are **not** licence to invent a misleading binding — the conservatism default (no binding
+   over a misleading one) stands everywhere else and is never waived for convenience. (The register is the
+   single source of truth; this clause cites its rows and does not restate them.)
 3. **Additive, non-regressing.** Adding Apex MUST NOT change graph or resolution behaviour for any
    existing language. The existing suite stays green.
 4. **The goal is not a compiler.** No standard-library, sObject, or schema modelling — peer languages
