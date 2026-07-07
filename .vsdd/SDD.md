@@ -2070,4 +2070,293 @@ nested-qualified resolved references each also assert zero unresolved record for
 The cross-file forms of REQ-005/007/009 that WI-2 verified only same-unit are **claimed here** (this is the
 WI-3 completion); the parity-fixture (REQ-012) and external-handling (REQ-013) forms remain **WI-4**.
 
-*WI-4 SDD section follows after WI-3 clears its gates, in dependency order.*
+---
+
+# SDD-004 — WI-4: Parity hardening & external handling
+
+*Phase 2 spec for ITEM-004. Grounded in **RESEARCH-004** (§A.6 host-API spike, 2026-07-07). WI-4 demonstrates
+Java/Kotlin-tier resolution parity (REQ-012), handles external references as benign-unresolved (REQ-013),
+**discharges the WI-3-carried heritage limitations BL-1…BL-8** via the committed heritage/namespace-sibling
+pipeline reorder, **completes REQ-008's parameter-typed-argument narrowing** (deferred by WI-2), and folds a
+receiver **variable**'s name for case-insensitivity completeness. Unlike WI-1 (parse) and WI-3 (pure
+registration), WI-4 commits **one generic shared-code edit** — the pipeline re-sequence — which owes its own
+§2.2 legitimacy + adversary review + NFR-002 measurement at Gate 4.*
+
+## 1. Design overview (the HOW, grounded in the host)
+
+WI-4 adds **no new resolution algorithm**; it (a) reorders an existing shared pass, (b) reuses existing host
+oracles, and (c) provides parity/external evidence. Four workstreams, each grounded in RESEARCH-004:
+
+**(1) The heritage/namespace-sibling pipeline reorder (discharges BL-1…BL-8) — the one generic edit.**
+RESEARCH-004 finding 1 read-verified the root cause: the heritage pre-pass `preEmitInheritanceEdges`
+(`run.ts:573`) and the `buildMro` derived from it (`:601`) both run **before** the WI-3 cross-file
+registration `populateNamespaceSiblings` (`:640`) — so a heritage clause resolves its base *before*
+`workspaceFqnBindings` holds any Apex type, and the base misses the cross-file channel. The fix is the
+**generic reorder** of the heritage block `{preEmitInheritanceEdges :573, emitDetectedInterfaceImplementations
+:593, buildMro :601}` to run **after** `populateNamespaceSiblings`, re-sequencing the `run.ts:554-621` region:
+build `indexes` with the empty `methodDispatch` `finalizeScopeModel` supplies by design → run
+`populateNamespaceSiblings` (workspace channel now populated) → run the heritage block (base resolution now
+sees the workspace keys, via the read-verified `resolveInheritanceBaseInScope → findClassBindingInScope →
+lookupBindingsAt → workspaceFqnBindings` path, finding 2) → build the MRO → swap in the populated
+`methodDispatch`. `buildMro` must stay after heritage emit (it reads the edges — `mro.ts:49`); the reorder
+preserves that. **This names no language** (Constitution §2.2 — it reorders existing generic passes); it is
+the first WI to commit a shared control-flow change, so it carries a Gate-4 **§2.2 legitimacy + adversary +
+NFR-002 measurement** obligation. **Architect-ruled committed fallback (2026-07-07): a per-language gate** (an
+Apex-only flag on the resolver/`ScopeResolutionIndexes`, mirroring WI-3 inc 15's
+`resolveInheritedImplicitThisCall`) that confines the after-registration heritage timing to Apex, engaged
+**iff** the Gate-4 NFR-002 measurement shows a peer regression — the SHALL has a named satisfaction path
+either way (finding #29). **[structural]** = the re-sequence wiring and the movable-block boundary
+(read-verifiable against `run.ts`); **[Gate-3/Gate-4 reliance]** = that each heritage form resolves and that
+peers stay byte-identical.
+
+**(2) Committed Apex-local nested-aware heritage base resolution (BL-3/BL-4 — the dotted form).** RESEARCH-004
+finding 4 read-traced that the reorder is **necessary but not sufficient** for the dotted nested-parent form
+(`class Sub extends Outer.Inner`): `workspaceFqnBindings` is keyed by folded **simple** name, so
+`lookupBindingsAt('Outer.Inner')` misses (both raw and folded are dotted), and the **QNI dotted-tail
+single-match fallback** (`walkers.ts:320-329`) still binds the same-tail top-level decoy (BL-4) or nothing
+(BL-3). The reorder therefore discharges the **simple-name** heritage forms outright (BL-1 case-varied
+`extends BASE` folds to a workspace hit; BL-2 case-variant twin's `extends Twist` folds to the class before
+the exact-case trigger bind; BL-5 same-case twin's `extends Foo` hits the injected class; BL-8's super/
+inherited arms follow once the EXTENDS edge exists and `buildMro` includes the parent — inc-15's gated MRO
+walk then reaches the inherited implicit-this), and needs, **additionally for the dotted form**, a
+**nested-aware base resolution**: resolve the OUTER segment via the workspace channel, then find the nested
+tail among the outer's owned nested defs, **before** the dotted-tail fallback — the same OUTER-first nested
+lookup WI-3 inc 11 built Apex-local for the ctor/declared-type paths (`languages/apex/`). This is a
+**committed fallback** (Constitution §7 / finding #29), engaged **iff** the BL-3/BL-4 fixtures stay red after
+the reorder; its seam is selected at Gate 3 — a per-language heritage-base-resolution hook the pre-pass
+consults (Apex-local impl), naming no language in shared code, **subject to its own §2.2 review at selection,
+never pre-sanctioned** (mirroring the WI-3 §7(7) reserved-seam discipline). Discharging BL-3/BL-4 removes the
+false EXTENDS edge, so `buildMro` no longer carries the decoy into the MRO and the **BL-6 poisoned member**
+(`s.decoy2()`) and **BL-7 super/inherited fallout** discharge as consequences — no separate MRO edit.
+
+**(3) REQ-008 parameter-typed-argument narrowing completion (the WI-2-deferred sub-case).** RESEARCH-004
+findings 7-8: the argument-typing path already resolves a parameter's declared type from the local
+`varTypes` map (`captures.ts:415-450`, built from `@type-binding` captures incl. parameters); WI-2 left
+parameter args untyped only because narrowing on an **external** parameter type would mis-resolve. WI-4
+**gates** the parameter-type narrowing on the **user-defined-vs-external oracle** — `workspaceFqnBindings`
+membership (`workspaceBindingsFor`, `walkers.ts:65-73`; the registry WI-3's REQ-010 populates): a parameter
+whose declared type is in the workspace is user-defined → narrow; absent → external → leave untyped
+(arity-only, conservative, **never mis-bound**). Apex-local (`languages/apex/captures.ts`); **no shared
+edit**. This **completes** WI-2's REQ-008 mechanic (SDD-002 §2 / work-items REQ-008 note) without re-owning
+it — mirroring how WI-3/REQ-010 completed WI-2's cross-file forms.
+
+**(4) REQ-013 external handling; REQ-012 / NFR-004 parity; receiver-variable case-fold.** RESEARCH-004
+finding 6: "external = benign unresolved" is the **host default** — an unresolved reference emits no edge and
+no defect (`resolve-references.ts:127-129`; `resolution-outcome.ts` has only `resolved`/`suppressed`, no
+`external` kind). REQ-013 acceptance = a stdlib/sObject/managed-package reference emits no edge and no
+unresolved *defect*, verified by a parity fixture; the only possible addition is an Apex `builtInNames` reuse
+(`language-provider.ts:379/423`) **iff** a parity fixture shows a false-positive external *attempt* — an
+Apex-local config, not a new mechanism. **REQ-012 / NFR-004** are the parity *evidence*: a resolution test
+suite comparable to peers (`apex.test.ts`) over the full same-file + cross-file surface, demonstrating
+Java/Kotlin-tier resolution. The **receiver-variable-name case-fold** (the WI-2→WI-3→WI-4 re-deferred
+case-insensitivity completeness item) folds a receiver variable's name at its lookup, Apex-local against
+REQ-005/REQ-008 case-insensitivity; no epic §9 scenario varies a variable's case, so it is parity hardening,
+not a SHALL gap.
+
+**Acceptance boundary.** WI-4's acceptance is the parity + external + discharged-limitation forms: the BL-1…
+BL-8 fixtures flip from documented-limitation pins to **correct-resolution** assertions; a parity-fixture
+suite; an external-reference fixture; a parameter-typed cross-file overload fixture. The BL-1…BL-8 discharge
+updates the **SRS §5.1 register** (those rows carry `Fix=WI-4`) and the governing REQ-007/005 limitation
+clauses — a documented SRS amendment **upon Gate-3 verification** of the discharge (a Phase-5 cascade, not
+authored pre-verification, so the register is not mutated ahead of the evidence).
+
+## 2. Behavioural contract (each REQ → clause; host-structural vs Gate-3 reliance marked)
+
+> **Verification split (finding #13).** **[structural]** = pinned here (the pass re-sequence wiring, the
+> movable-block boundary, the oracle's existence — read-verifiable against the host API). **[Gate-3 reliance]**
+> = host-API *behaviour* only the real host confirms — design obligations validated at Gate 3 (tests vs host)
+> or Gate 4 (NFR-002 measurement), not Gate-2 pins. The Gate-2 adversary reviews the wiring + the split, NOT
+> the truth of the behaviours.
+
+- **REQ-012 (Java/Kotlin resolution parity).**
+  - *Precondition:* a repository of user-defined Apex types exercising the same resolution shapes peer
+    languages resolve (calls, types, inheritance, overloads, field chains — same-file and cross-file).
+  - *Postcondition:* Apex resolves each shape to the same edge kinds a peer-language equivalent would, with
+    no Apex-specific gap — demonstrated by a parity fixture suite. **[Gate-3 reliance]** (the resolution
+    outcomes vs the real host); **[structural]** only that the suite exists and runs (NFR-004).
+- **REQ-013 (external references are benign, not defects).**
+  - *Precondition:* an Apex reference whose target is a standard-library, sObject, or managed-package type
+    (not user-defined, absent from `workspaceFqnBindings`).
+  - *Postcondition:* the reference emits **no edge and no unresolved *defect*** — the host default (finding
+    6). **[Gate-3 reliance]** on the host no-edge-on-miss behaviour; committed Apex-local remediation iff a
+    parity fixture shows a false-positive external attempt: the `builtInNames` reuse (never a silent
+    de-scope).
+- **REQ-008 completion (parameter-typed-argument narrowing) — a *completion* of WI-2's mechanic, not
+    re-ownership.**
+  - *Precondition:* an overloaded call whose disambiguating argument is a **method-parameter reference**
+    whose declared type is a **user-defined** (in-workspace) type.
+  - *Postcondition:* the overload narrows by the parameter's declared type (same arity-then-exact-type
+    narrowing WI-2 verified for local/field/literal/ctor args); when the parameter's type is **external**
+    (absent from `workspaceFqnBindings`) the argument is left untyped (arity-only) and **never mis-bound**.
+    **[structural]** = the oracle is `workspaceFqnBindings` membership (finding 8); **[Gate-3 reliance]** =
+    that gating the existing `resolveVarTypeBindings` narrowing on that oracle resolves the user-defined case
+    and conservatively skips the external case.
+- **REQ-007 / REQ-005 heritage-limitation discharge (BL-1…BL-8) — completion via the reorder, not a new
+    REQ.** The reorder makes WI-2's REQ-007 heritage mechanic and REQ-005 super-delegation reach the
+    cross-file channel at heritage-resolution time, exactly as REQ-010 made the other WI-2 mechanics reach
+    across files.
+  - **BL-1** (case-varied `extends BASE`): *postcondition* — EXTENDS edge emitted (the folded workspace key
+    resolves the base). **Reorder discharges.**
+  - **BL-2** (case-variant trigger/class twin `extends Twist`, `Twist.trigger`+`class TWIST`): *postcondition*
+    — EXTENDS to the **class** (the folded workspace key hits the injected class before the exact-case trigger
+    bind), never the trigger. **Reorder discharges** (the §7(11)-family class-wins ordering, now on the
+    heritage path).
+  - **BL-3** (nested-parent `extends Outer.Inner`, no decoy): *postcondition* — EXTENDS to the real nested
+    `Inner @ Outer`. **Reorder + nested-aware base resolution (committed fallback) discharges.**
+  - **BL-4** (nested-parent + same-tail top-level decoy): *postcondition* — EXTENDS to the real nested
+    `Inner @ Outer`, **never** the decoy. **Reorder + nested-aware base resolution discharges** (the v1.10(iv)
+    target; the reorder alone leaves the QNI dotted-tail decoy mis-bind, finding 4).
+  - **BL-5** (same-case valid trigger/class twin `Foo.trigger`+`Foo.cls`, `extends Foo`): *postcondition* —
+    EXTENDS to the injected class `Foo` (trigger excluded from injection; the class is the unique workspace
+    key). **Reorder discharges.**
+  - **BL-6** (typed-receiver `s.decoy2()` on a BL-4 subtype): *postcondition* — no false member edge into the
+    decoy (the MRO is clean once BL-4's EXTENDS is correct). **Discharged as BL-4 fallout.**
+  - **BL-7** (super/inherited arms of a BL-3 nested-parent subtype): *postcondition* — `super()`/
+    `super.method()`/inherited implicit-this resolve to the real parent (no self-loop, no unresolved).
+    **Discharged as BL-3 fallout.**
+  - **BL-8** (super/inherited arms of a BL-1/BL-5 simple-name subtype): *postcondition* — the EXTENDS edge now
+    exists (BL-1/BL-5 discharged), so super resolves to the parent *with* the EXTENDS edge and `buildMro`
+    includes the parent → inc-15's gated MRO walk resolves the inherited implicit-this. **Discharged as
+    BL-1/BL-5 fallout.**
+  - *All BL-1…BL-8: **[Gate-3 reliance]*** on the post-reorder resolution outcome (fixtures flip from
+    limitation-pins to correct-resolution); the nested-aware base resolution is the committed fallback for
+    BL-3/BL-4; no silent de-scope (Constitution §7).
+- **REQ-005/REQ-008 receiver-variable case-fold (case-insensitivity completeness).**
+  - *Postcondition:* a case-varied receiver **variable** name (`Account a; A.foo()` where `A` refers to the
+    variable `a`) folds to its declaration. Apex-local; **[Gate-3 reliance]** on the folded lookup resolving.
+
+## 3. Interface definition (what WI-4 adds)
+
+- **The pipeline re-sequence** (`scope-resolution/pipeline/run.ts`, `:554-621`): the heritage block moves
+  after `populateNamespaceSiblings`; the `indexes`/`methodDispatch` construction splits (empty dispatch
+  pre-heritage, populated dispatch post-heritage). **Generic** — no language named. Plus the committed
+  per-language gate: an optional `resolveHeritageAfterSiblings?: boolean` (or equivalent) on the resolver
+  contract, default matching the current order for peers, set true by the Apex resolver — engaged **iff**
+  Gate-4 NFR-002 measurement requires it. *(The default — generic-for-all vs gated-from-start — is settled by
+  the measurement, per the Architect ruling; the SDD pins the generic reorder as primary and the gate as the
+  measured fallback.)*
+- **Committed nested-aware heritage base resolution** (Apex-local, `languages/apex/`): a per-language
+  heritage-base-resolution seam the pre-pass consults before the QNI dotted-tail fallback, resolving a dotted
+  base OUTER-first via the workspace channel + nested-member lookup — the inc-11 mechanism extended to the
+  heritage path. Seam selected at Gate 3, its own §2.2 review, engaged iff BL-3/BL-4 red after the reorder.
+- **REQ-008 parameter-arg narrowing gate** (`languages/apex/captures.ts`): `resolveVarTypeBindings` narrows a
+  parameter-typed argument **only when** the parameter's declared type is in `workspaceFqnBindings`
+  (user-defined); else arity-only. No shared edit.
+- **External-oracle reuse** (`workspaceFqnBindings` membership) — no new type; the REQ-013 external
+  classification is "absent from the workspace registry".
+- **Parity + external fixtures** (`apex.test.ts`): a parity suite comparable to peers; an external-reference
+  fixture; a parameter-typed cross-file overload fixture; the BL-1…BL-8 correct-resolution fixtures (flipped
+  from `apex-cross-file-collision` limitation pins).
+
+## 4. Edge-case catalog (per-input checklist → each traces to a Gate-3 test)
+
+- **Empty / no heritage:** a repo with no inheritance → the reorder is a no-op (no `inherits` sites); peers
+  unaffected (NFR-002).
+- **Peer heritage under the reorder:** a peer's cross-file heritage (Java `extends` an in-package type) —
+  must resolve **byte-identically** to the current order (NFR-002; the Gate-4 measurement). *The load-bearing
+  edge case:* if a peer's heritage newly resolves (a new edge) → the committed per-language gate.
+- **Dotted base, no nested target (external outer):** `extends Ext.Inner` where `Ext` is external → no
+  workspace hit, no nested lookup → EXTENDS absent (benign; REQ-013-adjacent), never a mis-bind.
+- **Dotted base, ambiguous nested tail:** `extends Outer.Inner` where two outers own an `Inner` → conservative
+  (the nested lookup refuses on tie, never guesses — mirrors REQ-015 / `resolveQualifiedInheritanceBase`'s
+  refuse-on-tie).
+- **Parameter arg, external type:** an overload arg is a parameter of a stdlib type (`String s` param used as
+  arg) → arity-only, never mis-bound (REQ-008 completion's conservative arm).
+- **Parameter arg, user-defined type:** narrows by the parameter's declared type.
+- **External reference (stdlib/sObject/managed pkg):** no edge, no defect (REQ-013).
+- **Case-varied receiver variable:** folds to its declaration; a case-collision between two variables →
+  conservative (WI-2's collision discipline).
+- **Malformed / partial tree under the reorder:** the reorder introduces no new throw; a heritage site whose
+  base is in a skipped file stays unresolved (NFR-001 resolution slice).
+- **Cyclic cross-file heritage** (`A extends B`, `B extends A`): the host MRO's existing bounded-iteration cap
+  bounds it post-reorder (no new unbounded walk) — NFR-001 no-hang.
+
+## 5. Non-functional requirements (baked in)
+
+- **NFR-002 (the load-bearing one for WI-4).** The reorder is a **generic** pass re-sequence, so — unlike
+  WI-1/WI-3 — it *can* affect peers. Peer heritage resolution must stay byte-identical: **measured** at Gate 4
+  by the full peer resolver suites + a cross-language regression sweep. If any peer's heritage edges change,
+  the committed per-language gate confines the reorder to Apex. The parameter-arg gate, external oracle, and
+  receiver-var fold are all Apex-local (no peer surface). NFR-002 is the primary Gate-4 obligation.
+- **NFR-001 (resolution-stage slice).** The reorder + nested lookup + parameter-arg gate complete without
+  crashing on partial/error-recovery trees and references into skipped files; an unresolvable base/reference
+  is left unresolved, never a throw.
+- **NFR-004.** An automated Apex resolution test comparable to peers exists (`apex.test.ts`) — the parity
+  suite is its REQ-012 extension.
+- **Performance:** the reorder adds no per-reference cost (it re-sequences existing passes; the workspace
+  channel lookup already runs). The nested-aware base resolution (if engaged) is O(1) per dotted heritage site
+  (one workspace lookup + a bounded owned-def scan). The parameter-arg gate is one map membership check per
+  parameter-typed argument.
+
+## 6. Security-critical tag & clauses
+
+**security-critical = false.** WI-4 consumes WI-1's safe-parsed model + WI-2/WI-3's resolution model; it
+opens no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The conservative-skip default
+(REQ-015) holds: an unresolvable heritage base, external reference, or external-typed parameter arg degrades
+to no edge / no narrowing, never an unsafe binding. The reorder cannot *relax* conservatism — it can only make
+a *correct* cross-file base reachable that was previously missed.
+
+## 7. Verification architecture (Step 2b — **APPROVED — Adam (Architect), 2026-07-07**)
+
+- **Provable properties (§A.3): none** — an **explicit per-property disposition** (matching SDD-001/002/003
+  §7). The candidate is the **heritage no-mis-bind** safety property (the reorder never emits a *wrong*
+  EXTENDS edge, and the nested lookup refuses on tie). Per the §A.3 decision table it is **test-only**:
+  graph-resolution correctness, finitely example-verifiable by fixtures (the BL-4 decoy fixture asserts no
+  edge to the decoy; the ambiguous-nested fixture asserts refuse-on-tie) — **not** a data-integrity or
+  trust-boundary invariant over unbounded state (WI-4 opens no trust boundary, §6). It guards no
+  security/financial/data-integrity/safety/concurrency invariant, so no Prove obligation arises. **NFR-002**
+  is the reorder's real gate, discharged by *measurement* (peer suites), not proof. Gate 5 for WI-4 reduces to
+  the resolution-slice no-crash fuzz + mutation over the new `languages/apex/` code and the reordered region
+  (same calibration as WI-1/2/3, by per-property reasoning).
+- **Purity boundary.** Pure core = the **def-selection / nested-lookup / oracle-membership helpers** — pure
+  functions of `parsedFiles`/`workspaceFqnBindings` (no I/O, no module state, deterministic; the §7
+  unit-anchor targets, dogfood #16). Effectful shell = (a) the `run.ts` **pass re-sequence** (host-structural
+  control flow — the pipeline invokes passes; no new state), and (b) the parameter-arg gate's write into the
+  existing `varTypes`/narrowing path. Dependency direction is shell→core. The reorder moves *existing*
+  effectful passes; it introduces no new effect, only a new order.
+- **Tooling.** Host test framework (vitest) — integration resolution tests over multi-file fixtures (the
+  BL-1…BL-8 flipped fixtures; the parity, external, and parameter-arg fixtures) + main-thread unit anchors for
+  the new pure helpers (nested-base resolution, oracle membership) so the logic is coverage-attributable
+  (dogfood #16). Gate-4 adds the **NFR-002 measurement** (full peer resolver suites, cross-language sweep) as
+  the reorder's objective evidence.
+- **Gate-3 / Gate-4 reliances (finding #13 — the explicit list to FLAG, not pin).** (1) that the reorder
+  resolves each simple-name heritage form (BL-1/BL-2/BL-5/BL-8) — validated by the flipped fixtures; (2) that
+  the reorder + nested-aware base resolution resolves the dotted form (BL-3/BL-4) and clears the poisoned MRO
+  (BL-6/BL-7) — the nested lookup is the committed fallback iff reorder-only is red; (3) **(Gate-4 NFR-002)**
+  that every peer's heritage edges stay byte-identical under the reorder — the committed per-language gate iff
+  not; (4) that gating `resolveVarTypeBindings` on the workspace oracle narrows the user-defined
+  parameter-arg case and conservatively skips the external case; (5) that an external reference emits no edge
+  and no defect — committed `builtInNames` reuse iff a false-positive; (6) that a case-varied receiver
+  variable folds to its declaration; (7) that the parity fixtures resolve at Java/Kotlin tier. Gate 3 (tests
+  vs the real host) validates 1-2, 4-7; Gate 4 measures 3. The Gate-2 adversary validates the **wiring** (the
+  re-sequence, the split of pure helpers from the reordered shell, the committed-fallback discipline) and the
+  split, not the behaviours.
+
+## 8. Tracker integration & Gate-3 acceptance
+
+Each REQ clause, BL-row discharge, and edge case maps to a sub-item. **Gate-3 acceptance assertions**
+(multi-file fixtures, automated):
+- **BL-1…BL-8 discharge** — the `apex-cross-file-collision` (and heritage) fixtures flip from
+  documented-limitation pins to correct-resolution: BL-1 case-varied `extends BASE` → EXTENDS; BL-2 twin
+  `extends Twist` → EXTENDS to the class; BL-3/BL-4 nested-parent → EXTENDS to the real nested type (never the
+  decoy); BL-5 same-case twin → EXTENDS to the class; BL-6 `s.decoy2()` → no false member edge; BL-7/BL-8
+  super/inherited → resolve to the real parent. Each also asserts REQ-006 negative (no false unresolved
+  record) for the newly-resolved reference.
+- **REQ-008 cross-file parameter-arg overload** — file B has `f(UserType)`/`f(String)`; a call `b.f(p)` where
+  `p` is a parameter declared `UserType` (user-defined) → resolves `f(UserType)`; where `p` is declared an
+  external type → arity-only, unresolved-not-mis-bound.
+- **REQ-013 external reference** — a call/type-use on a stdlib/sObject/managed-package name → zero edges, zero
+  unresolved defect, run completes.
+- **REQ-012 parity** — a parity fixture set resolving the peer-equivalent shapes at Java/Kotlin tier;
+- **NFR-004** — the parity suite is an automated resolution test comparable to peers.
+- **Receiver-variable case-fold** — a case-varied receiver-variable reference resolves to its declaration.
+- **NFR-002** — every peer resolver suite green under the reorder (the Gate-4 measurement); a mixed-language
+  regression sweep clean.
+- **NFR-001** — the reorder + nested lookup + parameter-arg gate no-crash on a partial tree + a reference into
+  a skipped sibling; cyclic cross-file heritage no-hang.
+
+**Scope note (SRS cascade).** Discharging BL-1…BL-8 updates the SRS §5.1 register (those rows carry
+`Fix=WI-4`) and the governing REQ-007/REQ-005 limitation clauses — a documented SRS amendment authored **upon
+Gate-3 verification** of each discharge (a Phase-5 cascade), not pre-verification, so the register is never
+mutated ahead of the evidence. The parity (REQ-012) and external (REQ-013) forms complete the epic §9 scope
+WI-1/2/3 left to WI-4.
