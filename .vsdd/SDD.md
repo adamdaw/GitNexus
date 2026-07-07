@@ -2325,15 +2325,19 @@ Apex-local config, not a new mechanism. **REQ-012 / NFR-004** are the parity *ev
 suite comparable to peers (the NFR-004 `apex-resolution` suite — `apex-resolution.test.ts`, with WI-4 parity
 fixtures as §2.5-permitted additive siblings) over the full same-file + cross-file surface, demonstrating
 Java/Kotlin-tier resolution. The **receiver-variable-name case-fold** (the WI-2→WI-3→WI-4 re-deferred
-case-insensitivity completeness item) folds a receiver variable's name at its lookup, Apex-local against
-REQ-005/REQ-008 case-insensitivity; no epic §9 scenario varies a variable's case, so it is parity hardening,
-not a SHALL gap.
+case-insensitivity completeness item) folds a receiver variable's name at its lookup, Apex-local — it traces to
+**REQ-005's case-insensitivity SHALL** (Apex identifiers, *including variables*, are case-insensitive). No
+dedicated epic §9 scenario varies a variable's case, so WI-4 verifies it as a **REQ-005 completeness fixture**
+(under REQ-005's head obligation, not out-of-cycle hardening); its §2/§8 verified scope is thereby SRS-traced.
 
 **Acceptance boundary.** WI-4's acceptance is the parity + external + discharged-limitation forms: the BL-1…
 BL-8 fixtures flip from documented-limitation pins to **correct-resolution** assertions; a parity-fixture
 suite; an external-reference fixture; a parameter-typed cross-file overload fixture. The BL-1…BL-8 discharge
-updates the **SRS §5.1 register** (those rows carry `Fix=WI-4`) and the governing **REQ-007 / REQ-005 /
+updates the **SRS §5.1 register** (those rows carry `Fix=WI-4`), the governing **REQ-007 / REQ-005 /
 REQ-009** limitation clauses (REQ-009 v1.15 co-governs BL-6's poisoned-MRO field/property-chain carve-out),
+**the SRS §9 Gherkin documented-limitation scenarios** (which pin the OLD outcomes — BL-1 "no inheritance edge
+for the case-varied heritage clause", BL-4 "binds the top-level decoy", BL-6 "resolves into the decoy's member"
+— and would assert falsified behaviour post-discharge, self-contradicting §5.1 if not amended in the same pass),
 **and SRS §1's in-scope boundary + INTENT-001-acceptance wording (v1.22–v1.27 frames BL-1…BL-8 as *pending*
 epic-deferred shortfalls / heritage-family as the sole non-full-SHALL area — the discharge falsifies that
 present-tense framing)** — a documented SRS amendment **upon Gate-3 verification** of the discharge (a Phase-5
@@ -2565,7 +2569,12 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
     *heritage* arm alone) is not re-traced in RESEARCH-004 — it rests on a **pre-reorder fixture** confirming
     the current fold-bind, so the amendment scope is Gate-3-verified, not a Gate-2 pin.
   Every BL-9…BL-14 row's disposition is now committed (Constitution §7 — no silent or undispositioned change
-  to a ratified row): BL-9/BL-11/BL-12/BL-13/BL-14 byte-identical, BL-10 via the committed SRS amendment.
+  to a ratified row): BL-9/BL-11/BL-12/BL-13/BL-14 byte-identical, BL-10 via the committed SRS amendment —
+  which covers **both** the new case-varied `extends <misfiledTrigger>` EXTENDS-into-the-trigger-node edge
+  **and its MRO downstream** (the BL-6/BL-7 analogue: the trigger node enters `buildMro`, so an inherited-member
+  implicit-this on the subtype could ride into the trigger's members). The BL-10 Gate-3 fixture therefore also
+  asserts the **trigger-parent MRO contributes no false inherited-member edge** (or dispositions that
+  over-bind as the ratified §1.2-(b) consequence, like BL-4/BL-6) — not the EXTENDS bind alone.
 - **Dotted base, external/absent outer:** `extends Ext.Inner` where `Ext` is external (managed-package /
   stdlib / absent) → the seam **refuses** (state ii — no edge, skipping the dotted-tail fallback), so no
   same-tail decoy is bound; EXTENDS absent (benign; REQ-013-adjacent), never a mis-bind.
@@ -2654,8 +2663,14 @@ byte-identical, unlike the flag-gated re-sequence; only its hookless-peer *behav
 **security-critical = false.** WI-4 consumes WI-1's safe-parsed model + WI-2/WI-3's resolution model; it
 opens no new trust boundary and authors no SEC clause (SECT-001 remains WI-1's). The conservative-skip default
 (REQ-015) holds: an unresolvable heritage base, external reference, or external-typed parameter arg degrades
-to no edge / no narrowing, never an unsafe binding. The reorder cannot *relax* conservatism — it can only make
-a *correct* cross-file base reachable that was previously missed.
+to no edge / no narrowing, never an unsafe binding. For **valid-source** resolution the reorder only makes a
+*correct* cross-file base reachable that was previously missed — it relaxes no conservatism there. It does
+newly enable two **bounded, dispositioned** behaviours: (a) the **BL-10** invalid-source over-bind (a
+case-varied `extends <misfiledTrigger>` newly binds the `.cls`-misfiled trigger — an explicit §1.2-(b)
+"globally referenceable" departure, dispositioned by the committed BL-10 amendment + its MRO-downstream
+fixture, §4), and (b) a previously-impossible **cross-file heritage cycle** (bounded by `buildMro`'s existing
+iteration cap — NFR-001, §4). Neither opens a new trust boundary or an unsafe binding: (a) is an invalid-source
+name-collision already globally referenceable by ratified §1.2-(b), and (b) terminates by the existing cap.
 
 ## 7. Verification architecture (Step 2b — **APPROVED — Adam (Architect), 2026-07-07**)
 
