@@ -2145,17 +2145,23 @@ block's position relative to `{buildWorkspaceResolutionIndex, populateNamespaceS
 block still precedes `mirror`/`propagate`/`resolve` exactly as today) — the one NFR-002 measurement point
 (§5), gated-fallback if any peer regresses.
 
-**Two load-bearing [structural] wiring pins the re-sequence MUST honour (a literal block-move breaks the
-discharge otherwise):** *(a) the moved heritage passes take `indexes`, not `finalized`.* Today
-`preEmitInheritanceEdges` (`:573`), `emitHeritageEdges?` (`:579`), and `emitDetectedInterfaceImplementations`
-(`:598`) are passed `finalized` — which does **not** carry `normalizeIdentifier` (that field is added only when
-`indexes` is built at `:620`, `scope-resolution-indexes.ts:97`) and does **not** carry the
-`populateNamespaceSiblings`-injected `workspaceFqnBindings`. The BL-1/BL-2/BL-5 case-fold discharge relies on
-`workspaceBindingsFor`'s folded fallback (`walkers.ts:71`); if the moved passes keep `finalized`,
-`normalizeIdentifier` is `undefined`, the fold no-ops, and every case-varied heritage form stays edge-absent
-— the **opposite** of the §2 postconditions. So the moved passes MUST be threaded `indexes` (which carries
-both `normalizeIdentifier` and the populated workspace channel) — a structural wiring requirement, not a
-Gate-3 reliance. *(b) `methodDispatch` is swapped in by a fresh re-spread, never a mutation.* The host builds
+**Scope of the move (RESEARCH-004 Addendum 1 — Apex registers NONE of the optional hooks).** Apex's discharge
+needs only the **three SHARED passes** (`preEmitInheritanceEdges`, `emitDetectedInterfaceImplementations`,
+`buildMro`) to move; `emitHeritageEdges?` (ruby/rust/dart), `emitImplicitImportEdges?` (swift), and
+`buildExtendsOnlyMro?` (php) are **peer-only** and move solely because the block is contiguous shared code —
+each takes **position-independent inputs**, so relocating them is inert for their peers **except** swift's
+`emitImplicitImportEdges`-vs-`populateNamespaceSiblings` order (the single peer surface, measured at Gate 4;
+Addendum 1). **Two load-bearing [structural] wiring pins the re-sequence MUST honour (a literal block-move
+breaks the discharge otherwise):** *(a) the two Apex-relied-on shared passes take `indexes`, not `finalized`.*
+Today `preEmitInheritanceEdges` (`:573`) and `emitDetectedInterfaceImplementations` (`:598`) are passed
+`finalized` — which does **not** carry `normalizeIdentifier` (that field is added only when `indexes` is built
+at `:620`, `scope-resolution-indexes.ts:97`) and does **not** carry the `populateNamespaceSiblings`-injected
+`workspaceFqnBindings`. The BL-1/BL-2/BL-5 case-fold discharge relies on `workspaceBindingsFor`'s folded
+fallback (`walkers.ts:71`); if these two keep `finalized`, `normalizeIdentifier` is `undefined`, the fold
+no-ops, and every case-varied heritage form stays edge-absent — the **opposite** of the §2 postconditions. So
+those **two** shared passes MUST be threaded `indexes` (carrying both `normalizeIdentifier` and the populated
+workspace channel) — a structural wiring requirement, not a Gate-3 reliance. The peer-only hooks **keep their
+existing `finalized`/graph args** (so ruby/rust/dart/php see no input change from the move — Addendum 1). *(b) `methodDispatch` is swapped in by a fresh re-spread, never a mutation.* The host builds
 `indexes` once via a fresh spread specifically to avoid mutating a readonly result through an `as` cast
 (`run.ts:610-613`). The re-sequence builds `indexes` once with the empty `methodDispatch` (for
 `buildWorkspaceResolutionIndex`/`populateNamespaceSiblings`/the moved heritage passes), then — after the moved
@@ -2263,11 +2269,16 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
     outcomes vs the real host); **[structural]** only that the suite exists and runs (NFR-004).
 - **REQ-013 (external references are benign, not defects).**
   - *Precondition:* an Apex reference whose target is a standard-library, sObject, or managed-package type
-    (not user-defined, absent from `workspaceFqnBindings`).
-  - *Postcondition:* the reference emits **no edge and no unresolved *defect*** — the host default (finding
-    6). **[Gate-3 reliance]** on the host no-edge-on-miss behaviour; committed Apex-local remediation iff a
-    parity fixture shows a false-positive external attempt: the `builtInNames` reuse (never a silent
-    de-scope).
+    (not user-defined — it simply does not resolve to any in-repository symbol).
+  - *Postcondition:* the reference emits **no edge and no unresolved *defect*** — **the host default on ANY
+    unresolved reference, by construction (finding 6): a miss emits no edge and no defect, with NO "external"
+    classification and none built.** REQ-013 introduces **no external-classification pass** (the `resolution-
+    outcome` kinds stay `resolved`/`suppressed`). **[Gate-3 reliance]** on the host no-edge-on-miss behaviour;
+    committed Apex-local remediation iff a parity fixture shows a false-positive external *attempt*: the
+    `builtInNames` reuse (never a silent de-scope). *(The `workspaceFqnBindings`-membership check is REQ-008's
+    parameter-type narrowing gate — §3, finding 8 — NOT a REQ-013 classifier; "absent from the workspace
+    registry" is not "external" — a same-file user-defined reference resolves via local scope yet is absent
+    from the workspace registry.)*
 - **REQ-008 completion (parameter-typed-argument narrowing) — a *completion* of WI-2's mechanic, not
     re-ownership.**
   - *Precondition:* an overloaded call whose disambiguating argument is a **method-parameter reference**
@@ -2326,10 +2337,14 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
   `mirrorNamespaceTypeBindings` (`:653`); the `indexes`/`methodDispatch` construction splits: build `indexes`
   once with the empty dispatch (for `buildWorkspaceResolutionIndex`/`populateNamespaceSiblings`/the moved
   passes), then after the moved `buildMro` produce a **fresh** `{...indexes, methodDispatch: populated}`
-  threaded to the `:653-:687` tail — **no post-construction mutation** (preserves `run.ts:610-613`). **The
-  moved `preEmitInheritanceEdges`/`emitHeritageEdges?`/`emitDetectedInterfaceImplementations` MUST be passed
-  `indexes`, not `finalized`** (only `indexes` carries `normalizeIdentifier` + the injected
-  `workspaceFqnBindings` the case-fold discharge needs — §1(1)). **Generic** — no language named. Plus the committed **per-language gate**: an optional `resolveHeritageAfterSiblings?: boolean` (or
+  threaded to the `:653-:687` tail — **no post-construction mutation** (preserves `run.ts:610-613`). **The two
+  Apex-relied-on shared passes `preEmitInheritanceEdges` + `emitDetectedInterfaceImplementations` MUST be
+  passed `indexes`, not `finalized`** (only `indexes` carries `normalizeIdentifier` + the injected
+  `workspaceFqnBindings` the case-fold discharge needs — §1(1)); the **peer-only** hooks (`emitHeritageEdges?`,
+  `emitImplicitImportEdges?`, `buildExtendsOnlyMro?` — Apex registers none, RESEARCH-004 Addendum 1) **keep
+  their existing args**, so the move is inert for ruby/rust/dart/php; swift's
+  `emitImplicitImportEdges`-vs-`populateNamespaceSiblings` order is the single measured peer surface.
+  **Generic** — no language named. Plus the committed **per-language gate**: an optional `resolveHeritageAfterSiblings?: boolean` (or
   equivalent) on the resolver contract, default matching the current order for peers, set true by the Apex
   resolver — engaged **iff** the Gate-4 NFR-002 measurement shows a peer regression. *(The default —
   generic-for-all vs gated-from-start — is settled by the measurement, per the Architect ruling; the SDD pins
@@ -2346,12 +2361,21 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
 - **REQ-008 parameter-arg narrowing gate** (`languages/apex/captures.ts`): `resolveVarTypeBindings` narrows a
   parameter-typed argument **only when** the parameter's declared type is in `workspaceFqnBindings`
   (user-defined); else arity-only. No shared edit.
-- **External-oracle reuse** (`workspaceFqnBindings` membership) — no new type; the REQ-013 external
-  classification is "absent from the workspace registry".
-- **§3 injection refinement — exclude trigger-KIND defs** (Apex-local, `languages/apex/namespace-siblings.ts`):
-  the WI-3 discriminant excludes `.trigger`-**file** defs; WI-4 refines it to also exclude a **trigger-kind**
-  def in a `.cls` file, so the reorder holds **BL-10 byte-identical** (§4). No valid class is a trigger-kind
-  def, so no valid injection is lost. (Architect may alternatively ratify the case-varied widening — §4.)
+- **User-defined-vs-external oracle for the REQ-008 gate** (`workspaceFqnBindings` membership) — no new type;
+  used **only** to gate the parameter-type narrowing (finding 8): a parameter type present in the workspace
+  registry is user-defined (narrow), absent is treated as external (arity-only). This is **not** a REQ-013
+  classifier — REQ-013 needs none (external = host-default no-edge, §2).
+- **§3 injection refinement — exclude trigger-KIND defs, AFTER the collision guard** (Apex-local,
+  `languages/apex/namespace-siblings.ts`): the WI-3 discriminant excludes `.trigger`-**file** defs; WI-4
+  refines it to also exclude a **trigger-kind** def in a `.cls` file, so the reorder holds **BL-10
+  byte-identical** (§4). **Ordering is load-bearing (pins BL-14):** the inject-none collision guard MUST
+  evaluate over the **pre-exclusion** def set — so a BL-14 shape (a mis-filed trigger-kind def case-folded-
+  colliding with a valid class) is still detected as a collision → **neither** injected → BL-14 stays a
+  liveness limitation as ratified. The trigger-kind exclusion then applies only to a **surviving unique** key
+  (BL-10: a lone mis-filed trigger, no collision → excluded → not injected). Applying the exclusion *before*
+  the guard would dissolve BL-14's collision and wrongly inject the lone valid class — an undispositioned
+  flip of a `Fix=—` row (Constitution §7). No valid class is a trigger-kind def, so no valid injection is
+  lost. (Architect may alternatively ratify the BL-10 case-varied widening — §4.)
 - **Parity + external fixtures** (`apex-resolution.test.ts` — the NFR-004 resolution suite, per Constitution
   §2.5; WI-4-specific parity fixtures may be §2.5 additive siblings, e.g. `apex-parity.test.ts`; the Gate-5
   fuzz follows the `apex-*-hardening.test.ts` sibling pattern): a parity suite comparable to peers; an external-reference
@@ -2380,8 +2404,11 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
     colliding key → the exact-case arm still binds the unique exact-case match via QNI, the same-case arm
     still binds nothing (2 QNI matches), **unchanged** (the inject-none guard forecloses the reviewer's
     "picks one folded candidate" concern — nothing is injected to pick).
-  - **BL-13 / BL-14** (fragment / misfiled-trigger collision): the §3 guard **registers neither** → workspace
-    empty for the colliding key → the valid type's cross-file forms stay unresolved as ratified, **unchanged**.
+  - **BL-13 / BL-14** (fragment / misfiled-trigger collision): the §3 inject-none guard (evaluated over the
+    **pre-exclusion** def set — §3) **registers neither** → workspace empty for the colliding key → the valid
+    type's cross-file forms stay unresolved as ratified, **unchanged**. (For BL-14 specifically, the trigger-
+    kind exclusion applies only *after* the collision guard, so the collision is still detected and neither
+    def injected — the exclusion never dissolves a BL-14 collision into a lone-class injection.)
   - **BL-10** (trigger mis-filed in a `.cls` file — the one row the reorder would otherwise perturb): a
     `.cls`-filed trigger def (type `Class`) **passes** today's §3 extension discriminant (which excludes only
     `.trigger`-**file** defs) → it **is** injected, so post-reorder its case-varied heritage/name reference

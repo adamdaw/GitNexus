@@ -203,3 +203,46 @@ oracle.** Recommendation: SDD-004 pins the reorder (generic, §2.2, gated-fallba
 base resolution (committed Apex-local fallback), the parameter-arg narrowing gate, REQ-013 external-benign
 acceptance, and the REQ-012/NFR-004 parity fixtures. Architect approval of this conclusion + the SDD-004
 purity boundary (Step 2b) gates Gate 2.
+
+## Addendum 1 (2026-07-07) — moved-block scope: peer optional-hook registrations (grounds the seven-pass move)
+
+The main findings analyzed the movable unit as the heritage-resolution core `{preEmitInheritanceEdges :573,
+emitDetectedInterfaceImplementations :593, buildMro :601}`. SDD-004's re-sequence moves the whole contiguous
+`run.ts:573-602` block (adding `emitHeritageEdges? :579`, `emitImplicitImportEdges? :584`, the
+`postHeritageNodeLookup` rebuild `:591-592`, and `buildExtendsOnlyMro? :602`) to preserve internal order. This
+addendum read-verifies the peer impact of relocating those three optional hooks past
+`buildWorkspaceResolutionIndex` (`:632`) and `populateNamespaceSiblings` (`:640`), so the seven-pass move is
+spike-grounded (dogfood #19), not assumed.
+
+**Read-verified optional-hook registrations (which languages register each):**
+- `emitImplicitImportEdges` — **swift only** (`languages/swift/scope-resolver.ts:119`,
+  `emitSwiftImplicitImportEdges`; emits same-target File→File IMPORTS edges).
+- `emitHeritageEdges` — **ruby, rust, dart** (`languages/{ruby,rust,dart}/scope-resolver.ts`).
+- `buildExtendsOnlyMro` — **php** (`languages/php/scope-resolver.ts`).
+- **Apex registers NONE of the three** (`languages/apex/scope-resolver.ts` — verified absent). So the **Apex
+  discharge itself needs only the three SHARED passes** (`preEmitInheritanceEdges`,
+  `emitDetectedInterfaceImplementations`, `buildMro`) to move; the optional hooks move only because the block
+  is contiguous shared code.
+
+**Position-independence of the moved optional hooks (why the move is inert for most peers):** each optional
+hook takes **position-independent inputs** — `emitHeritageEdges(graph, parsedFiles, nodeLookup, finalized)`,
+`emitImplicitImportEdges(graph, parsedFiles, nodeLookup, resolutionConfig)`, `buildExtendsOnlyMro(graph,
+parsedFiles, nodeLookup)` — none is passed `indexes`, so **the R4-F1 `indexes`-not-`finalized` argument swap
+applies ONLY to the two Apex-relied-on shared passes** (`preEmitInheritanceEdges`,
+`emitDetectedInterfaceImplementations`); the optional hooks keep their existing args and thus see **no input
+change** from the move. `buildExtendsOnlyMro` (php) and `buildMro` read the EXTENDS edges the block emits and
+move with it (relative order preserved) → unchanged. `emitHeritageEdges` (ruby/rust/dart) emits into the graph
+from position-independent inputs, and no pass between its old and new position consumes its output before it
+runs (`populateNamespaceSiblings` iterates defs, not heritage edges) → unchanged.
+
+**The one genuine peer surface — swift.** Swift registers **both** `emitImplicitImportEdges` and
+`populateNamespaceSiblings`; today `emitImplicitImportEdges` (`:584`) runs **before**
+`populateNamespaceSiblings` (`:640`), and the move relocates it **after**. Whether swift's namespace-sibling
+population, `buildWorkspaceResolutionIndex`, or the `:653-:663` passes depend on the implicit-IMPORTS edges'
+pre-registration emission is **the single peer surface the generic move touches** — measured at Gate 4 (swift's
+resolver suite), with the Architect-ruled per-language gate confining the whole re-sequence to Apex if swift
+(or any peer) regresses. Because `runScopeResolution` runs **once per language over extension-partitioned
+files** (RESEARCH-003 Addendum 12), the gate is per-run: set on the Apex run, unset on the swift/ruby/etc runs
+→ the gated form has **zero** peer surface. Given five peers register an optional hook in the moved region, the
+gate is the **expected-engaged confinement**, not a rare fallback — the generic-vs-gated default is settled by
+the Gate-4 measurement per the Architect ruling.
