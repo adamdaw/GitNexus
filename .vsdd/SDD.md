@@ -2340,8 +2340,12 @@ RESEARCH-004 it is **parity hardening, not a SHALL gap** — the **case-varied t
 (`A`≡`a`), **not** the method (`foo` is referenced exact-case). REQ-005 case-insensitivity is exercised on
 user-defined *types/members* (SRS §2's symbol set); here **no type or member is case-varied** — only a
 local-variable reference, which SRS §2's set excludes — so no REQ-005 SHALL is exercised (and no epic §9
-scenario varies a variable's case). WI-4 verifies it as a **REQ-012 parity / NFR-004 hardening** fixture (part of the parity
-evidence), NOT a gated SHALL acceptance.
+scenario varies a variable's case). It is likewise **not** governed by **REQ-012 v1.15 parity** (an
+Apex-specific case-insensitive shape has no case-sensitive Java/Kotlin benchmark equivalent — exactly the class
+REQ-012 v1.15 says parity does not govern) nor by **NFR-004** (defined over the §9 resolution scenarios, none
+of which varies a variable's case). So it carries **no governing SHALL / parity / NFR-004 obligation** — WI-4
+folds it in as **defensive Apex case-insensitivity completeness hardening** (Apex-local), verified by a
+hardening fixture, **not a gated acceptance**.
 
 **Acceptance boundary.** WI-4's acceptance is the parity + external + discharged-limitation forms: the BL-1…
 BL-8 fixtures flip from documented-limitation pins to **correct-resolution** assertions; a parity-fixture
@@ -2464,7 +2468,7 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
     amendment **makes BL-1's `implements` arm explicit**, pinned by a case-varied cross-file `implements`
     fixture.)** (The separate
     `emitDetectedInterfaceImplementations` inferred-implements pass is inert for Apex — §1(1).)
-- **Receiver-variable case-fold (REQ-012 parity / NFR-004 hardening — not a SHALL, §1(4)).**
+- **Receiver-variable case-fold (Apex case-insensitivity hardening — no governing SHALL/parity/NFR-004, §1(4)).**
   - *Postcondition:* a case-varied receiver **variable** name (`Widget a; A.foo()` where `A` refers to the
     user-defined-typed variable `a`) folds to its declaration, so `A.foo()` resolves `Widget.foo`. Apex-local
     parity hardening (RESEARCH-004: not a SHALL gap — SRS §2's user-defined-symbol set excludes local
@@ -2766,8 +2770,9 @@ Each REQ clause, BL-row discharge, and edge case maps to a sub-item. **Gate-3 ac
 - **NFR-004** — the aggregate `apex-resolution` suite exercises **every** §9 resolution scenario
   (REQ-005/006/007/008/009/010/011/012/013/015) at WI-4 completion — the WI-2/WI-3 suites plus WI-4's parity,
   external, parameter-arg, and BL-1…BL-8 discharge fixtures; the parity suite is its REQ-012 leg.
-- **Receiver-variable case-fold** (parity hardening, not a SHALL — §1(4)): a case-varied receiver-variable
-  reference (`Widget a; A.foo()`) resolves to its declaration; verified under REQ-012 parity / NFR-004.
+- **Receiver-variable case-fold** (Apex case-insensitivity hardening, no governing SHALL/parity/NFR-004 —
+  §1(4)): a case-varied receiver-variable reference (`Widget a; A.foo()`) resolves to its declaration; a
+  defensive hardening fixture, not a gated acceptance.
 - **NFR-002** — every peer resolver suite green under the reorder (the Gate-4 measurement); a mixed-language
   regression sweep clean.
 - **Invalid-source-row disposition (intra-Apex, `Fix=—`)** — the reorder leaves BL-9/BL-11/BL-12/BL-13/BL-14
