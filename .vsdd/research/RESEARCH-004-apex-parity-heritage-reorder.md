@@ -333,3 +333,26 @@ graph edges, and `indexes.scopeTree`:
    `extends`. **`emitDetectedInterfaceImplementations` (`:593`) is the Go-style *inferred*-implements pass** —
    Apex registers no `detectInterfaceImplementations` hook, so it early-returns 0 (`run.ts:216`) and is inert
    for Apex; it moves with the block but needs no `indexes` for Apex correctness.
+
+## Addendum 4 (2026-07-07) — REQ-008 oracle correction (supersedes Conclusion C / Status (C))
+
+Conclusion C says "gate on the finding-8 **workspace-membership** oracle — narrow when the parameter's declared
+type is **in `workspaceFqnBindings`**"; Status (C) then labels that mechanism "the existing
+`findClassBindingInScope` user-defined-vs-external oracle." **Those two phrasings are not equivalent, and the
+`findClassBindingInScope` label is wrong for a nested/dotted parameter type** — a decoy-safety hole the SDD
+correctly closed:
+
+- The **membership check** (finding 8 — is the *folded simple name* a key in `workspaceFqnBindings`) is
+  decoy-safe: the §3 inject-none guard keys ≤1 per folded name, so a collision resolves to nothing → external.
+- `findClassBindingInScope` (`walkers.ts:301-331`) does **more** than a membership check — it does
+  `walkScopeChain` + full-path-QNI single-match + the **decoy-prone simple-tail single-match** (`:320-329`).
+  On a nested/dotted parameter type it would bind a **same-tail top-level decoy** → the overload narrows on the
+  **wrong** type (a mis-resolution, defeating "never mis-bound").
+
+**Corrected oracle (as SDD-004 §1(3)/§3 pins it):** (a) a **simple** top-level type-name → `workspaceFqnBindings`
+folded **membership** (finding 8, decoy-safe); (b) a **dotted/nested** type-name → the Apex-local inc-11
+OUTER-first nested lookup (finding 4, decoy-safe); (c) a **simple-name nested type referenced from within its
+enclosing class** → an enclosing-scope owned-def lookup (scope-local; its resolution is a **[Gate-3 reliance]**,
+not a read-verified pin). **Explicitly NOT `findClassBindingInScope`** (its `:320-329` tail is decoy-prone for
+nested types). This supersedes Status (C)'s `findClassBindingInScope` phrasing; Conclusion C's underlying
+*membership* mechanism stands (it is arm (a)).

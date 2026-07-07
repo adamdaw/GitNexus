@@ -2240,19 +2240,20 @@ edit).** The seam is a per-language hook consulted **at the TOP of `resolveInher
 full-path `QualifiedNameIndex` refuse-on-tie pass) AND the `findClassBindingInScope` call (`:363`)**, whose
 own QNI dotted-tail single-match fallback (`findClassBindingInScope`, `:320-329` — reached via the `:363`
 call, NOT a fallback of `resolveInheritanceBaseInScope` itself) is the pass that binds the same-tail decoy.
-The hook has **THREE return states** (a binary hit/miss contract would reintroduce BL-4): **(i) resolved** —
-the OUTER segment binds a **unique** workspace type AND the nested tail is a unique owned def → return that
-binding; **(ii) applicable-but-refuse** — EITHER the OUTER binds a unique workspace type but the nested tail is
-**absent or ambiguous** among its owned defs (a typo/near-miss inner, or a tie), **OR the OUTER itself binds
-ambiguously** (2+ folded workspace candidates, or an inject-none-suppressed case-collision under the OUTER's
-folded key — e.g. case-variant twin outers) → return a distinguished "refuse" (emit **no** edge); **(iii)
-not-applicable** — a non-dotted base, or the OUTER folded key is **genuinely absent** (0 workspace candidates →
-external) → return "pass-through". **For BOTH (i) and (ii), `resolveInheritanceBaseInScope` skips `:353-361` AND
-the `:363` call (hence the `:320-329` dotted-tail fallback)** — so once the OUTER binds uniquely OR binds
-ambiguously/suppressed (states i/ii), no path can bind the same-tail decoy, whether the tail resolves or
-refuses. Only (iii) — a genuinely-absent OUTER or a non-dotted base — falls through to the unchanged
-`resolveQualifiedInheritanceBase`/`findClassBindingInScope` path, so non-dotted and non-Apex bases are
-untouched. (State (ii) is what makes the §4 "outer resolves, tail absent + decoy" edge case emit no edge
+The hook has **THREE return states** (a binary hit/miss contract would reintroduce BL-4), keyed on whether the
+base is **dotted**: **(i) resolved** — a **dotted** base whose OUTER segment binds a **unique** workspace type
+AND whose nested tail is a unique owned def → return that binding; **(ii) applicable-but-refuse** — **any other
+dotted base**: OUTER binds uniquely but the tail is **absent or ambiguous** (typo/near-miss inner, or a tie);
+OR the OUTER **binds ambiguously** (2+ folded workspace candidates / an inject-none-suppressed case-collision —
+e.g. case-variant twin outers); OR the OUTER is **genuinely absent** (external / managed-package namespace); OR
+the base has **>2 segments** (namespace-qualified `ns.Outer.Inner` — Apex user-defined nested types are at most
+two segments, one nesting level) → return a distinguished "refuse" (emit **no** edge); **(iii) not-applicable**
+— a **non-dotted** (simple) base → return "pass-through" to the unchanged simple-name channel (where BL-1's
+case-fold discharge lives). **For BOTH (i) and (ii) — i.e. EVERY dotted base — `resolveInheritanceBaseInScope`
+skips `:353-361` AND the `:363` call (hence the `:320-329` dotted-tail fallback)**, so **no dotted base can bind
+the same-tail decoy** — whether it resolves, refuses on the tail, or refuses on an ambiguous/absent/external
+OUTER or a >2-segment namespace-qualified base. Only (iii) — a non-dotted base — falls through to the unchanged
+`resolveQualifiedInheritanceBase`/`findClassBindingInScope` path, so simple and non-Apex bases are untouched. (State (ii) is what makes the §4 "outer resolves, tail absent + decoy" edge case emit no edge
 instead of re-binding the decoy.) **This must be a shared edit, not pure registration:** `preEmitInheritanceEdges`
 (`:573`) runs *before* `emitHeritageEdges` (`:579`) inside the moved block and is unmodified shared code, so a
 purely-additive `emitHeritageEdges` registration would run *after* the pre-pass has already bound the decoy
@@ -2286,7 +2287,9 @@ shared `findClassBindingInScope` (`walkers.ts:301-331`) does **only** `walkScope
 single-match + the **decoy-prone simple-tail single-match** (`:320-329`); it has **no** OUTER-first nested
 lookup — that resolver is Apex-local, inc-11, precisely as §1(2)/RESEARCH-004 finding 4 state. Using
 `findClassBindingInScope`'s tail fallback on a nested/dotted parameter type would bind a same-tail top-level
-decoy → the overload would narrow on the **wrong** type — a mis-resolution, defeating "never mis-bound.") The
+decoy → the overload would narrow on the **wrong** type — a mis-resolution, defeating "never mis-bound." RESEARCH-004 **Addendum 4** records this correction —
+superseding the spike's Status (C) "gate on `findClassBindingInScope`" label; Conclusion C's underlying
+*membership* mechanism is arm (a).) The
 oracle instead: **(a) a simple type-name** → `workspaceFqnBindings` folded membership (every top-level user-defined type is injected workspace-wide by `populateNamespaceSiblings` —
 SDD-003 §3 — so a same-file top-level param type is recognised too;
 decoy-safe — the §3 inject-none guard keys ≤1 per folded name, so a collision resolves to nothing → external);
@@ -2295,8 +2298,10 @@ decoy-safe — the §3 inject-none guard keys ≤1 per folded name, so a collisi
 WI-3 built for the ctor/declared-type paths); **(c) a simple type-name that misses top-level membership but is
 a nested type referenced unqualified from within its enclosing class** (e.g. param `Inner p` inside `Outer`) →
 an **enclosing-scope owned-def lookup** (scope-local, decoy-safe — a unique owned match binds, else conservative
-skip), so a simple-name nested param type is not silently under-resolved (a shape the Java/Kotlin benchmark
-narrows — REQ-008/REQ-012). A **unique** user-defined resolution (top-level via (a), nested-dotted via (b), or
+skip; reuses WI-2's `walkScopeChain` scope-walk), so a simple-name nested param type is not silently
+under-resolved (a shape the Java/Kotlin benchmark narrows — REQ-008/REQ-012). **Arm (c)'s resolution is a
+[Gate-3 reliance]**, not a Gate-2 [structural] pin: RESEARCH-004 (findings 7-8) spike-grounds only arms (a)
+membership and (b) inc-11 dotted; the enclosing-scope arm is validated at Gate 3 (Addendum 4). A **unique** user-defined resolution (top-level via (a), nested-dotted via (b), or
 nested-simple-in-scope via (c)) → narrow; **anything else — no resolution, a tie, or a shape only the decoy-prone shared tail
 would "resolve"** → treat as external → arity-only, **never mis-bound** (the safe conservative default). Apex-
 local (`languages/apex/captures.ts`, reusing the WI-2/WI-3 folded/nested resolvers); **no shared edit**. This **completes** WI-2's REQ-008 mechanic (SDD-002 §2 / work-items REQ-008 note) without re-owning
@@ -2373,7 +2378,7 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
     unique user-defined resolution) the argument is left untyped (arity-only) and **never mis-bound**.
     **[structural]** = the oracle is the Apex-local decoy-safe resolution (§1(3) — `workspaceFqnBindings`
     folded membership for a simple type-name + the inc-11 OUTER-first nested lookup for a dotted one + an
-    enclosing-scope owned-def lookup for a simple-name nested type (§1(3)(c));
+    enclosing-scope owned-def lookup for a simple-name nested type (§1(3)(c) — a [Gate-3 reliance] arm, not spike-pinned);
     explicitly **NOT** the shared `findClassBindingInScope` decoy-prone tail, which would mis-resolve a nested
     type to a same-tail decoy); **[Gate-3 reliance]** = that gating the existing `resolveVarTypeBindings`
     narrowing on that oracle resolves the user-defined case (top-level + nested) and conservatively skips the
@@ -2468,10 +2473,12 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
   `findClassBindingInScope` call (`:363`, whose `:320-329` dotted-tail fallback binds the decoy). Apex's impl
   resolves the base OUTER-first (**case-folded** workspace binding → **case-folded** nested-member lookup among
   the outer's owned defs, per Apex REQ-005 case-insensitivity — the same folded channel the reorder relies on)
-  with **three return states** (§1(2)): **(i) resolved** (OUTER binds uniquely, tail unique) → return the
-  binding; **(ii) applicable-but-refuse** (OUTER binds uniquely but tail absent/ambiguous, **OR OUTER binds
-  ambiguously / inject-none-suppressed**) → return "refuse", no edge; **(iii) not-applicable** (non-dotted /
-  OUTER folded key genuinely absent → external) → pass-through. States (i) AND (ii) both **skip `:353-361` and the `:363` call** (so no path binds
+  with **three return states** (§1(2)), keyed on whether the base is **dotted**: **(i) resolved** (a dotted
+  base, OUTER binds uniquely, tail unique) → return the binding; **(ii) applicable-but-refuse** (any other
+  dotted base — tail absent/ambiguous, OR OUTER ambiguous/suppressed/absent/external, OR >2-segment
+  namespace-qualified) → return "refuse", no edge; **(iii) not-applicable** (a non-dotted simple base) →
+  pass-through. Every dotted base is handled by the seam (i or ii) — never passed to the decoy-prone
+  dotted-tail fallback. States (i) AND (ii) both **skip `:353-361` and the `:363` call** (so no path binds
   the decoy — whether the tail resolves or refuses); only (iii) proceeds unchanged (non-dotted/non-Apex bases
   untouched). Names no language (Apex supplies the
   impl); fits §2.2(b) as a standard per-language provider hook (isolated-provider arm), its NFR-002
@@ -2557,8 +2564,13 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
     the current fold-bind, so the amendment scope is Gate-3-verified, not a Gate-2 pin.
   Every BL-9…BL-14 row's disposition is now committed (Constitution §7 — no silent or undispositioned change
   to a ratified row): BL-9/BL-11/BL-12/BL-13/BL-14 byte-identical, BL-10 via the committed SRS amendment.
-- **Dotted base, no nested target (external outer):** `extends Ext.Inner` where `Ext` is external → no
-  workspace hit, no nested lookup → EXTENDS absent (benign; REQ-013-adjacent), never a mis-bind.
+- **Dotted base, external/absent outer:** `extends Ext.Inner` where `Ext` is external (managed-package /
+  stdlib / absent) → the seam **refuses** (state ii — no edge, skipping the dotted-tail fallback), so no
+  same-tail decoy is bound; EXTENDS absent (benign; REQ-013-adjacent), never a mis-bind.
+- **Dotted base, >2 segments / namespace-qualified** (`ns.Outer.Inner`, or `ns.Type`): Apex user-defined
+  nested types are at most two segments (one nesting level), so a >2-segment base is a managed-package
+  namespace-qualified external reference → the seam **refuses** (state ii — no edge), never the (iii)
+  pass-through, so the dotted-tail fallback cannot bind a same-tail decoy.
 - **Dotted base, outer resolves but nested tail absent (+ same-tail top-level decoy):** `extends Outer.Inner`
   where `Outer` binds a workspace type but owns **no** nested `Inner` (a typo/near-miss), while an unrelated
   top-level `class Inner` exists. Once `Outer` binds a workspace type, the seam **refuses** (emits no EXTENDS
