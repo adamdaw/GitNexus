@@ -2355,10 +2355,15 @@ REQ-009** limitation clauses (REQ-009 v1.15 co-governs BL-6's poisoned-MRO field
 **the SRS §9 Gherkin documented-limitation scenarios** (which pin the OLD outcomes — BL-1 "no inheritance edge
 for the case-varied heritage clause", BL-4 "binds the top-level decoy", BL-6 "resolves into the decoy's member"
 — and would assert falsified behaviour post-discharge, self-contradicting §5.1 if not amended in the same pass),
-**and SRS §1's in-scope boundary + INTENT-001-acceptance wording (v1.22–v1.27 frames BL-1…BL-8 as *pending*
+**SRS §1's in-scope boundary + INTENT-001-acceptance wording (v1.22–v1.27 frames BL-1…BL-8 as *pending*
 epic-deferred shortfalls / heritage-family as the sole non-full-SHALL area — the discharge falsifies that
-present-tense framing)** — a documented SRS amendment **upon Gate-3 verification** of the discharge (a Phase-5
-cascade, not authored pre-verification, so the register is not mutated ahead of the evidence).
+present-tense framing)**, **and a dated Constitution §1.2 amendment (§7 "committed as a new dated version"):
+§1.2(a) names `BL-2, BL-4, BL-6, and the BL-7 super.method() self-loop` as valid-source false edges with
+"committed fix path WI-4" — the discharge empties that (a) class of live edges, so its enumeration is annotated
+discharged (the §1.2 head says it defers to the register, but the (a) clause body *does* name the rows + their
+fix-path status, so the text change is owed)** — a documented SRS/Constitution amendment **upon Gate-3
+verification** of the discharge (a Phase-5 cascade, not authored pre-verification, so neither the register nor
+§1.2 is mutated ahead of the evidence).
 
 ## 2. Behavioural contract (each REQ → clause; host-structural vs Gate-3 reliance marked)
 
@@ -2796,7 +2801,11 @@ falsifies that present-tense framing, so §1 is re-stated at the same Gate-3-tri
 BL-1's heritage-family class — REQ-007 covers interface-implementation — not a new §5.1 row; the Gate-3
 discharge amendment records BL-1's `implements` arm alongside its `extends` arm, §2);
 **plus a BL-10 amendment** ratifying the reorder's case-varied heritage arm (§4 — an invalid-source `Fix=—` row WI-4 perturbs,
-dispositioned by amendment). Each is a documented SRS amendment authored **upon
-Gate-3 verification** (a Phase-5 cascade), not pre-verification, so the register is never mutated ahead of the
-evidence. The parity (REQ-012) and external (REQ-013) forms complete the epic §9 scope
+dispositioned by amendment); **the SRS §9 Gherkin documented-limitation scenarios** (which pin the OLD
+BL-1/BL-4/BL-6 outcomes and would assert falsified behaviour post-discharge); **and a dated Constitution §1.2
+amendment** (§7 "committed as a new dated version") annotating §1.2(a)'s enumerated `BL-2 / BL-4 / BL-6 / BL-7
+super.method() self-loop` "committed fix path WI-4" class as discharged (that clause body names the rows + their
+fix-path status, so the text change is owed despite §1.2's register-deference head). Each is a documented
+SRS/Constitution amendment authored **upon Gate-3 verification** (a Phase-5 cascade), not pre-verification, so
+neither the register nor §1.2 is mutated ahead of the evidence. The parity (REQ-012) and external (REQ-013) forms complete the epic §9 scope
 WI-1/2/3 left to WI-4.
