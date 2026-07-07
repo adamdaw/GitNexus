@@ -2082,6 +2082,25 @@ receiver **variable**'s name for case-insensitivity completeness. Unlike WI-1 (p
 registration), WI-4 commits **one generic shared-code edit** — the pipeline re-sequence — which owes its own
 §2.2 legitimacy + adversary review + NFR-002 measurement at Gate 4.*
 
+- **Consumes:** SRS-001 (**v1.28**) **REQ-012** (Java/Kotlin parity), **REQ-013** (external-reference
+  handling), **NFR-004** (automated resolution test); the **§5.1 Bounded Limitations Register** rows
+  **BL-1…BL-8** (every row marked `Fix=WI-4` — the valid-source heritage-form limitations WI-4 discharges);
+  the **REQ-008 parameter-typed-argument narrowing** deferral (SDD-002 §2, the WI-2→WI-4 argument-typing
+  boundary); and the receiver-**variable**-name case-fold completeness item (the WI-2→WI-3→WI-4 re-deferral).
+  **RESEARCH-004** (§A.6 host-API spike, 2026-07-07 — the heritage-reorder feasibility + the necessary-but-
+  insufficient trace for the dotted nested-parent form, the REQ-013 host-default-benign finding, and the
+  REQ-008 workspace-membership oracle).
+- **Constitution:** CONST-gitnexus-apex **v1.1.3** (this SDD section is authored under, and Gate 2 checks it
+  against, v1.1.3 — matching SDD-003). **Security-critical = false** (operates on WI-1's safe-parsed output +
+  WI-2/WI-3's resolution model; introduces no new untrusted-source parse path — SECT-001 stays WI-1's). No
+  new SEC clause. WI-4 commits the **one generic shared-code edit** of the epic (the pipeline re-sequence),
+  which rests its §2.2 legitimacy (a reorder of existing generic passes, naming no language) on this version.
+- **Builds on / completes:** WI-2's REQ-008 overload mechanic (SDD-002) — WI-4 **completes** its
+  parameter-typed-argument sub-case (not re-owning it); and WI-3's REQ-010 registration (SDD-003) — the
+  reorder makes WI-3's `workspaceFqnBindings` channel reachable by the heritage pass, discharging the
+  WI-3-carried BL-1…BL-8. WI-4 **owns** REQ-012, REQ-013, NFR-004, the committed heritage reorder, and the
+  receiver-var fold.
+
 ## 1. Design overview (the HOW, grounded in the host)
 
 WI-4 adds **no new resolution algorithm**; it (a) reorders an existing shared pass, (b) reuses existing host
@@ -2147,7 +2166,8 @@ no defect (`resolve-references.ts:127-129`; `resolution-outcome.ts` has only `re
 unresolved *defect*, verified by a parity fixture; the only possible addition is an Apex `builtInNames` reuse
 (`language-provider.ts:379/423`) **iff** a parity fixture shows a false-positive external *attempt* — an
 Apex-local config, not a new mechanism. **REQ-012 / NFR-004** are the parity *evidence*: a resolution test
-suite comparable to peers (`apex.test.ts`) over the full same-file + cross-file surface, demonstrating
+suite comparable to peers (the NFR-004 `apex-resolution` suite — `apex-resolution.test.ts`, with WI-4 parity
+fixtures as §2.5-permitted additive siblings) over the full same-file + cross-file surface, demonstrating
 Java/Kotlin-tier resolution. The **receiver-variable-name case-fold** (the WI-2→WI-3→WI-4 re-deferred
 case-insensitivity completeness item) folds a receiver variable's name at its lookup, Apex-local against
 REQ-005/REQ-008 case-insensitivity; no epic §9 scenario varies a variable's case, so it is parity hardening,
@@ -2156,8 +2176,9 @@ not a SHALL gap.
 **Acceptance boundary.** WI-4's acceptance is the parity + external + discharged-limitation forms: the BL-1…
 BL-8 fixtures flip from documented-limitation pins to **correct-resolution** assertions; a parity-fixture
 suite; an external-reference fixture; a parameter-typed cross-file overload fixture. The BL-1…BL-8 discharge
-updates the **SRS §5.1 register** (those rows carry `Fix=WI-4`) and the governing REQ-007/005 limitation
-clauses — a documented SRS amendment **upon Gate-3 verification** of the discharge (a Phase-5 cascade, not
+updates the **SRS §5.1 register** (those rows carry `Fix=WI-4`) and the governing **REQ-007 / REQ-005 /
+REQ-009** limitation clauses (REQ-009 v1.15 co-governs BL-6's poisoned-MRO field/property-chain carve-out) —
+a documented SRS amendment **upon Gate-3 verification** of the discharge (a Phase-5 cascade, not
 authored pre-verification, so the register is not mutated ahead of the evidence).
 
 ## 2. Behavioural contract (each REQ → clause; host-structural vs Gate-3 reliance marked)
@@ -2191,10 +2212,10 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
     **[structural]** = the oracle is `workspaceFqnBindings` membership (finding 8); **[Gate-3 reliance]** =
     that gating the existing `resolveVarTypeBindings` narrowing on that oracle resolves the user-defined case
     and conservatively skips the external case.
-- **REQ-007 / REQ-005 heritage-limitation discharge (BL-1…BL-8) — completion via the reorder, not a new
-    REQ.** The reorder makes WI-2's REQ-007 heritage mechanic and REQ-005 super-delegation reach the
+- **REQ-007 / REQ-005 / REQ-009 heritage-limitation discharge (BL-1…BL-8) — completion via the reorder, not
+    a new REQ.** The reorder makes WI-2's REQ-007 heritage mechanic and REQ-005 super-delegation reach the
     cross-file channel at heritage-resolution time, exactly as REQ-010 made the other WI-2 mechanics reach
-    across files.
+    across files; REQ-009 v1.15 co-governs BL-6 (the typed-receiver member call on a mis-bound subtype).
   - **BL-1** (case-varied `extends BASE`): *postcondition* — EXTENDS edge emitted (the folded workspace key
     resolves the base). **Reorder discharges.**
   - **BL-2** (case-variant trigger/class twin `extends Twist`, `Twist.trigger`+`class TWIST`): *postcondition*
@@ -2244,7 +2265,9 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
   (user-defined); else arity-only. No shared edit.
 - **External-oracle reuse** (`workspaceFqnBindings` membership) — no new type; the REQ-013 external
   classification is "absent from the workspace registry".
-- **Parity + external fixtures** (`apex.test.ts`): a parity suite comparable to peers; an external-reference
+- **Parity + external fixtures** (`apex-resolution.test.ts` — the NFR-004 resolution suite, per Constitution
+  §2.5; WI-4-specific parity fixtures may be §2.5 additive siblings, e.g. `apex-parity.test.ts`; the Gate-5
+  fuzz follows the `apex-*-hardening.test.ts` sibling pattern): a parity suite comparable to peers; an external-reference
   fixture; a parameter-typed cross-file overload fixture; the BL-1…BL-8 correct-resolution fixtures (flipped
   from `apex-cross-file-collision` limitation pins).
 
@@ -2255,6 +2278,15 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
 - **Peer heritage under the reorder:** a peer's cross-file heritage (Java `extends` an in-package type) —
   must resolve **byte-identically** to the current order (NFR-002; the Gate-4 measurement). *The load-bearing
   edge case:* if a peer's heritage newly resolves (a new edge) → the committed per-language gate.
+- **Invalid-source Apex heritage rows under the reorder (BL-9…BL-14, `Fix=—`):** the reorder fires for
+  **every** Apex heritage clause, so it could perturb the ratified invalid-source rows that have heritage
+  arms — BL-9 (class mis-filed in `.trigger` — its `inheritance` reference binds the mis-filed class via the
+  QNI exact-case channel; the mis-filed class is `.trigger`-**excluded** from the §3 injection, so the
+  workspace channel never holds it and the QNI bind is unchanged), BL-13/BL-14 (collision → the §3 guard
+  **registers neither**, so the workspace channel is empty for the colliding key). Expected byte-identical
+  (the reorder only populates a channel that, for these rows, holds nothing), but an Apex-only regression
+  here is invisible to the *peer* suites → must be **explicitly pinned** (§8). None is `Fix=WI-4`; the reorder
+  must leave every BL-9…BL-14 outcome unchanged (Constitution §7 — no silent change to a ratified row).
 - **Dotted base, no nested target (external outer):** `extends Ext.Inner` where `Ext` is external → no
   workspace hit, no nested lookup → EXTENDS absent (benign; REQ-013-adjacent), never a mis-bind.
 - **Dotted base, ambiguous nested tail:** `extends Outer.Inner` where two outers own an `Inner` → conservative
@@ -2281,7 +2313,8 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
 - **NFR-001 (resolution-stage slice).** The reorder + nested lookup + parameter-arg gate complete without
   crashing on partial/error-recovery trees and references into skipped files; an unresolvable base/reference
   is left unresolved, never a throw.
-- **NFR-004.** An automated Apex resolution test comparable to peers exists (`apex.test.ts`) — the parity
+- **NFR-004.** An automated Apex resolution test comparable to peers exists (the `apex-resolution` suite —
+  `apex-resolution.test.ts`, auto-discovered by the CI parity glob per Constitution §2.5) — the parity
   suite is its REQ-012 extension.
 - **Performance:** the reorder adds no per-reference cost (it re-sequences existing passes; the workspace
   channel lookup already runs). The nested-aware base resolution (if engaged) is O(1) per dotted heritage site
@@ -2352,11 +2385,16 @@ Each REQ clause, BL-row discharge, and edge case maps to a sub-item. **Gate-3 ac
 - **Receiver-variable case-fold** — a case-varied receiver-variable reference resolves to its declaration.
 - **NFR-002** — every peer resolver suite green under the reorder (the Gate-4 measurement); a mixed-language
   regression sweep clean.
+- **Invalid-source-row non-regression (intra-Apex, `Fix=—`)** — the reorder leaves every BL-9…BL-14 outcome
+  **byte-identical**: BL-9's exact-case `inheritance` reference still binds the mis-filed class (workspace
+  excludes `.trigger`); BL-13/BL-14's collision still registers-neither (the valid type's cross-file forms
+  stay unresolved as ratified). Pinned by the existing WI-3 collision/misfiled-heritage fixtures re-run under
+  the reorder — an Apex-only regression the peer suites cannot see.
 - **NFR-001** — the reorder + nested lookup + parameter-arg gate no-crash on a partial tree + a reference into
   a skipped sibling; cyclic cross-file heritage no-hang.
 
 **Scope note (SRS cascade).** Discharging BL-1…BL-8 updates the SRS §5.1 register (those rows carry
-`Fix=WI-4`) and the governing REQ-007/REQ-005 limitation clauses — a documented SRS amendment authored **upon
-Gate-3 verification** of each discharge (a Phase-5 cascade), not pre-verification, so the register is never
-mutated ahead of the evidence. The parity (REQ-012) and external (REQ-013) forms complete the epic §9 scope
+`Fix=WI-4`) and the governing **REQ-007 / REQ-005 / REQ-009** limitation clauses (REQ-009 v1.15 co-governs
+BL-6) — a documented SRS amendment authored **upon Gate-3 verification** of each discharge (a Phase-5
+cascade), not pre-verification, so the register is never mutated ahead of the evidence. The parity (REQ-012) and external (REQ-013) forms complete the epic §9 scope
 WI-1/2/3 left to WI-4.
