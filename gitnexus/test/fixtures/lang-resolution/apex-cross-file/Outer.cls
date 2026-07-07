@@ -1,5 +1,6 @@
 public virtual class Outer {
     public virtual class Inner {
+        public Inner() {}
         public void ping() {}
     }
     // Valid nested/top-level name share: a top-level `class Helper` lives in Utils.cls.

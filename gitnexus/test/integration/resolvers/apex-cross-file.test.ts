@@ -216,23 +216,24 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toBeDefined();
   });
 
-  it('pins the heritage-downstream liveness loss — CaseKid\'s inherited() stays unresolved (SRS v1.11(a))', () => {
-    // The unresolved case-varied clause leaves CaseKid's MRO without Base, so the
-    // implicit-this inherited-member call fails too (probed, Addendum 16 — determinate).
-    // [conservative pin; see WI-3-red-gate.md]
-    expect(
-      getRelationships(result, 'CALLS').filter(
-        (e) => e.target === 'inherited' && e.sourceFilePath.includes('CaseKid'),
-      ),
-    ).toEqual([]);
+  it('resolves CaseKid\'s inherited() to the cross-file parent Base — BL-8 discharge (WI-4 reorder, SDD-004 §2)', () => {
+    // WI-4 FLIP (was: pinned unresolved, SRS v1.11(a)/BL-8). Post-reorder BL-1's case-varied
+    // EXTENDS edge exists, so buildMro includes Base and inc-15's gated MRO walk reaches the
+    // inherited implicit-this — the BL-8 super/inherited fallout of the BL-1 discharge
+    // (SDD-004 §2 BL-8, §8). [Gate-3 reliance] — RED until the reorder ships.
+    const call = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'inherited' && e.sourceFilePath.includes('CaseKid'),
+    );
+    expect(call, 'callUp2() -> Base.inherited via the now-populated MRO').toBeDefined();
+    expect(call!.targetFilePath, 'declared on the cross-file parent Base').toContain('Base');
   });
 
-  it('resolves the super() arm to the PARENT ctor despite the unresolved heritage EDGE (SRS v1.12)', () => {
-    // Phase-5 v1.12 ratify: the super-receiver synthesis folds the `extends BASE` identifier and
-    // consults the cross-file channel INDEPENDENTLY of the heritage pre-pass, so super() reaches
-    // Base's ctor even though CaseKid's EXTENDS edge stays unresolved (v1.8(i), pinned below) — the
-    // two mechanisms have independent reach. No ctor self-loop. Supersedes the v1.11(a) super()-
-    // unresolved pin for the case-varied shape.
+  it('resolves the super() arm to the PARENT ctor (SRS v1.12; heritage EDGE now resolves too — BL-1)', () => {
+    // The super-receiver synthesis folds the `extends BASE` identifier and consults the cross-file
+    // channel to reach Base's ctor (SRS v1.12). Pre-WI-4 this held even though the EXTENDS edge was
+    // unresolved (independent reach); post-WI-4 reorder the EXTENDS edge resolves too (BL-1, flipped
+    // below), so super() and the heritage edge now agree — this assertion is unchanged (green pre-
+    // and post-reorder), the BL-1 EXTENDS/IMPLEMENTS discharge is asserted in the flipped pin below.
     const kidCalls = getRelationships(result, 'CALLS').filter(
       (e) => e.sourceFilePath.includes('CaseKid'),
     );
@@ -242,11 +243,11 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     expect(kidCalls.filter((e) => e.target === 'CaseKid'), 'no ctor self-loop').toEqual([]);
   });
 
-  it('resolves super.greet() to the PARENT member despite the unresolved heritage EDGE (SRS v1.12)', () => {
-    // Phase-5 v1.12 ratify: super.method() diverges from the MRO-inherited path — it resolves to
-    // Base.greet via the heritage-pre-pass-independent super-receiver synthesis, NOT CaseKid's own
-    // override (the superseded v1.11(a) self-loop). CaseKid's implicit-this inherited() (MRO path)
-    // still stays unresolved (pin above); only the super arms reach Base.
+  it('resolves super.greet() to the PARENT member (SRS v1.12; heritage EDGE now resolves too — BL-1)', () => {
+    // super.method() resolves to Base.greet via the super-receiver synthesis, NOT CaseKid's own
+    // override. Unchanged by the WI-4 reorder (green pre- and post-reorder); post-reorder CaseKid's
+    // implicit-this inherited() (MRO path) ALSO resolves (BL-8, flipped above) now that BL-1's
+    // EXTENDS edge exists and buildMro includes Base.
     const call = getRelationships(result, 'CALLS').find(
       (e) => e.target === 'greet' && e.sourceFilePath.includes('CaseKid'),
     );
@@ -254,17 +255,22 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     expect(call!.rel.targetId, "targets Base's greet, not CaseKid's override").toContain('Base.greet');
   });
 
-  it('leaves CASE-VARIED heritage (CaseKid extends BASE implements IFACE) unresolved — SRS v1.8(i) limitation', () => {
-    // The heritage pre-emit pass runs BEFORE the hook and suppresses retry (Addendum 9):
-    // the workspace keys are unreachable for heritage clauses, so the case-varied forms
-    // stay unresolved — ratified valid-source liveness limitation, pinned here.
-    // [conservative pin — green pre- and post-impl; see WI-3-red-gate.md]
-    expect(
-      getRelationships(result, 'EXTENDS').filter((e) => e.source === 'CaseKid'),
-    ).toEqual([]);
-    expect(
-      getRelationships(result, 'IMPLEMENTS').filter((e) => e.source === 'CaseKid'),
-    ).toEqual([]);
+  it('resolves CASE-VARIED heritage (CaseKid extends BASE implements IFACE) — BL-1 discharge + its implements arm (WI-4 reorder, SDD-004 §2)', () => {
+    // WI-4 FLIP (was: pinned unresolved, SRS v1.8(i)/BL-1). Post-reorder heritage resolves AFTER
+    // populateNamespaceSiblings, so preEmitInheritanceEdges reaches the folded workspace key and the
+    // case-varied `extends BASE`/`implements IFACE` bind — the BL-1 discharge. The `implements` arm
+    // rides the SAME preEmitInheritanceEdges folded channel as `extends` (the emitter discriminates
+    // edge kind by target type, run.ts:189); Architect-ruled 2026-07-07 to be within BL-1's
+    // heritage-family class (REQ-007 covers interface-implementation), so BL-1's implements arm is
+    // made explicit here (SDD-004 §2/§8). [Gate-3 reliance] — RED until the reorder ships.
+    const ext = getRelationships(result, 'EXTENDS').find(
+      (e) => e.source === 'CaseKid' && e.targetFilePath.includes('Base'),
+    );
+    expect(ext, 'CaseKid extends BASE -> Base (case-varied, folded)').toBeDefined();
+    const impl = getRelationships(result, 'IMPLEMENTS').find(
+      (e) => e.source === 'CaseKid' && e.targetFilePath.includes('Iface'),
+    );
+    expect(impl, 'CaseKid implements IFACE -> Iface (case-varied, folded)').toBeDefined();
   });
 
   // nested-type qualified access (REQ-010 SHALL) ─────────────────────────────
@@ -352,44 +358,42 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toBeDefined();
   });
 
-  it('leaves nested-parent heritage (NestSub extends Outer.Inner) unresolved — SRS v1.10(iii) limitation', () => {
-    // The pre-hook heritage pass cannot reach the nested parent (bare-keyed index, no
-    // injection interception — Addendum 11). Pinned limitation, green pre- and post-impl.
-    // [conservative pin; see WI-3-red-gate.md]
-    expect(
-      getRelationships(result, 'EXTENDS').filter((e) => e.source === 'NestSub'),
-    ).toEqual([]);
+  it('resolves nested-parent heritage (NestSub extends Outer.Inner) to the real nested type — BL-3 discharge (WI-4 reorder + nested-aware base seam, SDD-004 §1(2)/§2)', () => {
+    // WI-4 FLIP (was: pinned unresolved, SRS v1.10(iii)/BL-3). Post-reorder + the committed generic
+    // nested-aware heritage-base seam (resolve OUTER via the workspace channel, then the nested tail
+    // among Outer's owned nested type defs — SDD-004 §1(2), the epic's second shared edit), the
+    // dotted `Outer.Inner` base binds the REAL nested Inner @ Outer.cls. [Gate-3 reliance] — RED
+    // until the reorder + seam ship.
+    const ext = getRelationships(result, 'EXTENDS').find(
+      (e) => e.source === 'NestSub' && e.targetFilePath.includes('Outer.cls'),
+    );
+    expect(ext, 'NestSub extends Outer.Inner -> the nested Inner @ Outer.cls').toBeDefined();
   });
 
-  // BL-7 heritage-downstream super arms (SRS v1.10(iii), SDD-003 §8): the dotted `Outer.Inner`
-  // superclass folds to `outer.inner` — no simple-name workspace key — so the super arms
-  // SELF-LOOP: super.ping() binds NestSub's OWN override, super() resolves nothing. This is the
-  // load-bearing v1.28-F3 contrast with the same-case-twin TwinSub (BL-8), whose simple-name
-  // superclass DOES resolve to the parent. Ratified pins (probed 2026-07-06; green pre- and
-  // post-impl — no bindings channel reaches the dotted key). [conservative pin; WI-3-red-gate.md]
-  it('SELF-LOOPS NestSub super.ping() to its OWN override, not Outer.Inner.ping — BL-7 (SRS v1.10(iii))', () => {
+  // BL-7 heritage-downstream super arms (SDD-004 §2 BL-7): WI-4 FLIP. Post-reorder BL-3's dotted
+  // EXTENDS edge resolves (NestSub extends the real Outer.Inner), so buildMro includes the nested
+  // parent and the super arms reach it: super.ping() resolves to Outer.Inner.ping (NOT NestSub's own
+  // override — no self-loop), super() resolves to the parent Inner ctor. Discharged as BL-3 fallout.
+  // [Gate-3 reliance] — RED until the reorder + seam ship.
+  it('resolves NestSub super.ping() to the PARENT Outer.Inner.ping, not its own override — BL-7 discharge (WI-4)', () => {
     const pingCalls = getRelationships(result, 'CALLS').filter(
       (e) => e.target === 'ping' && e.sourceFilePath.includes('NestSub'),
     );
-    const selfLoop = pingCalls.find((e) => e.targetFilePath.includes('NestSub.cls'));
-    expect(selfLoop, 'super.ping() self-loops to NestSub.ping').toBeDefined();
-    expect(selfLoop!.rel.targetId, "NestSub's own ping").toContain('NestSub.ping');
+    const resolved = pingCalls.find((e) => e.targetFilePath.includes('Outer.cls'));
+    expect(resolved, 'super.ping() resolves to the nested parent Outer.Inner.ping').toBeDefined();
     expect(
-      pingCalls.filter((e) => e.targetFilePath.includes('Outer.cls')),
-      'never reaches the unresolved nested parent Outer.Inner.ping',
+      pingCalls.filter((e) => e.targetFilePath.includes('NestSub.cls')),
+      "never self-loops to NestSub's own override",
     ).toEqual([]);
   });
 
-  it('resolves NO super() ctor for NestSub — the dotted parent is unreachable — BL-7 (SRS v1.10(iii))', () => {
-    // super() emits nothing (edge-absence): no ctor CALLS edge from NestSub to a parent type.
-    expect(
-      getRelationships(result, 'CALLS').filter(
-        (e) =>
-          e.sourceFilePath.includes('NestSub') &&
-          (e.target === 'Inner' || e.target === 'Outer'),
-      ),
-      'super() resolves nothing',
-    ).toEqual([]);
+  it('resolves NestSub super() to the PARENT nested Inner ctor — BL-7 discharge (WI-4)', () => {
+    // Post-reorder the dotted parent is reachable, so super() binds the nested Inner ctor @ Outer.cls.
+    const superCtor = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'Inner' && e.sourceFilePath.includes('NestSub'),
+    );
+    expect(superCtor, 'super() resolves to the parent Inner ctor').toBeDefined();
+    expect(superCtor!.targetFilePath, 'the nested Inner @ Outer.cls').toContain('Outer.cls');
   });
 
   it('resolves DOUBLY-VARIED qualified nested access (OUTER.INNER → new OUTER.INNER() + e.ping()) (REQ-010/§7(13)∘§7(5), §8 both kinds)', () => {
@@ -769,12 +773,21 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     ).toEqual([]);
   });
 
-  it('pins the same-case twin heritage clause unresolved (SRS v1.10(v) documented limitation)', () => {
-    // TwinSub extends Twin with Twin.trigger + Twin.cls present: the pre-hook pass sees two
-    // defs under the exact-case key and refuses — liveness-only, no mis-bind.
-    // [conservative pin; see WI-3-red-gate.md]
+  it('resolves the same-case twin heritage clause (TwinSub extends Twin) to the CLASS — BL-5 discharge (WI-4 reorder, SDD-004 §2)', () => {
+    // WI-4 FLIP (was: pinned unresolved, SRS v1.10(v)/BL-5). Post-reorder heritage resolves after
+    // populateNamespaceSiblings, so `extends Twin` folds to the injected workspace key — the trigger
+    // is §3-excluded from injection, so the class Twin is the UNIQUE workspace key and the EXTENDS
+    // edge binds it (never the trigger). The class-before-exact-case-QNI-tie-refuse ordering is a
+    // [Gate-3 reliance] (SDD-004 §2 BL-5). RED until the reorder ships.
+    const ext = getRelationships(result, 'EXTENDS').find(
+      (e) => e.source === 'TwinSub' && e.targetFilePath.includes('Twin.cls'),
+    );
+    expect(ext, 'TwinSub extends Twin -> the class Twin @ Twin.cls').toBeDefined();
     expect(
-      getRelationships(result, 'EXTENDS').filter((e) => e.source === 'TwinSub'),
+      getRelationships(result, 'EXTENDS').filter(
+        (e) => e.source === 'TwinSub' && e.targetFilePath.endsWith('Twin.trigger'),
+      ),
+      'never the trigger',
     ).toEqual([]);
   });
 
@@ -826,18 +839,19 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     ).toEqual([]);
   });
 
-  it('pins the RATIFIED poisoned-MRO propagation — t.decoy2() rides the mis-bound heritage into the decoy (SRS v1.13, WI-4-owned fix)', () => {
-    // Phase-5 ratify (Adam, 2026-07-04): the v1.11(b) tripwire FIRED at Step 3b, as the spec
-    // anticipated. Given pin 767 ratifies TailSub's EXTENDS mis-binding the decoy TInner
-    // (v1.10(iv)), member lookup rides that mis-bound MRO into the decoy's decoy2 — the
-    // internally-consistent consequence, pinned documented-not-correct as a bounded false edge.
-    // The clean fix (heritage resolved after the WI-3 registration so nested TOuter.TInner binds)
-    // is committed to WI-4 (the pipeline reorder, ITEM-004). [compliance log inc 16]
-    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'decoy2');
-    expect(call, 'the poison propagates (documented v1.13 limitation)').toBeDefined();
-    expect(call!.targetFilePath, 'into the mis-bound decoy TInner, not the real TOuter.TInner').toContain(
-      'TInner.cls',
-    );
+  it('emits NO false member edge for t.decoy2() — the poisoned MRO is cleared — BL-6 discharge (WI-4 reorder, SDD-004 §2)', () => {
+    // WI-4 FLIP (was: pinned poisoned-MRO propagation, SRS v1.13/BL-6). Post-reorder + nested-aware
+    // base seam, TailSub's EXTENDS binds the REAL nested TOuter.TInner (BL-4), so buildMro no longer
+    // carries the decoy TInner into TailSub's MRO — t.decoy2() finds no such member and emits NO
+    // member edge into the decoy (decoy2 is declared ONLY on the top-level decoy TInner.cls, absent
+    // from the real nested TInner). Discharged as BL-4 fallout (SDD-004 §2 BL-6). [Gate-3 reliance]
+    // — RED until the reorder + seam ship.
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'decoy2' && e.sourceFilePath.includes('TailMro'),
+      ),
+      'no false member edge into the decoy TInner.decoy2',
+    ).toEqual([]);
   });
 
   it('pins the misfiled-trigger collision, BOTH halves (SRS v1.11(c))', () => {
@@ -859,21 +873,29 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     expect(ctor!.targetFilePath).toContain('VICTIM.cls');
   });
 
-  it('pins nested-parent heritage mis-binding the same-tail decoy (SRS v1.10(iv) documented limitation)', () => {
-    // TailSub extends TOuter.TInner with top-level TInner present: the pre-hook pass binds
-    // the DECOY (probed, Addendum 11) — pinned as the ratified limitation, never as correct
-    // resolution. [already-green pin; see WI-3-red-gate.md]
+  it('resolves nested-parent heritage (TailSub extends TOuter.TInner) to the real nested type, never the same-tail decoy — BL-4 discharge (WI-4 reorder + nested-aware base seam, SDD-004 §1(2)/§2)', () => {
+    // WI-4 FLIP (was: pinned mis-binding the decoy TInner.cls, SRS v1.10(iv)/BL-4). Post-reorder the
+    // nested-aware heritage-base seam (SDD-004 §1(2)) resolves OUTER `TOuter` via the workspace
+    // channel then the nested tail `TInner` among TOuter's owned nested type defs — BEFORE the shared
+    // QNI dotted-tail fallback that bound the decoy — so the EXTENDS edge targets the REAL nested
+    // TInner @ TOuter.cls, NEVER the top-level decoy TInner.cls. [Gate-3 reliance] — RED until the
+    // reorder + seam ship.
+    const ext = getRelationships(result, 'EXTENDS').find((e) => e.source === 'TailSub');
+    expect(ext, 'TailSub extends TOuter.TInner resolves').toBeDefined();
+    expect(ext!.targetFilePath, 'the real nested TInner @ TOuter.cls').toContain('TOuter.cls');
     expect(
-      getRelationships(result, 'EXTENDS').find(
+      getRelationships(result, 'EXTENDS').filter(
         (e) => e.source === 'TailSub' && e.targetFilePath.endsWith('TInner.cls'),
       ),
-    ).toBeDefined();
+      'never the same-tail top-level decoy',
+    ).toEqual([]);
   });
 
   it('never tail-binds a dotted reference to the same-tail top-level decoy (§4 dotted-tail guard)', () => {
     // Probed 2026-07-02 (Addendum 6): both defs index under the tail key -> the single-match
-    // guard binds nothing into the decoy for the post-hook kinds. (The HERITAGE kind is the
-    // pinned v1.10(iv) mis-bind above — excluded here.)
+    // guard binds nothing into the decoy for the ctor/member (TailCaller) kinds. (The HERITAGE
+    // kind — TailSub's EXTENDS — is asserted never-the-decoy by the BL-4 flip above; this test
+    // covers the TailCaller ctor/member source.)
     // [conservative-negative; see WI-3-red-gate.md]
     for (const type of ['CALLS', 'ACCESSES']) {
       expect(
@@ -931,16 +953,22 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     }
   });
 
-  it('pins the twin HERITAGE arm binding the trigger (SRS v1.8(ii) documented limitation)', () => {
-    // TwistSub extends Twist: the PRE-hook heritage pass binds the trigger's unique
-    // exact-case key (Addendum 9; the Addendum-5 lone-trigger analog) — pinned as the
-    // ratified valid-source safety limitation, NOT as correct resolution.
-    // [already-green pin; see WI-3-red-gate.md]
+  it('resolves the twin HERITAGE arm (TwistSub extends Twist) to the CLASS, never the trigger — BL-2 discharge (WI-4 reorder, SDD-004 §2)', () => {
+    // WI-4 FLIP (was: pinned binding the trigger, SRS v1.8(ii)/BL-2). Post-reorder `extends Twist`
+    // folds to the workspace key 'twist' — the trigger is §3-excluded, so the injected class TWIST is
+    // the unique key and the EXTENDS edge binds it before the exact-case QNI trigger bind (the
+    // class-before-exact-case-trigger ordering, a [Gate-3 reliance], SDD-004 §2 BL-2). RED until the
+    // reorder ships.
+    const ext = getRelationships(result, 'EXTENDS').find(
+      (e) => e.source === 'TwistSub' && e.targetFilePath.endsWith('TWIST.cls'),
+    );
+    expect(ext, 'TwistSub extends Twist -> the class TWIST @ TWIST.cls').toBeDefined();
     expect(
-      getRelationships(result, 'EXTENDS').find(
+      getRelationships(result, 'EXTENDS').filter(
         (e) => e.source === 'TwistSub' && e.targetFilePath.endsWith('Twist.trigger'),
       ),
-    ).toBeDefined();
+      'never the trigger',
+    ).toEqual([]);
   });
 
   it('resolves a valid same-name trigger+class twin to the CLASS, never the trigger (§4/REQ-004)', () => {
@@ -1032,6 +1060,33 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
       getRelationships(result, 'CALLS').find(
         (e) => e.target === 'Phantom' && e.sourceFilePath.includes('PhantomCaller'),
       ),
+    ).toBeDefined();
+  });
+
+  it('binds a case-varied `extends <.cls-misfiled trigger>` (PhantomSub extends PHANTOM) post-reorder — BL-10 heritage arm (WI-4, SDD-004 §4/§8)', () => {
+    // WI-4 NEW: the reorder's ONLY BL-10 effect is the heritage arm. Post-reorder `extends PHANTOM`
+    // folds to the injected misfiled-trigger key (Phantom.cls passes the §3 .cls discriminant, so it
+    // IS injected), so the EXTENDS edge binds it — the ratified §1.2-(b) "globally referenceable"
+    // over-bind, dispositioned by the committed primary SRS BL-10 amendment (authored on Gate-3
+    // verification). Pre-reorder heritage resolves BEFORE injection -> unresolved. [Gate-3 reliance]
+    // — RED until the reorder ships.
+    const ext = getRelationships(result, 'EXTENDS').find((e) => e.source === 'PhantomSub');
+    expect(ext, 'PhantomSub extends PHANTOM binds the injected misfiled trigger').toBeDefined();
+    expect(ext!.targetFilePath, 'the misfiled trigger def in Phantom.cls').toContain('Phantom.cls');
+    // MRO-downstream disposition: the trigger declares no members, so no false inherited-member edge
+    // rides the trigger-parent MRO (the BL-6/BL-7-analogue check, SDD-004 §4).
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.sourceFilePath.includes('PhantomSub') && e.targetFilePath.includes('Phantom.cls'),
+      ),
+      'no false inherited-member edge rides the trigger-parent MRO',
+    ).toEqual([]);
+    // the non-heritage case-varied bind (PhantomCaller `new PHANTOM()`) stays unchanged (already green).
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'Phantom' && e.sourceFilePath.includes('PhantomCaller'),
+      ),
+      'the non-heritage case-varied bind stays live',
     ).toBeDefined();
   });
 
