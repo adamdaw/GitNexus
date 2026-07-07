@@ -2242,7 +2242,8 @@ own QNI dotted-tail single-match fallback (`findClassBindingInScope`, `:320-329`
 call, NOT a fallback of `resolveInheritanceBaseInScope` itself) is the pass that binds the same-tail decoy.
 The hook has **THREE return states** (a binary hit/miss contract would reintroduce BL-4), keyed on whether the
 base is **dotted**: **(i) resolved** — a **dotted** base whose OUTER segment binds a **unique** workspace type
-AND whose nested tail is a unique owned def → return that binding; **(ii) applicable-but-refuse** — **any other
+AND whose nested tail is a unique owned nested **type** def (class/interface/enum — a heritage parent must be a
+*type*, not a same-named owned method/field/property) → return that binding; **(ii) applicable-but-refuse** — **any other
 dotted base**: OUTER binds uniquely but the tail is **absent or ambiguous** (typo/near-miss inner, or a tie);
 OR the OUTER is **not a unique workspace type** — 0 folded candidates: genuinely absent (external /
 managed-package namespace), OR inject-none-suppressed by a case-collision (SDD-003 §3 keys ≤1 per folded name,
@@ -2308,8 +2309,13 @@ under-resolved (a shape the Java/Kotlin benchmark narrows — REQ-008/REQ-012). 
 membership and (b) inc-11 dotted; the enclosing-scope arm is validated at Gate 3 (Addendum 4). A **unique** user-defined resolution (top-level via (a), nested-dotted via (b), or
 nested-simple-in-scope via (c)) → narrow; **anything else — no resolution, a tie, or a shape only the decoy-prone shared tail
 would "resolve"** → treat as external → arity-only, **never mis-bound** (the safe conservative default). Apex-
-local (`languages/apex/captures.ts`, reusing the WI-2/WI-3 folded/nested resolvers); **no shared edit**. This **completes** WI-2's REQ-008 mechanic (SDD-002 §2 / work-items REQ-008 note) without re-owning
-it — mirroring how WI-3/REQ-010 completed WI-2's cross-file forms. **Disposition of the WI-2 deferral
+local (`languages/apex/captures.ts`, reusing the WI-2/WI-3 folded/nested resolvers); **no shared edit**. This
+**completes** the parameter-typed-argument sub-case of WI-2's REQ-008 mechanic that SDD-002 §2 deferred, without
+re-owning REQ-008's selection algorithm. **WI-4's authority for it is the authoritative decomposition
+(work-items.md ITEM-004's Adam-approved scope + the Gate-1 decomposition checkpoint), NOT SRS §11** — which is
+explicitly *provisional* (SRS line 967: "the formal cut and its Gate-1 decomposition checkpoint follow") and
+pre-dates the deferral. This mirrors §11.2's own WI-2→WI-3 cross-file carry-forward (REQ-010 completed WI-2's
+cross-file forms downstream). **Disposition of the WI-2 deferral
 rationale:** SDD-002 §2 framed this completion as needing "WI-4's REQ-013 external-type **detection**" (a
 negative classifier — "is this type external?"). WI-4 **supersedes** that framing: REQ-013 builds **no**
 external classifier (external = host-default no-edge, §1(4)/§2), and the completion instead rests on the
@@ -2372,9 +2378,14 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
   - *Postcondition:* the reference emits **no edge and no unresolved *defect*** — **the host default on ANY
     unresolved reference, by construction (finding 6): a miss emits no edge and no defect, with NO "external"
     classification and none built.** REQ-013 introduces **no external-classification pass** (the `resolution-
-    outcome` kinds stay `resolved`/`suppressed`). **[Gate-3 reliance]** on the host no-edge-on-miss behaviour;
-    committed Apex-local remediation iff a parity fixture shows a false-positive external *attempt*: the
-    `builtInNames` reuse (never a silent de-scope). *(The `workspaceFqnBindings`-membership check is REQ-008's
+    outcome` kinds stay `resolved`/`suppressed`). REQ-013's **observable acceptance is "no Apex-specific
+    *defect*"** (SRS): the benchmark pre-filters builtins (`isBuiltInName`, RESEARCH-004 finding 6) so an
+    external reference is never attempted; Apex attempt-and-misses → also no edge and **no defect** (a miss is
+    not a defect), so both satisfy "no defect". **[Gate-3 reliance]** on the host no-edge-on-miss behaviour AND
+    that the external reference's observable outcome (defect/count) is **parity-equivalent to the benchmark's
+    pre-filtered outcome**; committed Apex-local remediation — the `builtInNames` reuse — iff a parity fixture
+    surfaces **any** divergence (a false-positive external *attempt* OR an observable defect/count divergence),
+    not only a mis-bind (never a silent de-scope). *(The `workspaceFqnBindings`-membership check is REQ-008's
     parameter-type narrowing gate — §3, finding 8 — NOT a REQ-013 classifier; "absent from the workspace
     registry" is not "external" — a same-file user-defined *reference site* can resolve via local scope, yet its type's top-level
 **definition** is still injected (SDD-003 §3) and so is **not** absent
@@ -2487,8 +2498,9 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
   finding 4): a **generic per-language hook** consulted at the **top of `resolveInheritanceBaseInScope`
   (`walkers.ts:338`)** for a dotted base — before both `resolveQualifiedInheritanceBase` (`:353-361`) and the
   `findClassBindingInScope` call (`:363`, whose `:320-329` dotted-tail fallback binds the decoy). Apex's impl
-  resolves the base OUTER-first (**case-folded** workspace binding → **case-folded** nested-member lookup among
-  the outer's owned defs, per Apex REQ-005 case-insensitivity — the same folded channel the reorder relies on)
+  resolves the base OUTER-first (**case-folded** workspace binding → **case-folded** nested-**type** lookup among
+  the outer's owned nested **type** defs (class/interface/enum — a heritage parent must be a type), per Apex
+  REQ-005 case-insensitivity — the same folded channel the reorder relies on)
   with **three return states** (§1(2)), keyed on whether the base is **dotted**: **(i) resolved** (a dotted
   base, OUTER binds uniquely, tail unique) → return the binding; **(ii) applicable-but-refuse** (any other
   dotted base — tail absent/ambiguous, OR OUTER not a unique workspace type (0 candidates:
@@ -2717,7 +2729,10 @@ name-collision already globally referenceable by ratified §1.2-(b), and (b) ter
   resolves each simple-name heritage form (BL-1/BL-2/BL-5/BL-8) — validated by the flipped fixtures; (2) that
   the reorder + nested-aware base resolution resolves the dotted form (BL-3/BL-4) and clears the poisoned MRO
   (BL-6/BL-7) — the nested-aware base seam is a committed deliverable (§1(2), structurally required per RESEARCH-004 finding 4; the epic's second shared edit — a generic per-language hook gating the shared pre-pass's dotted-tail fallback, since additive `emitHeritageEdges` registration cannot remove the decoy edge), with the Architect-escalation → SRS §5.1 amendment + INTENT-001 revisit / Gate-1 re-entry path if no §2.2-clean seam resolves the dotted form; (3) **(Gate-4 NFR-002)**
-  that peer resolver suites stay green (they must — the flag is unset on peer runs, so no peer re-sequences) +
+  that peer resolver suites stay green under BOTH shared edits — for the **re-sequence** by construction (the
+  flag is unset on peer runs, so no peer re-sequences); for the **seam** the peer suites are the **load-bearing
+  evidence** (§5) that its added consultation guard is a behaviour-preserving no-op for a hookless peer
+  (measured, not by-construction) — +
   the F2 `methodDispatch`-independence premise holds; (4) that gating `resolveVarTypeBindings` on the
   §1(3) Apex-local decoy-safe oracle (workspace membership + inc-11 nested, NOT the shared decoy-prone tail)
   narrows the user-defined (top-level + nested) parameter-arg case and conservatively skips the external,
