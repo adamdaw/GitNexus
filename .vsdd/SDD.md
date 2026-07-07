@@ -2621,10 +2621,12 @@ verification** of the discharge (a Phase-5 cascade, not authored pre-verificatio
   the top-level decoy, reintroducing the BL-4 mis-bind for the near-miss inner. So "never the decoy" holds for
   the outer-found/tail-absent shape too: an outer-bound dotted base resolves its nested tail or refuses,
   never the same-tail decoy.
-- **Dotted base, ambiguous OUTER** (`extends Outer.Inner` where the OUTER folded name has 2+ workspace
-  candidates — case-variant twin outers, or an inject-none-suppressed collision): the seam **refuses** (state
-  ii — no edge), NOT pass-through, so the shared dotted-tail fallback never binds a same-tail decoy (the BL-4
-  guard holds for an ambiguous OUTER too, not only a uniquely-bound one).
+- **Dotted base, case-collided OUTER** (`extends Outer.Inner` where the OUTER folded name has **2+ colliding
+  source defs** — case-variant twin outers): SDD-003 §3's inject-none guard keys ≤1 per folded name, so the
+  collision is **inject-none-suppressed → 0 workspace candidates** (never a 2+-candidate query — §1(2)/§3,
+  Addendum 5); the OUTER is therefore not a unique workspace type → the seam **refuses** (state ii — no edge),
+  NOT pass-through, so the shared dotted-tail fallback never binds a same-tail decoy (the BL-4 guard holds for a
+  case-collided OUTER too, not only a uniquely-bound one).
 - **Dotted base, ambiguous nested tail:** `extends Outer.Inner` where a **uniquely-bound** `Outer` owns two
   case-colliding `Inner` defs → conservative (the nested lookup refuses on tie, never guesses — mirrors
   REQ-015 / `resolveQualifiedInheritanceBase`'s refuse-on-tie).
