@@ -2325,10 +2325,11 @@ Apex-local config, not a new mechanism. **REQ-012 / NFR-004** are the parity *ev
 suite comparable to peers (the NFR-004 `apex-resolution` suite — `apex-resolution.test.ts`, with WI-4 parity
 fixtures as §2.5-permitted additive siblings) over the full same-file + cross-file surface, demonstrating
 Java/Kotlin-tier resolution. The **receiver-variable-name case-fold** (the WI-2→WI-3→WI-4 re-deferred
-case-insensitivity completeness item) folds a receiver variable's name at its lookup, Apex-local — it traces to
-**REQ-005's case-insensitivity SHALL** (Apex identifiers, *including variables*, are case-insensitive). No
-dedicated epic §9 scenario varies a variable's case, so WI-4 verifies it as a **REQ-005 completeness fixture**
-(under REQ-005's head obligation, not out-of-cycle hardening); its §2/§8 verified scope is thereby SRS-traced.
+case-insensitivity completeness item) folds a receiver **variable**'s name at its lookup, Apex-local. Per
+RESEARCH-004 it is **parity hardening, not a SHALL gap** — SRS §2's user-defined-symbol set does **not** include
+a local variable, so a variable-name reference is not a REQ-005 target, and no epic §9 scenario varies a
+variable's case. WI-4 verifies it as a **REQ-012 parity / NFR-004 hardening** fixture (part of the parity
+evidence), NOT a gated SHALL acceptance.
 
 **Acceptance boundary.** WI-4's acceptance is the parity + external + discharged-limitation forms: the BL-1…
 BL-8 fixtures flip from documented-limitation pins to **correct-resolution** assertions; a parity-fixture
@@ -2446,9 +2447,12 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
     amendment **makes BL-1's `implements` arm explicit**, pinned by a case-varied cross-file `implements`
     fixture.)** (The separate
     `emitDetectedInterfaceImplementations` inferred-implements pass is inert for Apex — §1(1).)
-- **REQ-005/REQ-008 receiver-variable case-fold (case-insensitivity completeness).**
-  - *Postcondition:* a case-varied receiver **variable** name (`Account a; A.foo()` where `A` refers to the
-    variable `a`) folds to its declaration. Apex-local; **[Gate-3 reliance]** on the folded lookup resolving.
+- **Receiver-variable case-fold (REQ-012 parity / NFR-004 hardening — not a SHALL, §1(4)).**
+  - *Postcondition:* a case-varied receiver **variable** name (`Widget a; A.foo()` where `A` refers to the
+    user-defined-typed variable `a`) folds to its declaration, so `A.foo()` resolves `Widget.foo`. Apex-local
+    parity hardening (RESEARCH-004: not a SHALL gap — SRS §2's user-defined-symbol set excludes local
+    variables); **[Gate-3 reliance]** on the folded lookup resolving. (`Account` is an external sObject,
+    reserved for REQ-013 illustrations.)
 
 ## 3. Interface definition (what WI-4 adds)
 
@@ -2723,8 +2727,10 @@ Each REQ clause, BL-row discharge, and edge case maps to a sub-item. **Gate-3 ac
   documented-limitation pins to correct-resolution: BL-1 case-varied `extends BASE` → EXTENDS; BL-2 twin
   `extends Twist` → EXTENDS to the class; BL-3/BL-4 nested-parent → EXTENDS to the real nested type (never the
   decoy); BL-5 same-case twin → EXTENDS to the class; BL-6 `s.decoy2()` → no false member edge; BL-7/BL-8
-  super/inherited → resolve to the real parent. Each also asserts REQ-006 negative (no false unresolved
-  record) for the newly-resolved reference.
+  super/inherited → resolve to the real parent. **BL-1's `implements` arm (Architect-ruled within BL-1,
+  2026-07-07): a case-varied cross-file `implements IFace` → IMPLEMENTS to the real interface** (the
+  §2-committed fixture), plus an exact-case cross-file `implements` parity fixture. Each also asserts REQ-006
+  negative (no false unresolved record) for the newly-resolved reference.
 - **REQ-008 cross-file parameter-arg overload** — file B has `f(UserType)`/`f(String)`; a call `b.f(p)` where
   `p` is a parameter declared `UserType` (user-defined) → resolves `f(UserType)`; where `p` is declared an
   external type → arity-only, unresolved-not-mis-bound.
@@ -2736,7 +2742,8 @@ Each REQ clause, BL-row discharge, and edge case maps to a sub-item. **Gate-3 ac
 - **NFR-004** — the aggregate `apex-resolution` suite exercises **every** §9 resolution scenario
   (REQ-005/006/007/008/009/010/011/012/013/015) at WI-4 completion — the WI-2/WI-3 suites plus WI-4's parity,
   external, parameter-arg, and BL-1…BL-8 discharge fixtures; the parity suite is its REQ-012 leg.
-- **Receiver-variable case-fold** — a case-varied receiver-variable reference resolves to its declaration.
+- **Receiver-variable case-fold** (parity hardening, not a SHALL — §1(4)): a case-varied receiver-variable
+  reference (`Widget a; A.foo()`) resolves to its declaration; verified under REQ-012 parity / NFR-004.
 - **NFR-002** — every peer resolver suite green under the reorder (the Gate-4 measurement); a mixed-language
   regression sweep clean.
 - **Invalid-source-row disposition (intra-Apex, `Fix=—`)** — the reorder leaves BL-9/BL-11/BL-12/BL-13/BL-14
