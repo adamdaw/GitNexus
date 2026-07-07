@@ -204,7 +204,8 @@ mis-fired, be caught by the NFR-002 peer suites and the v1.10(iv)/v1.13 fixtures
 heritage limitations and — with a committed Apex-local nested-aware base resolution — the dotted
 nested-parent limitation; the generic reorder carries a Gate-4 NFR-002 measurement obligation with the
 Architect-ruled per-language-gated fallback (2026-07-07). (B) REQ-013 is the host default (external = benign
-no-edge). (C) The REQ-008 parameter-arg completion gates on the existing `workspaceFqnBindings`-membership
+no-edge). (C) The REQ-008 parameter-arg completion gates on the existing `findClassBindingInScope`
+user-defined-vs-external
 oracle.** Recommendation: SDD-004 pins the reorder (generic, §2.2, gated-fallback), the nested-aware heritage
 base resolution (committed Apex-local fallback), the parameter-arg narrowing gate, REQ-013 external-benign
 acceptance, and the REQ-012/NFR-004 parity fixtures. Architect approval of this conclusion + the SDD-004
@@ -246,12 +247,15 @@ runs (`populateNamespaceSiblings` iterates defs, not heritage edges) → unchang
 `populateNamespaceSiblings` (`:640`), and the move relocates it **after**. Whether swift's namespace-sibling
 population, `buildWorkspaceResolutionIndex`, or the `:653-:663` passes depend on the implicit-IMPORTS edges'
 pre-registration emission is **the single peer surface the generic move touches** — measured at Gate 4 (swift's
-resolver suite), with the Architect-ruled per-language gate confining the whole re-sequence to Apex if swift
-(or any peer) regresses. Because `runScopeResolution` runs **once per language over extension-partitioned
-files** (RESEARCH-003 Addendum 12), the gate is per-run: set on the Apex run, unset on the swift/ruby/etc runs
-→ the gated form has **zero** peer surface. Given five peers register an optional hook in the moved region, the
-gate is the **expected-engaged confinement**, not a rare fallback — the generic-vs-gated default is settled by
-the Gate-4 measurement per the Architect ruling.
+resolver suite). Because `runScopeResolution` runs **once per language over extension-partitioned files**
+(RESEARCH-003 Addendum 12), the gate is per-run: set on the Apex run, unset on the swift/ruby/etc runs → the
+gated form has **zero** peer surface, making the whole optional-hook peer analysis above moot for the built
+artifact. **Architect ruling (2026-07-07): the Apex-gated form IS the built artifact** (not a
+measured-fallback) — five peers register an optional hook in the moved region, so a generic all-language
+re-sequence would touch them, whereas the gated form is byte-identical for every peer by construction and
+fits Constitution §2.2's "configured by the isolated provider" arm (no §2.2 amendment). The generic
+all-language re-sequence is left as a possible *later* upstream contribution, not gated on WI-4. (This
+supersedes this addendum's original "generic-vs-gated settled by the Gate-4 measurement" wording.)
 
 ## Addendum 2 (2026-07-07) — the nested-aware heritage base seam is structurally required (reconciles the Conclusion's "iff-red" wording)
 
