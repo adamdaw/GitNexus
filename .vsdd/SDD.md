@@ -2171,19 +2171,26 @@ peer run re-sequences), plus the F2 `methodDispatch`-independence re-check.
 re-sequence is **gated to the Apex run**, the optional-hook peer-surface analysis is moot for the built
 artifact (`emitHeritageEdges?` ruby/rust/dart, `emitImplicitImportEdges?` swift, `buildExtendsOnlyMro?` php —
 their peers never re-sequence). On the **Apex** run, Apex registers **none** of those, so the moved block is
-effectively the **three shared passes** (`preEmitInheritanceEdges`, `emitDetectedInterfaceImplementations`,
-`buildMro`) with the optional hooks inert; the block still moves as a contiguous unit preserving internal
-order (`buildMro` after heritage emit). **Two load-bearing [structural] wiring pins the Apex-run re-sequence
-MUST honour:** *(a) the two Apex-relied-on shared passes take `indexes`, not `finalized`.* Today
-`preEmitInheritanceEdges` (`:573`) and `emitDetectedInterfaceImplementations` (`:593`, its `finalized` arg at
-`:598`) are passed `finalized`
+effectively **`preEmitInheritanceEdges` + `buildMro`** (`emitDetectedInterfaceImplementations` — the Go-style
+*inferred*-implements pass — is **also inert for Apex**: Apex registers no `detectInterfaceImplementations`
+hook, so it early-returns 0, `run.ts:216`) with the optional hooks inert; the block still moves as a contiguous
+unit preserving internal order (`buildMro` after heritage emit). **Two load-bearing [structural] wiring pins the Apex-run re-sequence
+MUST honour:** *(a) the Apex-relied-on heritage pass takes `indexes`, not `finalized`.* Today
+`preEmitInheritanceEdges` (`:573`) — the authoritative grammar-level heritage emitter, which resolves each
+declared base via `resolveInheritanceBaseInScope` and discriminates **EXTENDS vs IMPLEMENTS** by the resolved
+target's kind (`run.ts:189`), so a declared `implements IFace` rides the same folded channel as `extends` — is
+passed `finalized`
 — which does **not** carry `normalizeIdentifier` (added only when `indexes` is built at `:620`,
 `scope-resolution-indexes.ts:97`) and does **not** carry the `populateNamespaceSiblings`-injected
-`workspaceFqnBindings`. The BL-1/BL-2/BL-5 case-fold discharge relies on `workspaceBindingsFor`'s folded
-fallback (`walkers.ts:71`); if these two keep `finalized`, `normalizeIdentifier` is `undefined`, the fold
-no-ops, and every case-varied heritage form stays edge-absent — the **opposite** of the §2 postconditions. So
-those **two** shared passes MUST be threaded `indexes` — a structural wiring requirement, not a Gate-3
-reliance. *(b) `methodDispatch` is swapped in by a fresh re-spread, never a mutation.* The host builds
+`workspaceFqnBindings`. The BL-1/BL-2/BL-5 (and the declared-`implements`) case-fold discharge relies on
+`preEmitInheritanceEdges` reaching `workspaceBindingsFor`'s folded fallback (`walkers.ts:71`; RESEARCH-004
+finding 2 / Addendum 3); if it keeps `finalized`, `normalizeIdentifier` is `undefined`, the fold no-ops, and
+every case-varied heritage form (extends **and** implements) stays edge-absent — the **opposite** of the §2
+postconditions. So **`preEmitInheritanceEdges` MUST be threaded `indexes`** — a structural wiring requirement,
+not a Gate-3 reliance. (`emitDetectedInterfaceImplementations` — the *inferred*-implements pass, `:593` — is
+**inert for Apex**: Apex registers no `detectInterfaceImplementations` hook, so it early-returns 0
+(`run.ts:216`); it moves with the block but needs no `indexes` for Apex, and Apex `implements` resolution is
+`preEmitInheritanceEdges`', not this pass.) *(b) `methodDispatch` is swapped in by a fresh re-spread, never a mutation.* The host builds
 `indexes` once via a fresh spread specifically to avoid mutating a readonly result through an `as` cast
 (`run.ts:610-613`). The re-sequence builds `indexes` once with the empty `methodDispatch` (for
 `buildWorkspaceResolutionIndex`/`populateNamespaceSiblings`/the moved passes), then — after the moved
@@ -2392,11 +2399,13 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
     (BL-1/BL-2/BL-5/BL-8) too:** if a Gate-3 fixture fails to confirm a row's discharge, that row escalates to
     the Architect → SRS §5.1 re-ratification (never a silently-retained limitation) — so the **BL-2 §1.2(a)
     false-edge arm** in particular is never left un-dispositioned. **Interface (`implements`) arm:** the §5.1
-    register rows BL-1…BL-8 are all `extends` forms (the register catalogues no `implements` limitation);
-    `emitDetectedInterfaceImplementations` moves inside the block too, so on the Apex run a
-    cross-file/case-varied `implements` clause reaches the workspace channel **symmetrically** with `extends` —
-    **REQ-012 parity** (not a BL discharge, no new SHALL), pinned by a parity fixture (§8), and it cannot
-    regress a today-resolving `implements` clause (the moved pass takes `indexes`, §1(1) pin (a)).
+    register rows BL-1…BL-8 are all `extends` forms (the register catalogues no `implements` limitation); a
+    **declared `implements IFace`** resolves its interface base through the **same** `preEmitInheritanceEdges`
+    → `resolveInheritanceBaseInScope` → folded-workspace channel as `extends` (preEmit discriminates the edge
+    kind by target type — `run.ts:189`), so the reorder makes a cross-file/case-varied `implements` reach the
+    workspace channel **symmetrically** with `extends` — **REQ-012 parity** (not a BL discharge, no new SHALL),
+    the resolution outcome a **[Gate-3 reliance]** like the BL rows, pinned by a parity fixture (§8). (The
+    separate `emitDetectedInterfaceImplementations` inferred-implements pass is inert for Apex — §1(1).)
 - **REQ-005/REQ-008 receiver-variable case-fold (case-insensitivity completeness).**
   - *Postcondition:* a case-varied receiver **variable** name (`Account a; A.foo()` where `A` refers to the
     variable `a`) folds to its declaration. Apex-local; **[Gate-3 reliance]** on the folded lookup resolving.
@@ -2411,10 +2420,11 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
   `mirrorNamespaceTypeBindings` (`:653`); the `indexes`/`methodDispatch` construction splits: build `indexes`
   once with the empty dispatch (for `buildWorkspaceResolutionIndex`/`populateNamespaceSiblings`/the moved
   passes), then after the moved `buildMro` produce a **fresh** `{...indexes, methodDispatch: populated}`
-  threaded to the `:653-:687` tail — **no post-construction mutation** (preserves `run.ts:610-613`). **The two
-  Apex-relied-on shared passes `preEmitInheritanceEdges` + `emitDetectedInterfaceImplementations` MUST be
-  passed `indexes`, not `finalized`** (only `indexes` carries `normalizeIdentifier` + the injected
-  `workspaceFqnBindings` the case-fold discharge needs — §1(1)); [structural] pin (F2): the empty-`ln`-window
+  threaded to the `:653-:687` tail — **no post-construction mutation** (preserves `run.ts:610-613`). **The
+  Apex-relied-on heritage pass `preEmitInheritanceEdges` (the authoritative grammar-level emitter for EXTENDS
+  *and* declared IMPLEMENTS, `run.ts:189`) MUST be passed `indexes`, not `finalized`** (only `indexes` carries
+  `normalizeIdentifier` + the injected `workspaceFqnBindings` the case-fold discharge needs — §1(1);
+  `emitDetectedInterfaceImplementations` is inert for Apex, §1(1)); [structural] pin (F2): the empty-`ln`-window
   passes (`buildWorkspaceResolutionIndex`, `populateNamespaceSiblings`) are `methodDispatch`-independent
   (read-verified). **Apex-GATED — the built form (Architect-ruled 2026-07-07):** an optional
   `resolveHeritageAfterSiblings?: boolean` on the resolver contract, **default absent/false (peers keep
@@ -2427,8 +2437,9 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
   finding 4): a **generic per-language hook** consulted at the **top of `resolveInheritanceBaseInScope`
   (`walkers.ts:338`)** for a dotted base — before both `resolveQualifiedInheritanceBase` (`:353-361`) and the
   `findClassBindingInScope` call (`:363`, whose `:320-329` dotted-tail fallback binds the decoy). Apex's impl
-  resolves the base OUTER-first (workspace binding → nested-member lookup among the outer's owned defs) with
-  **three return states** (§1(2)): **(i) resolved** → return the binding; **(ii) applicable-but-refuse**
+  resolves the base OUTER-first (**case-folded** workspace binding → **case-folded** nested-member lookup among
+  the outer's owned defs, per Apex REQ-005 case-insensitivity — the same folded channel the reorder relies on)
+  with **three return states** (§1(2)): **(i) resolved** → return the binding; **(ii) applicable-but-refuse**
   (OUTER bound, tail absent/ambiguous) → return "refuse", no edge; **(iii) not-applicable** (non-dotted / OUTER
   unbound) → pass-through. States (i) AND (ii) both **skip `:353-361` and the `:363` call** (so no path binds
   the decoy — whether the tail resolves or refuses); only (iii) proceeds unchanged (non-dotted/non-Apex bases
@@ -2507,7 +2518,10 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
     case-varied non-heritage binding (same invalid-source `§1.2-(b)` trigger, same fold) — a WI-4-owned SRS
     §5.1 cascade authored on Gate-3 verification (like the BL-1…BL-8 discharge amendments). **The trigger is
     NOT excluded from injection** (excluding it would strip the currently-live non-heritage binds — a
-    different undispositioned change); the disposition is the amendment, not a §3 edit.
+    different undispositioned change); the disposition is the amendment, not a §3 edit. **[Gate-3 reliance]:**
+    the "non-heritage case-varied already fold-binds today" premise (which scopes the amendment to the
+    *heritage* arm alone) is not re-traced in RESEARCH-004 — it rests on a **pre-reorder fixture** confirming
+    the current fold-bind, so the amendment scope is Gate-3-verified, not a Gate-2 pin.
   Every BL-9…BL-14 row's disposition is now committed (Constitution §7 — no silent or undispositioned change
   to a ratified row): BL-9/BL-11/BL-12/BL-13/BL-14 byte-identical, BL-10 via the committed SRS amendment.
 - **Dotted base, no nested target (external outer):** `extends Ext.Inner` where `Ext` is external → no
@@ -2522,6 +2536,9 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
 - **Dotted base, ambiguous nested tail:** `extends Outer.Inner` where two outers own an `Inner` → conservative
   (the nested lookup refuses on tie, never guesses — mirrors REQ-015 / `resolveQualifiedInheritanceBase`'s
   refuse-on-tie).
+- **Dotted base, case-varied outer** (`extends OUTER.Inner`, valid Apex): the OUTER segment is matched
+  **case-folded** (REQ-005), binding the workspace type exactly as `Outer.Inner` would; the nested tail is
+  likewise case-folded — no new shortfall (the dotted analogue of BL-1's case-varied simple `extends`).
 - **Parameter arg, external type:** an overload arg is a parameter of a stdlib type (`String s` param used as
   arg) → arity-only, never mis-bound (REQ-008 completion's conservative arm).
 - **Parameter arg, user-defined type (top-level or nested):** narrows — the §1(3) oracle recognizes a
@@ -2543,7 +2560,8 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
 
 ## 5. Non-functional requirements (baked in)
 
-- **NFR-002 (discharged structurally — both shared edits are inert for peers by construction).** WI-4's two
+- **NFR-002 (both shared edits inert for peers — the re-sequence by construction; the seam a
+  behaviour-preserving no-op for hookless peers, Gate-4-confirmed).** WI-4's two
   shared-code edits are both **provider-gated / provider-hooked**, so neither affects a peer that does not opt
   in. (i) The **Apex-gated re-sequence**: `resolveHeritageAfterSiblings` is unset on every peer run, so no
   peer's pipeline re-sequences — byte-identical, **zero peer surface** (§1(1)). (ii) The **heritage-base
@@ -2552,11 +2570,14 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
 is preserved** (a behaviour-preserving no-op the Gate-4 review confirms — the function's *code* is **not**
 byte-identical, unlike the flag-gated re-sequence; only its hookless-peer *behaviour* is)
   (the seam adds a consultation point, not a re-sequence). **Only Apex registers the hook** (Gate-4 confirms
-  no peer does), so only the Apex run's dotted-base resolution changes. So NFR-002 needs no cross-language
-  *measurement* to hold — it holds by construction; the Gate-4 check simply **confirms** no peer registers the
-  hook + the peer resolver suites stay green (they must) + re-checks the F2 `methodDispatch`-independence
-  premise. The parameter-arg gate, external oracle, and receiver-var fold are all Apex-local. NFR-002 remains
-  a Gate-4 confirmation, not a measurement the design's safety depends on.
+  no peer does), so only the Apex run's dotted-base resolution changes. So NFR-002 splits by edit: **(i) the re-sequence** needs no
+  cross-language *measurement* — it is byte-identical by construction (the flag is unset on every peer run, so
+  no peer's pipeline changes at all). **(ii) The seam** changes shared `resolveInheritanceBaseInScope` *code*
+  that every peer executes (the consultation guard), so its peer non-regression is a **behaviour-preserving
+  no-op whose correctness the Gate-4 peer-suite run is the load-bearing evidence for** — trivially inert for a
+  hookless peer, but confirmed, not by-construction-certain like (i). The Gate-4 check also confirms no peer
+  registers the hook + re-checks the F2 `methodDispatch`-independence premise. The parameter-arg gate, external
+  oracle, and receiver-var fold are all Apex-local.
 - **NFR-001 (resolution-stage slice).** The reorder + nested lookup + parameter-arg gate complete without
   crashing on partial/error-recovery trees and references into skipped files; an unresolvable base/reference
   is left unresolved, never a throw.
@@ -2589,8 +2610,9 @@ a *correct* cross-file base reachable that was previously missed.
   edge to the decoy; the ambiguous-nested fixture asserts refuse-on-tie) — **not** a data-integrity or
   trust-boundary invariant over unbounded state (WI-4 opens no trust boundary, §6). It guards no
   security/financial/data-integrity/safety/concurrency invariant, so no Prove obligation arises. **NFR-002**
-  holds by construction (both shared edits are provider-gated/hooked, inert for peers — §5), so it is
-  *confirmed* at Gate 4 (peer suites green), not measured-and-gated. Gate 5 for WI-4 reduces to
+  holds for the re-sequence by construction (byte-identical) and for the seam as a Gate-4-confirmed
+  behaviour-preserving no-op (§5) — the peer suites green are the seam's load-bearing evidence, not a mere
+  formality. Gate 5 for WI-4 reduces to
   the resolution-slice no-crash fuzz + mutation over the new `languages/apex/` code and the reordered region
   (same calibration as WI-1/2/3, by per-property reasoning).
 - **Purity boundary.** Pure core = the **def-selection / nested-base-lookup / oracle-membership helpers** —

@@ -326,3 +326,10 @@ graph edges, and `indexes.scopeTree`:
    `finalized` (empty `ln`), so they **already** run without a populated `methodDispatch` — threading them the
    pre-heritage empty-`ln` `indexes` (which additionally carries `normalizeIdentifier` + the injected
    `workspaceFqnBindings`) changes only those two fields, never a `methodDispatch` dependency.
+4. **`preEmitInheritanceEdges` (`:573`) is the authoritative grammar-level heritage emitter for EXTENDS *and*
+   declared IMPLEMENTS** — it resolves every declared base via `resolveInheritanceBaseInScope` and discriminates
+   the edge kind by the resolved target's type (`run.ts:189`: `Interface`/`Trait` → IMPLEMENTS, else EXTENDS).
+   So threading it `indexes` gives the folded workspace channel to a declared `implements IFace` exactly as to
+   `extends`. **`emitDetectedInterfaceImplementations` (`:593`) is the Go-style *inferred*-implements pass** —
+   Apex registers no `detectInterfaceImplementations` hook, so it early-returns 0 (`run.ts:216`) and is inert
+   for Apex; it moves with the block but needs no `indexes` for Apex correctness.
