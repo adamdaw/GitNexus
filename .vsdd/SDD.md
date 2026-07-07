@@ -2082,10 +2082,14 @@ receiver **variable**'s name for case-insensitivity completeness. Unlike WI-1 (p
 registration), WI-4 commits **two shared-code edits, both §2.2-clean (name no language, inert for peers)** —
 an **Apex-gated** pipeline re-sequence (a provider-configured flag; peers byte-identical) and a generic
 per-language heritage-base-resolution seam (required for the dotted nested-parent form, since additive
-registration cannot remove the shared pre-pass's decoy edge — §1(2)). Their **§2.2 design-fit is resolved at
-Gate 2** (both fit the "configured by the isolated provider" arm — no amendment, Architect-ruled 2026-07-07);
-what is owed at **Gate 4** is the ordinary code-level review that the *implementation* names no language /
-branches on none + the NFR-002 confirmation (§7).*
+registration cannot remove the shared pre-pass's decoy edge — §1(2)). The **re-sequence's §2.2 fit is
+Architect-ruled settled** (the "configured by the isolated provider" arm — no amendment, 2026-07-07). The
+**seam** fits the same §2.2(b) arm as a **standard per-language provider hook** (like the host's existing
+`emitHeritageEdges`/`populateNamespaceSiblings` hooks), its §2.2(c) NFR-002 leg **Gate-4-measured** (not
+by-construction — it edits shared `resolveInheritanceBaseInScope` code peers execute), with the RESEARCH-004
+Addendum-2 escalation fallback if the seam-conformance review cannot be made clean — **pending Architect
+affirmation at the pass record**. What is owed at **Gate 4** is the code-level review that each *implementation*
+names no language + the NFR-002 measurement (§7).*
 
 - **Consumes:** SRS-001 (**v1.28**) **REQ-012** (Java/Kotlin parity), **REQ-013** (external-reference
   handling), **NFR-004** (automated resolution test); the **§5.1 Bounded Limitations Register** rows
@@ -2102,9 +2106,10 @@ branches on none + the NFR-002 confirmation (§7).*
   against, v1.1.3 — matching SDD-003). **Security-critical = false** (operates on WI-1's safe-parsed output +
   WI-2/WI-3's resolution model; introduces no new untrusted-source parse path — SECT-001 stays WI-1's). No
   new SEC clause. WI-4 commits **two shared-code edits** (the Apex-gated pipeline re-sequence and the
-  per-language heritage-base-resolution seam), each resting its §2.2 fit (both "configured by the isolated
-  provider" — a provider flag / a generic per-language hook, naming no language, inert for peers) on this
-  version — resolved at Gate 2 (no §2.2 amendment; Architect-ruled 2026-07-07).
+  per-language heritage-base-resolution seam), both under the §2.2 "configured by the isolated provider" arm
+  (naming no language): the **re-sequence** Architect-ruled settled (2026-07-07, no §2.2 amendment); the
+  **seam** a standard per-language provider hook whose §2.2(c) NFR-002 is Gate-4-**measured**, with the
+  RESEARCH-004 Addendum-2 fallback, **pending Architect affirmation**.
 - **Builds on / completes:** WI-2's REQ-008 overload mechanic (SDD-002) — WI-4 **completes** its
   parameter-typed-argument sub-case (not re-owning it); and WI-3's REQ-010 registration (SDD-003) — the
   reorder makes WI-3's `workspaceFqnBindings` channel reachable by the heritage pass, discharging the
@@ -2249,11 +2254,13 @@ instead of re-binding the decoy.) **This must be a shared edit, not pure registr
 purely-additive `emitHeritageEdges` registration would run *after* the pre-pass has already bound the decoy
 via the dotted-tail fallback — additive emission **cannot remove** that false edge, so it cannot meet BL-4's
 "never the decoy" or BL-6's clean-MRO (which needs the decoy edge absent from `buildMro`). The seam therefore
-gates the shared pre-pass's dotted-tail fallback; it **names no language** (Apex supplies the hook impl) — a
-**Gate-2-resolved §2.2 design-fit** (the "configured by the isolated provider" arm, same as the reorder), with
-the Gate-4 review confirming the *implementation* names no language + the seam's NFR-002 (it adds a
-hook-consultation point that **no-ops for a peer registering no hook** → inert for hookless peers by
-construction; Gate-4 confirms no peer registers such a hook, §5/§7). (Pure `emitHeritageEdges`
+gates the shared pre-pass's dotted-tail fallback; it **names no language** (Apex supplies the hook impl) —
+fitting §2.2(b) as a **standard per-language provider hook** (like the host's existing
+`emitHeritageEdges`/`populateNamespaceSiblings`), its §2.2(c) NFR-002 **Gate-4-measured** (not by-construction —
+it adds a hook-consultation point to shared code peers execute; a behaviour-preserving no-op for a peer
+registering no hook, Gate-4 confirms no peer registers such a hook + peer suites green, §5/§7), with the
+RESEARCH-004 Addendum-2 escalation fallback if the seam-conformance review cannot be made clean — **pending
+Architect affirmation at the pass record**. (Pure `emitHeritageEdges`
 registration can at most *add* the correct edge for the **BL-3 no-decoy** shape — a partial contributor — but
 is insufficient for BL-4; the committed mechanism is the seam.) **Committed satisfaction path (finding #29):**
 if no §2.2-clean seam resolves the dotted form, the fallback is **Architect escalation → an SRS §5.1 amendment
@@ -2281,8 +2288,12 @@ SDD-003 §3 — so a same-file top-level param type is recognised too;
 decoy-safe — the §3 inject-none guard keys ≤1 per folded name, so a collision resolves to nothing → external);
 **(b) a dotted/nested type-name** (`Outer.Inner`) → the **Apex-local inc-11 OUTER-first nested lookup**
 (resolve `Outer` via the workspace channel, find the tail among its owned defs — the same decoy-safe resolver
-WI-3 built for the ctor/declared-type paths). A **unique** user-defined resolution (top-level via (a) or
-nested via (b)) → narrow; **anything else — no resolution, a tie, or a shape only the decoy-prone shared tail
+WI-3 built for the ctor/declared-type paths); **(c) a simple type-name that misses top-level membership but is
+a nested type referenced unqualified from within its enclosing class** (e.g. param `Inner p` inside `Outer`) →
+an **enclosing-scope owned-def lookup** (scope-local, decoy-safe — a unique owned match binds, else conservative
+skip), so a simple-name nested param type is not silently under-resolved (a shape the Java/Kotlin benchmark
+narrows — REQ-008/REQ-012). A **unique** user-defined resolution (top-level via (a), nested-dotted via (b), or
+nested-simple-in-scope via (c)) → narrow; **anything else — no resolution, a tie, or a shape only the decoy-prone shared tail
 would "resolve"** → treat as external → arity-only, **never mis-bound** (the safe conservative default). Apex-
 local (`languages/apex/captures.ts`, reusing the WI-2/WI-3 folded/nested resolvers); **no shared edit**. This **completes** WI-2's REQ-008 mechanic (SDD-002 §2 / work-items REQ-008 note) without re-owning
 it — mirroring how WI-3/REQ-010 completed WI-2's cross-file forms. **Disposition of the WI-2 deferral
@@ -2313,9 +2324,11 @@ not a SHALL gap.
 BL-8 fixtures flip from documented-limitation pins to **correct-resolution** assertions; a parity-fixture
 suite; an external-reference fixture; a parameter-typed cross-file overload fixture. The BL-1…BL-8 discharge
 updates the **SRS §5.1 register** (those rows carry `Fix=WI-4`) and the governing **REQ-007 / REQ-005 /
-REQ-009** limitation clauses (REQ-009 v1.15 co-governs BL-6's poisoned-MRO field/property-chain carve-out) —
-a documented SRS amendment **upon Gate-3 verification** of the discharge (a Phase-5 cascade, not
-authored pre-verification, so the register is not mutated ahead of the evidence).
+REQ-009** limitation clauses (REQ-009 v1.15 co-governs BL-6's poisoned-MRO field/property-chain carve-out),
+**and SRS §1's in-scope boundary + INTENT-001-acceptance wording (v1.22–v1.27 frames BL-1…BL-8 as *pending*
+epic-deferred shortfalls / heritage-family as the sole non-full-SHALL area — the discharge falsifies that
+present-tense framing)** — a documented SRS amendment **upon Gate-3 verification** of the discharge (a Phase-5
+cascade, not authored pre-verification, so the register is not mutated ahead of the evidence).
 
 ## 2. Behavioural contract (each REQ → clause; host-structural vs Gate-3 reliance marked)
 
@@ -2355,7 +2368,8 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
     narrowing WI-2 verified for local/field/literal/ctor args); when the parameter's type is **external** (no
     unique user-defined resolution) the argument is left untyped (arity-only) and **never mis-bound**.
     **[structural]** = the oracle is the Apex-local decoy-safe resolution (§1(3) — `workspaceFqnBindings`
-    folded membership for a simple type-name + the inc-11 OUTER-first nested lookup for a dotted one;
+    folded membership for a simple type-name + the inc-11 OUTER-first nested lookup for a dotted one + an
+    enclosing-scope owned-def lookup for a simple-name nested type (§1(3)(c));
     explicitly **NOT** the shared `findClassBindingInScope` decoy-prone tail, which would mis-resolve a nested
     type to a same-tail decoy); **[Gate-3 reliance]** = that gating the existing `resolveVarTypeBindings`
     narrowing on that oracle resolves the user-defined case (top-level + nested) and conservatively skips the
@@ -2381,7 +2395,9 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
     remove the shared pre-pass's decoy edge, so the seam gates that fallback — §1(2), finding 4).
   - **BL-5** (same-case valid trigger/class twin `Foo.trigger`+`Foo.cls`, `extends Foo`): *postcondition* —
     EXTENDS to the injected class `Foo` (trigger excluded from injection; the class is the unique workspace
-    key). **Reorder discharges.**
+    key). **Reorder discharges** — like BL-2, the **folded workspace-channel class-bind winning over the
+    exact-case QNI tie-refuse** (`Foo.trigger`+`Foo.cls` are two exact-case defs → QNI refuses on tie today) is
+    a **[Gate-3 reliance]**, not a Gate-2 structural pin.
   - **BL-6** (typed-receiver `s.decoy2()` on a BL-4 subtype): *postcondition* — no false member edge into the
     decoy (the MRO is clean once BL-4's EXTENDS is correct). **Discharged as BL-4 fallout.**
   - **BL-7** (super/inherited arms of a BL-3 nested-parent subtype): *postcondition* — `super()`/
@@ -2402,10 +2418,15 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
     register rows BL-1…BL-8 are all `extends` forms (the register catalogues no `implements` limitation); a
     **declared `implements IFace`** resolves its interface base through the **same** `preEmitInheritanceEdges`
     → `resolveInheritanceBaseInScope` → folded-workspace channel as `extends` (preEmit discriminates the edge
-    kind by target type — `run.ts:189`), so the reorder makes a cross-file/case-varied `implements` reach the
-    workspace channel **symmetrically** with `extends` — **REQ-012 parity** (not a BL discharge, no new SHALL),
-    the resolution outcome a **[Gate-3 reliance]** like the BL rows, pinned by a parity fixture (§8). (The
-    separate `emitDetectedInterfaceImplementations` inferred-implements pass is inert for Apex — §1(1).)
+    kind by target type — `run.ts:189`), so the reorder makes a **cross-file (exact-case)** `implements` reach
+    the workspace channel **symmetrically** with `extends` — **REQ-012 parity** (Java/Kotlin resolves cross-file
+    `implements`; not a BL discharge, no new SHALL), the resolution outcome a **[Gate-3 reliance]** like the BL
+    rows, pinned by a parity fixture (§8). **(A *case-varied* `implements` has no case-sensitive benchmark
+    equivalent, so REQ-012 v1.15 parity does not govern it — it is REQ-005 heritage-family case-insensitivity,
+    the `implements`-analogue of BL-1's case-varied `extends`; the §5.1 register catalogues only the `extends`
+    BL rows, so a case-varied `implements` is uncatalogued and OUT of WI-4's committed BL-1…BL-8 scope — flagged
+    for the Architect, NOT retired under a parity label.)** (The separate
+    `emitDetectedInterfaceImplementations` inferred-implements pass is inert for Apex — §1(1).)
 - **REQ-005/REQ-008 receiver-variable case-fold (case-insensitivity completeness).**
   - *Postcondition:* a case-varied receiver **variable** name (`Account a; A.foo()` where `A` refers to the
     variable `a`) folds to its declaration. Apex-local; **[Gate-3 reliance]** on the folded lookup resolving.
@@ -2444,8 +2465,9 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
   unbound) → pass-through. States (i) AND (ii) both **skip `:353-361` and the `:363` call** (so no path binds
   the decoy — whether the tail resolves or refuses); only (iii) proceeds unchanged (non-dotted/non-Apex bases
   untouched). Names no language (Apex supplies the
-  impl); §2.2 design-fit Gate-2-resolved (isolated-provider arm), Gate-4 = code-level §2.2 review + NFR-002
-  confirmation (inert for hookless peers by construction — §1(2)/§5). (Must be a shared edit, not pure
+  impl); fits §2.2(b) as a standard per-language provider hook (isolated-provider arm), its NFR-002
+  **Gate-4-measured** (not by-construction — it edits shared code peers execute; Addendum-2 fallback if unclean;
+  Architect affirmation at the pass record), Gate-4 = code-level §2.2 review + NFR-002 measurement (§1(2)/§5). (Must be a shared edit, not pure
   `emitHeritageEdges` registration — additive emission cannot remove the shared pre-pass's decoy edge, §1(2).)
   Fallback if no §2.2-clean seam works: Architect escalation → SRS §5.1 amendment **+ INTENT-001 revisit /
   Gate-1 re-entry** (§1 binds the discharge to Intent).
@@ -2456,7 +2478,9 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
 - **User-defined-vs-external oracle for the REQ-008 gate — Apex-local, decoy-safe (§1(3))** — no new type;
   **(a) simple type-name** → `workspaceFqnBindings` folded membership (top-level, decoy-safe via the §3
   inject-none guard); **(b) dotted/nested type-name** → the inc-11 OUTER-first nested lookup (Apex-local,
-  decoy-safe). Explicitly **NOT** the shared `findClassBindingInScope` (whose `:320-329` simple-tail fallback
+  decoy-safe); **(c) a simple-name nested type referenced unqualified from within its enclosing class** → an
+  enclosing-scope owned-def lookup (scope-local, decoy-safe — unique owned match binds, else skip). Explicitly
+  **NOT** the shared `findClassBindingInScope` (whose `:320-329` simple-tail fallback
   would mis-resolve a nested type to a same-tail top-level decoy — §1(3)). A unique user-defined resolution →
   narrow; anything else → external → arity-only, never mis-bound. This is **not** a REQ-013 classifier —
   REQ-013 needs none (external = host-default no-edge, §2).
@@ -2542,7 +2566,11 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
 - **Parameter arg, external type:** an overload arg is a parameter of a stdlib type (`String s` param used as
   arg) → arity-only, never mis-bound (REQ-008 completion's conservative arm).
 - **Parameter arg, user-defined type (top-level or nested):** narrows — the §1(3) oracle recognizes a
-  top-level type (workspace membership) and a nested type (inc-11 OUTER-first), decoy-safe.
+  top-level type (workspace membership), a dotted nested type (inc-11 OUTER-first), and a **simple-name nested
+  type referenced from within its enclosing class** (enclosing-scope owned-def lookup, §1(3)(c)), decoy-safe.
+- **Parameter arg, simple-name nested type** (unqualified `Inner p` inside `Outer`): the §1(3)(c)
+  enclosing-scope lookup binds the unique owned `Inner` (else conservative skip) → narrows, matching the
+  Java/Kotlin benchmark (REQ-012); not silently under-resolved.
 - **Parameter arg, nested type whose simple tail matches a top-level decoy:** the oracle uses the inc-11
   OUTER-first lookup (not the shared decoy-prone tail), so it binds the real nested type or refuses — it never
   narrows on the decoy.
@@ -2682,8 +2710,11 @@ Each REQ clause, BL-row discharge, and edge case maps to a sub-item. **Gate-3 ac
 
 **Scope note (SRS cascade).** Discharging BL-1…BL-8 updates the SRS §5.1 register (those rows carry
 `Fix=WI-4`) and the governing **REQ-007 / REQ-005 / REQ-009** limitation clauses (REQ-009 v1.15 co-governs
-BL-6); **plus a BL-10 amendment** ratifying the reorder's case-varied heritage arm (§4 — an invalid-source
-`Fix=—` row WI-4 perturbs, dispositioned by amendment). Each is a documented SRS amendment authored **upon
+BL-6), **and SRS §1's in-scope boundary + INTENT-001-acceptance wording** (v1.22–v1.27 frames BL-1…BL-8 as
+*pending* epic-deferred shortfalls and heritage-family as the sole non-full-SHALL area — the discharge
+falsifies that present-tense framing, so §1 is re-stated at the same Gate-3-triggered cascade); **plus a BL-10
+amendment** ratifying the reorder's case-varied heritage arm (§4 — an invalid-source `Fix=—` row WI-4 perturbs,
+dispositioned by amendment). Each is a documented SRS amendment authored **upon
 Gate-3 verification** (a Phase-5 cascade), not pre-verification, so the register is never mutated ahead of the
 evidence. The parity (REQ-012) and external (REQ-013) forms complete the epic §9 scope
 WI-1/2/3 left to WI-4.
