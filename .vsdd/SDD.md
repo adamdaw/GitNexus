@@ -2143,7 +2143,28 @@ moving the whole block preserves that, and the `:640`→`:653` landing preserves
 `ln` view. **With the landing spot pinned there, the single peer-visible change genuinely reduces to the
 block's position relative to `{buildWorkspaceResolutionIndex, populateNamespaceSiblings}`** (the heritage
 block still precedes `mirror`/`propagate`/`resolve` exactly as today) — the one NFR-002 measurement point
-(§5), gated-fallback if any peer regresses. **This names no language** (Constitution §2.2 — it reorders existing generic passes); it is
+(§5), gated-fallback if any peer regresses.
+
+**Two load-bearing [structural] wiring pins the re-sequence MUST honour (a literal block-move breaks the
+discharge otherwise):** *(a) the moved heritage passes take `indexes`, not `finalized`.* Today
+`preEmitInheritanceEdges` (`:573`), `emitHeritageEdges?` (`:579`), and `emitDetectedInterfaceImplementations`
+(`:598`) are passed `finalized` — which does **not** carry `normalizeIdentifier` (that field is added only when
+`indexes` is built at `:620`, `scope-resolution-indexes.ts:97`) and does **not** carry the
+`populateNamespaceSiblings`-injected `workspaceFqnBindings`. The BL-1/BL-2/BL-5 case-fold discharge relies on
+`workspaceBindingsFor`'s folded fallback (`walkers.ts:71`); if the moved passes keep `finalized`,
+`normalizeIdentifier` is `undefined`, the fold no-ops, and every case-varied heritage form stays edge-absent
+— the **opposite** of the §2 postconditions. So the moved passes MUST be threaded `indexes` (which carries
+both `normalizeIdentifier` and the populated workspace channel) — a structural wiring requirement, not a
+Gate-3 reliance. *(b) `methodDispatch` is swapped in by a fresh re-spread, never a mutation.* The host builds
+`indexes` once via a fresh spread specifically to avoid mutating a readonly result through an `as` cast
+(`run.ts:610-613`). The re-sequence builds `indexes` once with the empty `methodDispatch` (for
+`buildWorkspaceResolutionIndex`/`populateNamespaceSiblings`/the moved heritage passes), then — after the moved
+`buildMro` — produces a **new** `{...indexes, methodDispatch: populatedFromMovedBuildMro}` and threads *that*
+to the `:653-:687` tail; **no `indexes` field is mutated post-construction** (the re-spread carries forward
+the in-place `bindingAugmentations`/`workspaceFqnBindings` writes `populateNamespaceSiblings` made to the
+first `indexes`, preserving the host's readonly discipline).
+
+**This names no language** (Constitution §2.2 — it reorders existing generic passes); it is
 the first WI to commit a shared control-flow change, so it carries a Gate-4 **§2.2 legitimacy + adversary +
 NFR-002 measurement** obligation. **Architect-ruled committed fallback (2026-07-07): a per-language gate** (an
 Apex-only flag on the resolver/`ScopeResolutionIndexes`, mirroring WI-3 inc 15's
@@ -2301,10 +2322,14 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
   heritage-resolution + MRO block `:573-602` (the seven passes enumerated in §1(1) — `preEmitInheritanceEdges`,
   `emitHeritageEdges?`, `emitImplicitImportEdges?`, the `postHeritageNodeLookup` rebuild,
   `emitDetectedInterfaceImplementations`, `buildMro`, `buildExtendsOnlyMro?`) moves **as a unit, internal
-  order preserved**, to after `populateNamespaceSiblings` (`:640`); the `indexes`/`methodDispatch`
-  construction splits (empty dispatch built pre-block so `populateNamespaceSiblings` can consume `indexes`,
-  populated dispatch swapped in post-`buildMro` before `resolveReferenceSites`). **Generic** — no language
-  named. Plus the committed **per-language gate**: an optional `resolveHeritageAfterSiblings?: boolean` (or
+  order preserved**, landing immediately after `populateNamespaceSiblings` (`:640`) and before
+  `mirrorNamespaceTypeBindings` (`:653`); the `indexes`/`methodDispatch` construction splits: build `indexes`
+  once with the empty dispatch (for `buildWorkspaceResolutionIndex`/`populateNamespaceSiblings`/the moved
+  passes), then after the moved `buildMro` produce a **fresh** `{...indexes, methodDispatch: populated}`
+  threaded to the `:653-:687` tail — **no post-construction mutation** (preserves `run.ts:610-613`). **The
+  moved `preEmitInheritanceEdges`/`emitHeritageEdges?`/`emitDetectedInterfaceImplementations` MUST be passed
+  `indexes`, not `finalized`** (only `indexes` carries `normalizeIdentifier` + the injected
+  `workspaceFqnBindings` the case-fold discharge needs — §1(1)). **Generic** — no language named. Plus the committed **per-language gate**: an optional `resolveHeritageAfterSiblings?: boolean` (or
   equivalent) on the resolver contract, default matching the current order for peers, set true by the Apex
   resolver — engaged **iff** the Gate-4 NFR-002 measurement shows a peer regression. *(The default —
   generic-for-all vs gated-from-start — is settled by the measurement, per the Architect ruling; the SDD pins
@@ -2323,6 +2348,10 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
   (user-defined); else arity-only. No shared edit.
 - **External-oracle reuse** (`workspaceFqnBindings` membership) — no new type; the REQ-013 external
   classification is "absent from the workspace registry".
+- **§3 injection refinement — exclude trigger-KIND defs** (Apex-local, `languages/apex/namespace-siblings.ts`):
+  the WI-3 discriminant excludes `.trigger`-**file** defs; WI-4 refines it to also exclude a **trigger-kind**
+  def in a `.cls` file, so the reorder holds **BL-10 byte-identical** (§4). No valid class is a trigger-kind
+  def, so no valid injection is lost. (Architect may alternatively ratify the case-varied widening — §4.)
 - **Parity + external fixtures** (`apex-resolution.test.ts` — the NFR-004 resolution suite, per Constitution
   §2.5; WI-4-specific parity fixtures may be §2.5 additive siblings, e.g. `apex-parity.test.ts`; the Gate-5
   fuzz follows the `apex-*-hardening.test.ts` sibling pattern): a parity suite comparable to peers; an external-reference
@@ -2353,17 +2382,22 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
     "picks one folded candidate" concern — nothing is injected to pick).
   - **BL-13 / BL-14** (fragment / misfiled-trigger collision): the §3 guard **registers neither** → workspace
     empty for the colliding key → the valid type's cross-file forms stay unresolved as ratified, **unchanged**.
-  - **BL-10** (trigger mis-filed in a `.cls` file — the one that is NOT purely byte-identical): a `.cls`-filed
-    trigger def (type `Class`) **passes** the §3 extension discriminant → it **is** injected. Post-reorder its
-    heritage/name reference routes through the workspace channel. **Exact-case arm:** binds the **same** trigger
-    def the pre-reorder QNI channel bound → invariant *target*. **Case-varied arm:** the folded workspace key
-    may **newly** bind (where pre-reorder, exact-case-only, it did not) — a delta **within BL-10's
-    invalid-source `§1.2-(b)` "globally referenceable" ratification** (Apex is case-insensitive, so a
-    case-varied bind to the same mis-filed trigger is consistent), but a **behaviour delta, not byte-identity**
-    → a **[Gate-3 reliance]** pinned and surfaced, **pending explicit Architect ratification** (it exceeds BL-10/BL-11's ratified *exact-case* shape, REQ-010 v1.14, so the register may not carry it unratified), routed as a BL-10 ratification
-    refinement if the case-varied widening is undesired — never silently absorbed.
-  None is `Fix=WI-4`; the reorder must leave every BL-9…BL-14 outcome as ratified (Constitution §7 — no
-  silent change to a ratified row), with BL-10's case-varied arm the one flagged delta.
+  - **BL-10** (trigger mis-filed in a `.cls` file — the one row the reorder would otherwise perturb): a
+    `.cls`-filed trigger def (type `Class`) **passes** today's §3 extension discriminant (which excludes only
+    `.trigger`-**file** defs) → it **is** injected, so post-reorder its case-varied heritage/name reference
+    would **newly** bind the folded workspace key — exceeding BL-10/BL-11's ratified *exact-case* shape
+    (REQ-010 v1.14). **Committed default disposition (Constitution §7 — no undispositioned change to a ratified
+    row):** the §3 injection discriminant is **refined to exclude trigger-KIND defs**, not only
+    `.trigger`-file defs — so a mis-filed trigger in a `.cls` file is **not injected** → the workspace channel
+    never holds it → BL-10 stays **exact-case byte-identical** (its case-varied arm misses the workspace and
+    hits QNI exact-case-only, exactly as ratified; the exact-case arm binds the same trigger via QNI). This is
+    an Apex-local §3 refinement (no valid class is a trigger-kind def, so no valid injection is lost; BL-9/
+    BL-11 are already `.trigger`-file-excluded, unaffected). The Architect may **alternatively elect** to
+    ratify the case-varied widening (an SRS BL-10 amendment) — a named fork — but the **committed default
+    preserves byte-identity**, so no ratified row changes undispositioned.
+  None is `Fix=WI-4`; the reorder leaves every BL-9…BL-14 outcome as ratified (Constitution §7 — no silent or
+  undispositioned change to a ratified row), BL-10 held byte-identical by the committed §3 trigger-kind
+  exclusion.
 - **Dotted base, no nested target (external outer):** `extends Ext.Inner` where `Ext` is external → no
   workspace hit, no nested lookup → EXTENDS absent (benign; REQ-013-adjacent), never a mis-bind.
 - **Dotted base, outer resolves but nested tail absent (+ same-tail top-level decoy):** `extends Outer.Inner`
@@ -2477,15 +2511,14 @@ Each REQ clause, BL-row discharge, and edge case maps to a sub-item. **Gate-3 ac
 - **Receiver-variable case-fold** — a case-varied receiver-variable reference resolves to its declaration.
 - **NFR-002** — every peer resolver suite green under the reorder (the Gate-4 measurement); a mixed-language
   regression sweep clean.
-- **Invalid-source-row non-regression (intra-Apex, `Fix=—`)** — the reorder leaves every BL-9/BL-11/BL-12/
-  BL-13/BL-14 outcome **byte-identical** (each resolves through a channel the reorder leaves empty for that
-  row — BL-9/BL-11 `.trigger`-excluded; BL-12/BL-13/BL-14 §3-inject-none — so the QNI channel bind is
-  unchanged), and **BL-10**'s exact-case arm binds the **same** mis-filed-trigger def (invariant target) while
-  its **case-varied arm** is pinned as a flagged **[Gate-3 reliance]** delta (post-reorder the `.cls`-injected
-  trigger's folded key may newly bind — it **exceeds** BL-10/BL-11's ratified exact-case shape, so it is
-  **pending explicit Architect ratification** before the register carries it, §4).
-  Pinned by the existing WI-3 collision/misfiled-heritage fixtures re-run under the reorder, plus a BL-10
-  case-varied fixture — an Apex-only change the peer suites cannot see.
+- **Invalid-source-row non-regression (intra-Apex, `Fix=—`)** — the reorder leaves **every** BL-9…BL-14
+  outcome **byte-identical**: BL-9/BL-11 `.trigger`-file-excluded, BL-12/BL-13/BL-14 §3-inject-none (each
+  resolves through a channel the reorder leaves empty → QNI bind unchanged), and **BL-10** held byte-identical
+  by the **committed §3 trigger-kind exclusion** (§4 — the mis-filed trigger is no longer injected, so its
+  case-varied arm misses the workspace and hits QNI exact-case-only as ratified; its exact-case arm still
+  binds the same trigger via QNI). Pinned by the existing WI-3 collision/misfiled-heritage fixtures re-run
+  under the reorder, plus a **BL-10 fixture asserting the `.cls`-mis-filed trigger is NOT injected and a
+  case-varied reference stays unbound** — an Apex-only change the peer suites cannot see.
 - **NFR-001** — the reorder + nested lookup + parameter-arg gate no-crash on a partial tree + a reference into
   a skipped sibling; cyclic cross-file heritage no-hang.
 
