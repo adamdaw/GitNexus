@@ -1,0 +1,205 @@
+# RESEARCH-004 — Apex parity hardening, heritage reorder & external handling feasibility
+
+*§A.6 Research artifact. Phase 2b host-API spike for **WI-4 (ITEM-004, parity hardening & external
+handling)**. Resolves the three WI-4-defining host-API unknowns before SDD-004 commits the design: (A)
+the committed **heritage/namespace-sibling pipeline reorder** that discharges the WI-3-carried
+v1.10(iv)/v1.13 nested-parent limitations — is it mechanically feasible and does it actually fix the
+mis-bind, without regressing peers (NFR-002)? (B) **external-reference handling** (REQ-013) — is
+"external = benign unresolved, not a defect" already the host default, or does it need machinery? (C) the
+**REQ-008 parameter-typed-argument narrowing** WI-2 deferred — does the argument-typing hook exist, and
+what tells a user-defined parameter type from an external one?*
+
+> **§A.6 calibration note.** §A.6 is written for *verification-tooling* (Prove-property) uncertainty. WI-4
+> has no Prove-classified properties (parity + external handling guard no security/financial/data-integrity
+> invariant — same calibration as WI-1/WI-2/WI-3). The uncertainty that objectively triggers a spike is a
+> **host-API design** unknown, and WI-4 carries three. Per dogfood #13 an evidence-isolated Gate-2 adversary
+> cannot validate a host-API design choice, and per dogfood #19 a host-API-heavy WI needs the §A.6 spike up
+> front — the pipeline-reorder blast radius especially (a *generic, peer-affecting* pass reorder) must be
+> settled empirically before SDD-004 pins it. Authored against the §A.6 field structure with *host resolution
+> API* for *verifier*.
+
+| Field | Value |
+|---|---|
+| **RESEARCH-004** | How to discharge the WI-3-carried nested-parent heritage limitations by reordering the heritage pre-pass relative to the WI-3 cross-file registration (REQ-012 parity + the committed reorder); how the host treats external/stdlib references (REQ-013); and how an overloaded call narrows on a method-parameter argument whose type may be user-defined or external (REQ-008 completion). |
+| **Question** | (A) The heritage pre-pass `preEmitInheritanceEdges` resolves superclass/interface names **before** the WI-3 `populateNamespaceSiblings` registration populates `workspaceFqnBindings` — so `class Sub extends TOuter.TInner` cannot see the cross-file nested type and mis-binds a same-tail top-level decoy (SRS v1.10(iv)/pin 767), poisoning the MRO so `s.decoy2()` rides into the decoy (v1.13). **Can the heritage block be reordered after the registration; does that resolve the mis-bind; and is the reorder safe for the five peers that register `populateNamespaceSiblings`?** (B) Is an unresolved external reference already benign (no edge, no defect), or does REQ-013 need an "external" classification? (C) Does the argument-type inference resolve a method-parameter's declared type when the parameter is used as an overload argument, and what distinguishes a user-defined parameter type from an external one (so narrowing is safe)? All without naming Apex in shared logic (Constitution §2.1). |
+| **Method** | Trace the actual scope-resolution pipeline stage order, the heritage base-resolution call path, and the argument-typing path in the host stack (structural/seam questions — settled by reading host code, per dogfood #13's structural-vs-behavioural split). Verified against primary source (`gitnexus/src/core/ingestion/`), not a secondary summary; the load-bearing reorder facts (pipeline order, the heritage base-resolution channel, mechanical feasibility) were read first-hand at authoring, not carried from a prior artifact. |
+
+## Findings — A: the heritage/namespace-sibling reorder (each cited; read-verified)
+
+1. **The current Phase-2 order runs heritage resolution BEFORE the cross-file registration.** Read-verified
+   in `scope-resolution/pipeline/run.ts` (the crux, confirmed first-hand at authoring):
+   ```
+   preEmitInheritanceEdges          run.ts:573   → resolves base names, emits EXTENDS/IMPLEMENTS
+   emitDetectedInterfaceImplementations  :593
+   buildMro                              :601     → reads those edges → MRO → methodDispatch (:616)
+   … indexes {…, methodDispatch, normalizeIdentifier}  :614-621
+   buildWorkspaceResolutionIndex         :632
+   populateNamespaceSiblings             :640     → populates workspaceFqnBindings  ← WI-3 registration
+   propagateImportedReturnTypes          :663
+   resolveReferenceSites                 :687
+   ```
+   So heritage (`:573`) and the MRO built from it (`:601`) both run **before** `populateNamespaceSiblings`
+   (`:640`). This is the structural root cause of the v1.10(iv)/v1.13 limitations (SRS §5.1 register;
+   RESEARCH-003 Addendum 9 first flagged the ordering and named the reorder a WI-4 item).
+
+2. **The heritage pass resolves a base name through the same lookup the reorder would newly feed.**
+   `preEmitInheritanceEdges` resolves each `inherits` site's base via
+   `resolveInheritanceBaseInScope(site.inScope, site.name, scopes, site.rawQualifiedName, callerClass)`
+   (`run.ts:172`). That function (`scope/walkers.ts:338-366`): (a) for a dotted base, first tries
+   `resolveQualifiedInheritanceBase` against the exact-case `QualifiedNameIndex` (`walkers.ts:353-361,
+   379-`); (b) falls to `findClassBindingInScope` (`walkers.ts:301-331`) → `walkScopeChain` → `lookupBindingsAt`,
+   which **consults `workspaceFqnBindings` as its scope-independent channel** (`walkers.ts:88` →
+   `workspaceBindingsFor`, `:65-73`, **raw key then `normalizeIdentifier`-folded key**); (c) then the
+   **QNI dotted-tail single-match fallback** (`walkers.ts:320-329`) — a dotted base retries its simple tail
+   in the exact-case `QualifiedNameIndex`, single-match-wins; (d) then the Apex-inert
+   `resolveAmbiguousInheritanceBaseViaImports` (`walkers.ts:364` — keys on `ImportEdge[]`, which Apex never
+   emits). So the heritage pass **already flows through the `workspaceFqnBindings` channel** — it is simply
+   empty of Apex keys when the pass runs today.
+
+3. **The reorder is mechanically feasible and bounded to a ~70-line region.** The movable unit is the
+   heritage block `{preEmitInheritanceEdges :573, emitDetectedInterfaceImplementations :593, buildMro :601}`;
+   `buildMro` must stay after heritage emit (it reads the EXTENDS/IMPLEMENTS edges — `passes/mro.ts:49`).
+   The coupling: `indexes` (`run.ts:614`) bundles `methodDispatch` built *from* the MRO (`:616`), and
+   `populateNamespaceSiblings` consumes `indexes` (`:641`). So a reorder re-sequences to: build `indexes`
+   with the **empty** `methodDispatch` `finalizeScopeModel` produces by design (`:608` comment) →
+   `populateNamespaceSiblings` (workspace channel now populated) → heritage block (base resolution now sees
+   the workspace keys) → build MRO → swap in the populated `methodDispatch`. All within the `:554-621`
+   region; no cross-file signature change.
+
+4. **The reorder DISCHARGES the simple-name heritage forms but is NECESSARY-BUT-NOT-SUFFICIENT for the
+   dotted nested-parent form.** Read-traced consequence per base shape:
+   - **Simple-name base (`extends Base`, case-varied `extends BASE`):** after the reorder,
+     `findClassBindingInScope('BASE')` → `lookupBindingsAt` → `workspaceBindingsFor` tries `BASE` (raw miss)
+     then the folded `base` (**hit** — the injected top-level type). So case-varied simple heritage resolves.
+     This discharges the SRS v1.8(i) case-varied-heritage limitation and its v1.11(a) downstream (the super
+     self-loop, inherited-member) — forms that fail today only because the channel is empty at pass time.
+   - **Dotted nested-parent base (`extends TOuter.TInner`):** `workspaceFqnBindings` is keyed by folded
+     **simple** name (`touter`), so `lookupBindingsAt('TOuter.TInner')` misses (raw and folded both dotted),
+     and the **QNI dotted-tail fallback (walkers.ts:320-329) still binds the same-tail top-level decoy** —
+     the exact v1.10(iv) mis-bind, unchanged by the reorder. Fixing the dotted form additionally requires
+     **nested-aware base resolution**: resolve the OUTER segment (`TOuter`) via the workspace channel, then
+     find the nested tail (`TInner`) among `TOuter`'s owned nested defs, **before** the dotted-tail fallback
+     — the same OUTER-first nested lookup WI-3 inc 11 built Apex-local for the ctor/declared-type paths
+     (`languages/apex/`), now owed on the heritage base-resolution path.
+   - **Consequence for v1.13 (poisoned MRO):** eliminating the dotted mis-bind removes the false EXTENDS
+     edge, so `buildMro` no longer carries the decoy into the MRO and `s.decoy2()` no longer resolves into
+     the decoy's member. The MRO consequence is fallout of fixing the EXTENDS edge — no separate MRO edit.
+
+5. **Peer blast radius (NFR-002) — five peers register `populateNamespaceSiblings`.** `csharp`, `go`,
+   `java`, `php`, `swift` register the hook (RESEARCH-003 finding 4). Moving heritage resolution to *after*
+   the registration means those languages' heritage bases would newly see their own namespace/workspace
+   bindings during heritage resolution — which could resolve a heritage base that currently misses (a **new**
+   EXTENDS/IMPLEMENTS edge) = a potential NFR-002 regression. The reorder is generic (names no language), so
+   this is measured, not assumed: whether any peer's heritage resolution *changes* under the reorder is a
+   **Gate-4 NFR-002 measurement obligation** (peer resolver suites, full cross-language surface). Intuition
+   (not a pin): more reachable bindings can only *add* resolvable heritage, rarely un-resolve an existing
+   edge, so a peer change is unlikely but must be measured. **Committed fallback if a peer regresses**
+   (Architect-ruled 2026-07-07, "generic + gated fallback"): a per-language gate (an Apex-only flag on the
+   provider/`ScopeResolutionIndexes`, mirroring WI-3 inc 15's `resolveInheritedImplicitThisCall`) that
+   confines the after-registration heritage timing to Apex, leaving peers on the current order. The SHALL has
+   a named satisfaction path either way (finding #29).
+
+## Findings — B: external-reference handling (REQ-013)
+
+6. **"External = benign unresolved" is already the host default — no "external" classification exists.**
+   An unresolved reference is simply **skipped, no edge emitted**: `resolve-references.ts:127-129`
+   (`resolutions.length === 0 → unresolved++, continue`) and `emit-references.ts:100-104` (missing target →
+   skip). `ResolutionOutcome` (`scope-resolution/resolution-outcome.ts:12-34`) has only `'resolved'` and
+   `'suppressed'` (ambiguity) kinds — **no `'external'`/`'unresolved-benign'` kind**. So a reference to a
+   stdlib/sObject/managed-package type produces no edge and no defect *by construction* — REQ-013's "external,
+   not a defect" is the existing behaviour. Peers additionally *pre-filter* known builtins via the
+   `isBuiltInName` provider hook (`language-provider.ts:379, 423-424`, fed by a `builtInNames` set) to avoid
+   even attempting resolution; C# has a dedicated external-namespace gate (`csharp-namespace-gate.ts:22-47`,
+   a `CSHARP_EXTERNAL_ROOTS` set). *[Finding 6 read-quality: cited from the Phase-2 spike sweep; the
+   no-edge-on-miss behaviour is the acceptance-observable REQ-013 pins at Gate 3, so it is a [Gate-3 reliance],
+   not a Gate-2 structural pin.]*
+
+## Findings — C: parameter-typed-argument narrowing (REQ-008 completion)
+
+7. **The argument-typing hook exists; a parameter argument is left untyped only because its type is not
+   resolved, not because the path is absent.** Overload narrowing runs through
+   `narrowOverloadCandidates(overloads, argCount, argTypes, …)` (`scope-resolution/passes/overload-narrowing.ts`),
+   which filters by exact type slot and **treats an empty-string arg type as "unknown → any match"** (skip).
+   Apex infers arg types in `languages/apex/captures.ts`: `inferArgType` returns a type for literals and `''`
+   for a bare identifier (a parameter reference lands here); `resolveVarTypeBindings` then post-resolves an
+   `''` arg from the local `varTypes` map (`captures.ts:415-450`), which is built from `@type-binding`
+   captures **including method parameters**. So a parameter used as an overload argument already gets its
+   declared type *if* that type was captured — the gap WI-2 deferred is not a missing path but the **safety
+   gate**: narrowing on a parameter whose type is **external** (not user-defined) would mis-resolve, so WI-2
+   left all parameter args untyped (arity-only, conservative). *[Finding 7 read-quality: as finding 6 —
+   spike-swept; the exact behaviour is a Gate-3 reliance.]*
+
+8. **The user-defined-vs-external oracle already exists — `workspaceFqnBindings` membership.** Whether a type
+   name is user-defined (in-workspace) is answered by a `workspaceFqnBindings`/class-binding lookup
+   (`workspaceBindingsFor`, `walkers.ts:65-73`; `findClassBindingInScope`, `:301`) — the same registry WI-3's
+   REQ-010 populates. REQ-013's external-type detection is therefore **reuse, not new machinery**: a parameter
+   type present in `workspaceFqnBindings` is user-defined (narrow); absent → treat as external (leave
+   untyped, arity-only). This is the gate that lets the REQ-008 parameter-arg completion narrow safely.
+
+## Conclusion
+
+- **A. The reorder is the committed generic change, discharging the simple-name heritage limitations
+  outright and the dotted nested-parent limitation *in combination with* a nested-aware heritage base
+  resolution.** SDD-004 pins: (i) the **generic reorder** of the heritage block to after
+  `populateNamespaceSiblings` (`run.ts` `:554-621` re-sequence, names no language — Constitution §2.2), with
+  the Gate-4 **NFR-002 measurement obligation** and the Architect-ruled **committed per-language-gated
+  fallback** if a peer regresses; (ii) a **committed Apex-local nested-aware heritage base resolution** (the
+  inc-11 OUTER-first nested lookup, extended to the heritage path) engaged if the dotted-nested-parent
+  fixture (v1.10(iv)) stays red after the reorder — never a silent de-scope (Constitution §7 / finding #29).
+  The v1.10(iv)/v1.13 fixtures (`apex-cross-file-collision` TailSub/TailMro/TInner) flip from
+  documented-limitation pins to correct-resolution assertions; the v1.8(i)/v1.11(a) case-varied-heritage
+  fixtures likewise flip (reorder-discharged), a scope the SDD must state so the SRS §5.1 register is updated.
+- **B. REQ-013 is satisfied by the host default (external = no edge = benign) plus, at most, an Apex
+  `builtInNames`/external-root reuse** if a parity fixture shows a *false-positive* external attempt; no new
+  outcome kind. SDD-004 pins REQ-013 acceptance as: a stdlib/sObject reference emits no edge and no unresolved
+  *defect*, verified by a parity fixture — a [Gate-3 reliance] on the host no-edge-on-miss behaviour.
+- **C. The REQ-008 parameter-arg completion is: gate `resolveVarTypeBindings`' parameter-type narrowing on
+  the finding-8 workspace-membership oracle** — narrow when the parameter's declared type is in
+  `workspaceFqnBindings` (user-defined), leave untyped (arity-only, conservative — never mis-bound) when
+  absent (external). Apex-local (`languages/apex/captures.ts`); no shared edit. Completes the WI-2-deferred
+  sub-case (SDD-002 §2 / work-items REQ-008 note) without re-owning the REQ-008 mechanic.
+- **REQ-012 (Java/Kotlin parity) & NFR-004** are demonstrated by a parity fixture suite comparable to peers
+  (`apex.test.ts`), measuring the full resolution surface (same-file + cross-file) — no new resolution
+  algorithm, the parity *evidence*.
+- **Receiver-*variable*-name case-fold** (the WI-2→WI-3→WI-4 re-deferred case-insensitivity completeness
+  item): fold a receiver variable's name at its lookup, Apex-local against REQ-005/REQ-008 case-insensitivity;
+  no epic §9 scenario varies a variable's case, so it is parity hardening, not a SHALL gap.
+
+## Residual Gate-3 reliances (finding #13 — do NOT pin these at Gate 2)
+
+The **pipeline structure** (findings 1-3), the **feasibility of the reorder** (finding 3), and the
+**existence of the workspace-membership oracle** (finding 8) are settled (structural, read-verified). The
+**resolution behaviour once the reorder/gate/oracle runs** is a host-API obligation validated at Gate 3
+(tests vs the real host), NOT a Gate-2 pin:
+- that the reorder actually resolves each *simple-name* cross-file heritage form (case-varied `extends BASE`;
+  cross-file top-level `extends`/`implements`/`super`) and leaves peers' heritage edges byte-identical
+  (the NFR-002 slice — measured at Gate 4);
+- that the dotted nested-parent form resolves after the reorder + the nested-aware base resolution (and does
+  NOT mis-bind the decoy), and that the poisoned-MRO member (`s.decoy2()`) correspondingly no longer resolves
+  into the decoy — the committed Apex-local fallback (finding 4) engaged iff the reorder-only fixture is red;
+- that a parameter argument whose type is user-defined narrows the overload, and one whose type is external
+  leaves it arity-only (never mis-bound) — the finding-7/8 completion;
+- that an external (stdlib/sObject/managed-package) reference emits no edge and no unresolved defect
+  (finding 6), across the parity fixtures.
+
+## Impact if wrong
+
+If the reorder regresses a peer's heritage edges, the Architect-ruled per-language gate confines the change to
+Apex (finding 5) — the fallback is pre-committed, not improvised. If the reorder alone leaves the dotted
+nested-parent fixture red, the committed nested-aware base resolution discharges it (finding 4) — a named
+Apex-local mechanism, not a silent de-scope. If REQ-013 external handling shows a false-positive, the
+`builtInNames` reuse closes it (finding 6). No security/data risk: resolution stays conservative — a miss is
+an unresolved reference, never a mis-binding (REQ-015/006); the reorder can only *add* correct edges or, if it
+mis-fired, be caught by the NFR-002 peer suites and the v1.10(iv)/v1.13 fixtures.
+
+## Status
+
+**Spike complete. (A) The reorder is feasible and bounded (`run.ts:554-621`); it discharges the simple-name
+heritage limitations and — with a committed Apex-local nested-aware base resolution — the dotted
+nested-parent limitation; the generic reorder carries a Gate-4 NFR-002 measurement obligation with the
+Architect-ruled per-language-gated fallback (2026-07-07). (B) REQ-013 is the host default (external = benign
+no-edge). (C) The REQ-008 parameter-arg completion gates on the existing `workspaceFqnBindings`-membership
+oracle.** Recommendation: SDD-004 pins the reorder (generic, §2.2, gated-fallback), the nested-aware heritage
+base resolution (committed Apex-local fallback), the parameter-arg narrowing gate, REQ-013 external-benign
+acceptance, and the REQ-012/NFR-004 parity fixtures. Architect approval of this conclusion + the SDD-004
+purity boundary (Step 2b) gates Gate 2.
