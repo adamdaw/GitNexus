@@ -2091,7 +2091,7 @@ NFR-002 measurement at Gate 4.*
   boundary); and the receiver-**variable**-name case-fold completeness item (the WI-2→WI-3→WI-4 re-deferral).
   **RESEARCH-004** (§A.6 host-API spike, 2026-07-07 — the heritage-reorder feasibility + the necessary-but-
   insufficient trace for the dotted nested-parent form, the REQ-013 host-default-benign finding, and the
-  REQ-008 workspace-membership oracle).
+  REQ-008 user-defined-vs-external oracle — `findClassBindingInScope`).
 - **Constitution:** CONST-gitnexus-apex **v1.1.3** (this SDD section is authored under, and Gate 2 checks it
   against, v1.1.3 — matching SDD-003). **Security-critical = false** (operates on WI-1's safe-parsed output +
   WI-2/WI-3's resolution model; introduces no new untrusted-source parse path — SECT-001 stays WI-1's). No
@@ -2198,11 +2198,16 @@ behaviourally) that the reorder alone cannot resolve the dotted form — `worksp
 folded-**simple**-name-keyed, so `lookupBindingsAt('Outer.Inner')` misses and the QNI dotted-tail fallback
 (`walkers.ts:320-329`) still binds the decoy — so BL-3/BL-4 are **certain** to require it, and it is committed
 up front. **Committed mechanism — a generic per-language heritage-base seam (the epic's second shared
-edit).** The seam is a per-language hook `resolveInheritanceBaseInScope` (`walkers.ts:338`) consults for a
-dotted base **before** its QNI dotted-tail single-match fallback (`walkers.ts:320-329`): when the hook (Apex's
-impl) resolves the OUTER segment via the workspace channel and finds the nested tail among the outer's owned
-defs, that binding is used **and the dotted-tail fallback is skipped for that site** — so the false decoy
-EXTENDS edge is never emitted. **This must be a shared edit, not pure registration:** `preEmitInheritanceEdges`
+edit).** The seam is a per-language hook consulted **at the TOP of `resolveInheritanceBaseInScope`
+(`walkers.ts:338`) for a dotted base — before BOTH `resolveQualifiedInheritanceBase` (`:353-361`, the #1982
+full-path `QualifiedNameIndex` refuse-on-tie pass) AND the `findClassBindingInScope` call (`:363`)**, whose
+own QNI dotted-tail single-match fallback (`findClassBindingInScope`, `:320-329` — reached via the `:363`
+call, NOT a fallback of `resolveInheritanceBaseInScope` itself) is the pass that binds the same-tail decoy.
+When the hook (Apex's impl) resolves the OUTER segment via the workspace channel and finds the nested tail
+among the outer's owned defs, **that binding is returned and both `:353-361` and the `:363` call (hence the
+`:320-329` dotted-tail fallback) are skipped for that site** — so no path (neither the full-path QNI nor the
+dotted-tail fallback) can bind the decoy. (On a hook miss, `resolveInheritanceBaseInScope` proceeds unchanged,
+so non-dotted and non-Apex bases are untouched.) **This must be a shared edit, not pure registration:** `preEmitInheritanceEdges`
 (`:573`) runs *before* `emitHeritageEdges` (`:579`) inside the moved block and is unmodified shared code, so a
 purely-additive `emitHeritageEdges` registration would run *after* the pre-pass has already bound the decoy
 via the dotted-tail fallback — additive emission **cannot remove** that false edge, so it cannot meet BL-4's
@@ -2224,10 +2229,15 @@ and the **BL-6 poisoned member** (`s.decoy2()`) and **BL-7 super/inherited fallo
 findings 7-8: the argument-typing path already resolves a parameter's declared type from the local
 `varTypes` map (`captures.ts:415-450`, built from `@type-binding` captures incl. parameters); WI-2 left
 parameter args untyped only because narrowing on an **external** parameter type would mis-resolve. WI-4
-**gates** the parameter-type narrowing on the **user-defined-vs-external oracle** — `workspaceFqnBindings`
-membership (`workspaceBindingsFor`, `walkers.ts:65-73`; the registry WI-3's REQ-010 populates): a parameter
-whose declared type is in the workspace is user-defined → narrow; absent → external → leave untyped
-(arity-only, conservative, **never mis-bound**). Apex-local (`languages/apex/captures.ts`); **no shared
+**gates** the parameter-type narrowing on the **user-defined-vs-external oracle** — `findClassBindingInScope`
+(`walkers.ts:301`, the fuller RESEARCH-004 finding-8 oracle: a local scope-chain walk **plus** the
+`workspaceBindingsFor` workspace channel **plus** the QNI fallback, refuse-on-tie). This recognizes a
+parameter type that is **top-level, nested, OR method-local** user-defined (not only bare-top-level workspace
+keys — raw `workspaceFqnBindings` membership would false-negative a nested type, keyed dotted, or a
+collision-suppressed duplicate, and wrongly treat it as external): a unique class-like resolution → narrow;
+**no resolution or a tie** → treat as external → leave untyped (arity-only, conservative, **never
+mis-bound** — a genuinely-ambiguous duplicate-named type conservatively degrades to arity-only, the safe
+default, not a shortfall). Apex-local (`languages/apex/captures.ts`); **no shared
 edit**. This **completes** WI-2's REQ-008 mechanic (SDD-002 §2 / work-items REQ-008 note) without re-owning
 it — mirroring how WI-3/REQ-010 completed WI-2's cross-file forms.
 
@@ -2236,7 +2246,8 @@ finding 6: "external = benign unresolved" is the **host default** — an unresol
 no defect (`resolve-references.ts:127-129`; `resolution-outcome.ts` has only `resolved`/`suppressed`, no
 `external` kind). REQ-013 acceptance = a stdlib/sObject/managed-package reference emits no edge and no
 unresolved *defect*, verified by a parity fixture; the only possible addition is an Apex `builtInNames` reuse
-(`language-provider.ts:379/423`) **iff** a parity fixture shows a false-positive external *attempt* — an
+(the `builtInNames?` set `language-provider.ts:312` → `isBuiltInName` factory `:619/:632`, pre-filtered at the
+`type-env.ts`/`parse-worker.ts` call sites) **iff** a parity fixture shows a false-positive external *attempt* — an
 Apex-local config, not a new mechanism. **REQ-012 / NFR-004** are the parity *evidence*: a resolution test
 suite comparable to peers (the NFR-004 `apex-resolution` suite — `apex-resolution.test.ts`, with WI-4 parity
 fixtures as §2.5-permitted additive siblings) over the full same-file + cross-file surface, demonstrating
@@ -2282,13 +2293,15 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
 - **REQ-008 completion (parameter-typed-argument narrowing) — a *completion* of WI-2's mechanic, not
     re-ownership.**
   - *Precondition:* an overloaded call whose disambiguating argument is a **method-parameter reference**
-    whose declared type is a **user-defined** (in-workspace) type.
+    whose declared type resolves (via `findClassBindingInScope`) to a unique **user-defined** type (top-level,
+    nested, or method-local).
   - *Postcondition:* the overload narrows by the parameter's declared type (same arity-then-exact-type
     narrowing WI-2 verified for local/field/literal/ctor args); when the parameter's type is **external**
-    (absent from `workspaceFqnBindings`) the argument is left untyped (arity-only) and **never mis-bound**.
-    **[structural]** = the oracle is `workspaceFqnBindings` membership (finding 8); **[Gate-3 reliance]** =
-    that gating the existing `resolveVarTypeBindings` narrowing on that oracle resolves the user-defined case
-    and conservatively skips the external case.
+    (no unique `findClassBindingInScope` resolution) the argument is left untyped (arity-only) and **never
+    mis-bound**. **[structural]** = the oracle is `findClassBindingInScope` (`walkers.ts:301`, finding 8 —
+    scope-chain + workspace + QNI, refuse-on-tie); **[Gate-3 reliance]** = that gating the existing
+    `resolveVarTypeBindings` narrowing on that oracle resolves the user-defined case (incl. nested/local) and
+    conservatively skips the external and ambiguous-duplicate cases.
 - **REQ-007 / REQ-005 / REQ-009 heritage-limitation discharge (BL-1…BL-8) — completion via the reorder, not
     a new REQ.** The reorder makes WI-2's REQ-007 heritage mechanic and REQ-005 super-delegation reach the
     cross-file channel at heritage-resolution time, exactly as REQ-010 made the other WI-2 mechanics reach
@@ -2350,10 +2363,12 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
   generic-for-all vs gated-from-start — is settled by the measurement, per the Architect ruling; the SDD pins
   the generic reorder as primary and the gate as the measured fallback.)*
 - **Committed nested-aware heritage base seam** (the epic's second shared edit — §1(2), RESEARCH-004
-  finding 4): a **generic per-language hook** that `resolveInheritanceBaseInScope` (`walkers.ts:338`) consults
-  for a dotted base **before** its QNI dotted-tail fallback (`walkers.ts:320-329`); Apex's impl resolves the
-  base OUTER-first (workspace binding → nested-member lookup among the outer's owned defs) and, on a hit,
-  **skips the dotted-tail fallback** so the decoy edge is never emitted. Names no language (Apex supplies the
+  finding 4): a **generic per-language hook** consulted at the **top of `resolveInheritanceBaseInScope`
+  (`walkers.ts:338`)** for a dotted base — before both `resolveQualifiedInheritanceBase` (`:353-361`) and the
+  `findClassBindingInScope` call (`:363`, whose `:320-329` dotted-tail fallback binds the decoy). Apex's impl
+  resolves the base OUTER-first (workspace binding → nested-member lookup among the outer's owned defs) and,
+  on a hit, **returns it — skipping both `:353-361` and the `:363` call** — so no path binds the decoy; on a
+  miss, resolution proceeds unchanged (non-dotted/non-Apex bases untouched). Names no language (Apex supplies the
   impl); §2.2-reviewed + adversary + NFR-002-measured at Gate 4. (Must be a shared edit, not pure
   `emitHeritageEdges` registration — additive emission cannot remove the shared pre-pass's decoy edge, §1(2).)
   Fallback if no §2.2-clean seam works: Architect escalation → SRS §5.1 amendment **+ INTENT-001 revisit /
@@ -2361,21 +2376,21 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
 - **REQ-008 parameter-arg narrowing gate** (`languages/apex/captures.ts`): `resolveVarTypeBindings` narrows a
   parameter-typed argument **only when** the parameter's declared type is in `workspaceFqnBindings`
   (user-defined); else arity-only. No shared edit.
-- **User-defined-vs-external oracle for the REQ-008 gate** (`workspaceFqnBindings` membership) — no new type;
-  used **only** to gate the parameter-type narrowing (finding 8): a parameter type present in the workspace
-  registry is user-defined (narrow), absent is treated as external (arity-only). This is **not** a REQ-013
-  classifier — REQ-013 needs none (external = host-default no-edge, §2).
-- **§3 injection refinement — exclude trigger-KIND defs, AFTER the collision guard** (Apex-local,
-  `languages/apex/namespace-siblings.ts`): the WI-3 discriminant excludes `.trigger`-**file** defs; WI-4
-  refines it to also exclude a **trigger-kind** def in a `.cls` file, so the reorder holds **BL-10
-  byte-identical** (§4). **Ordering is load-bearing (pins BL-14):** the inject-none collision guard MUST
-  evaluate over the **pre-exclusion** def set — so a BL-14 shape (a mis-filed trigger-kind def case-folded-
-  colliding with a valid class) is still detected as a collision → **neither** injected → BL-14 stays a
-  liveness limitation as ratified. The trigger-kind exclusion then applies only to a **surviving unique** key
-  (BL-10: a lone mis-filed trigger, no collision → excluded → not injected). Applying the exclusion *before*
-  the guard would dissolve BL-14's collision and wrongly inject the lone valid class — an undispositioned
-  flip of a `Fix=—` row (Constitution §7). No valid class is a trigger-kind def, so no valid injection is
-  lost. (Architect may alternatively ratify the BL-10 case-varied widening — §4.)
+- **User-defined-vs-external oracle for the REQ-008 gate** (`findClassBindingInScope`, `walkers.ts:301` —
+  scope-chain + workspace + QNI, refuse-on-tie) — no new type; used **only** to gate the parameter-type
+  narrowing (finding 8): a parameter type that resolves to a unique user-defined class-like (top-level,
+  **nested, or method-local**) → narrow; no unique resolution → external → arity-only. Uses the fuller oracle
+  (not raw `workspaceFqnBindings` membership, which false-negatives nested/collision-keyed user-defined
+  types). This is **not** a REQ-013 classifier — REQ-013 needs none (external = host-default no-edge, §2).
+- **BL-10 case-varied heritage arm — committed SRS BL-10 amendment (no injection change).** The reorder's
+  only BL-10 effect is the **heritage arm**: today heritage resolves pre-registration (`:573`<`:640`), so a
+  case-varied `extends <misfiledTrigger>` misses; post-reorder it binds the injected trigger's folded key.
+  BL-10's **non-heritage** case-varied references already fold-bind the injected `.cls`-trigger *today* (at
+  `resolveReferenceSites`, post-registration) — so the trigger stays injected (no §3 exclusion; excluding it
+  would *remove* those live non-heritage binds, a different undispositioned change). The committed disposition
+  is a **primary SRS BL-10 amendment** ratifying the case-varied *heritage* arm as consistent with BL-10's
+  already-live case-varied non-heritage binding (invalid-source, `§1.2-(b)` "globally referenceable") — a
+  WI-4-owned SRS §5.1 cascade, dispositioned up front (§4/§8), not left "if undesired."
 - **Parity + external fixtures** (`apex-resolution.test.ts` — the NFR-004 resolution suite, per Constitution
   §2.5; WI-4-specific parity fixtures may be §2.5 additive siblings, e.g. `apex-parity.test.ts`; the Gate-5
   fuzz follows the `apex-*-hardening.test.ts` sibling pattern): a parity suite comparable to peers; an external-reference
@@ -2404,27 +2419,24 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
     colliding key → the exact-case arm still binds the unique exact-case match via QNI, the same-case arm
     still binds nothing (2 QNI matches), **unchanged** (the inject-none guard forecloses the reviewer's
     "picks one folded candidate" concern — nothing is injected to pick).
-  - **BL-13 / BL-14** (fragment / misfiled-trigger collision): the §3 inject-none guard (evaluated over the
-    **pre-exclusion** def set — §3) **registers neither** → workspace empty for the colliding key → the valid
-    type's cross-file forms stay unresolved as ratified, **unchanged**. (For BL-14 specifically, the trigger-
-    kind exclusion applies only *after* the collision guard, so the collision is still detected and neither
-    def injected — the exclusion never dissolves a BL-14 collision into a lone-class injection.)
-  - **BL-10** (trigger mis-filed in a `.cls` file — the one row the reorder would otherwise perturb): a
-    `.cls`-filed trigger def (type `Class`) **passes** today's §3 extension discriminant (which excludes only
-    `.trigger`-**file** defs) → it **is** injected, so post-reorder its case-varied heritage/name reference
-    would **newly** bind the folded workspace key — exceeding BL-10/BL-11's ratified *exact-case* shape
-    (REQ-010 v1.14). **Committed default disposition (Constitution §7 — no undispositioned change to a ratified
-    row):** the §3 injection discriminant is **refined to exclude trigger-KIND defs**, not only
-    `.trigger`-file defs — so a mis-filed trigger in a `.cls` file is **not injected** → the workspace channel
-    never holds it → BL-10 stays **exact-case byte-identical** (its case-varied arm misses the workspace and
-    hits QNI exact-case-only, exactly as ratified; the exact-case arm binds the same trigger via QNI). This is
-    an Apex-local §3 refinement (no valid class is a trigger-kind def, so no valid injection is lost; BL-9/
-    BL-11 are already `.trigger`-file-excluded, unaffected). The Architect may **alternatively elect** to
-    ratify the case-varied widening (an SRS BL-10 amendment) — a named fork — but the **committed default
-    preserves byte-identity**, so no ratified row changes undispositioned.
-  None is `Fix=WI-4`; the reorder leaves every BL-9…BL-14 outcome as ratified (Constitution §7 — no silent or
-  undispositioned change to a ratified row), BL-10 held byte-identical by the committed §3 trigger-kind
-  exclusion.
+  - **BL-13 / BL-14** (fragment / misfiled-trigger collision): the §3 inject-none guard **registers neither**
+    → workspace empty for the colliding key → the valid type's cross-file forms stay unresolved as ratified,
+    **unchanged**.
+  - **BL-10** (trigger mis-filed in a `.cls` file — the one row the reorder perturbs, disposition committed):
+    a `.cls`-filed trigger def (type `Class`) **passes** the §3 extension discriminant → it **is** injected;
+    so its **non-heritage** case-varied references **already fold-bind** the injected trigger *today* (at
+    `resolveReferenceSites`, post-registration — this is BL-10's ratified "globally referenceable"
+    `§1.2-(b)` outcome, which — unlike BL-9/BL-11 — carries **no** "exact-case" qualifier precisely because it
+    is injected). The reorder changes **only the heritage arm**: today heritage resolves *pre*-registration
+    (`:573`<`:640`) so case-varied `extends <misfiledTrigger>` misses; post-reorder heritage sees the injected
+    fold and case-varied `extends` **newly binds**. **Committed disposition (Constitution §7):** a **primary
+    SRS BL-10 amendment** ratifying the case-varied heritage arm as consistent with the already-live
+    case-varied non-heritage binding (same invalid-source `§1.2-(b)` trigger, same fold) — a WI-4-owned SRS
+    §5.1 cascade authored on Gate-3 verification (like the BL-1…BL-8 discharge amendments). **The trigger is
+    NOT excluded from injection** (excluding it would strip the currently-live non-heritage binds — a
+    different undispositioned change); the disposition is the amendment, not a §3 edit.
+  Every BL-9…BL-14 row's disposition is now committed (Constitution §7 — no silent or undispositioned change
+  to a ratified row): BL-9/BL-11/BL-12/BL-13/BL-14 byte-identical, BL-10 via the committed SRS amendment.
 - **Dotted base, no nested target (external outer):** `extends Ext.Inner` where `Ext` is external → no
   workspace hit, no nested lookup → EXTENDS absent (benign; REQ-013-adjacent), never a mis-bind.
 - **Dotted base, outer resolves but nested tail absent (+ same-tail top-level decoy):** `extends Outer.Inner`
@@ -2439,7 +2451,10 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
   refuse-on-tie).
 - **Parameter arg, external type:** an overload arg is a parameter of a stdlib type (`String s` param used as
   arg) → arity-only, never mis-bound (REQ-008 completion's conservative arm).
-- **Parameter arg, user-defined type:** narrows by the parameter's declared type.
+- **Parameter arg, user-defined type (top-level, nested, or method-local):** narrows by the parameter's
+  declared type — `findClassBindingInScope` recognizes all three (not only bare-top-level workspace keys).
+- **Parameter arg, duplicate-named (ambiguous) user-defined type:** `findClassBindingInScope` refuses on tie
+  → treated as external → arity-only, never mis-bound (the safe conservative default, not a shortfall).
 - **External reference (stdlib/sObject/managed pkg):** no edge, no defect (REQ-013).
 - **Case-varied receiver variable:** folds to its declaration; a case-collision between two variables →
   conservative (WI-2's collision discipline).
@@ -2510,7 +2525,7 @@ a *correct* cross-file base reachable that was previously missed.
   the reorder + nested-aware base resolution resolves the dotted form (BL-3/BL-4) and clears the poisoned MRO
   (BL-6/BL-7) — the nested-aware base seam is a committed deliverable (§1(2), structurally required per RESEARCH-004 finding 4; the epic's second shared edit — a generic per-language hook gating the shared pre-pass's dotted-tail fallback, since additive `emitHeritageEdges` registration cannot remove the decoy edge), with the Architect-escalation → SRS §5.1 amendment + INTENT-001 revisit / Gate-1 re-entry path if no §2.2-clean seam resolves the dotted form; (3) **(Gate-4 NFR-002)**
   that every peer's heritage edges stay byte-identical under the reorder — the committed per-language gate iff
-  not; (4) that gating `resolveVarTypeBindings` on the workspace oracle narrows the user-defined
+  not; (4) that gating `resolveVarTypeBindings` on the `findClassBindingInScope` oracle narrows the user-defined (incl. nested/local)
   parameter-arg case and conservatively skips the external case; (5) that an external reference emits no edge
   and no defect — committed `builtInNames` reuse iff a false-positive; (6) that a case-varied receiver
   variable folds to its declaration; (7) that the parity fixtures resolve at Java/Kotlin tier. Gate 3 (tests
@@ -2538,19 +2553,22 @@ Each REQ clause, BL-row discharge, and edge case maps to a sub-item. **Gate-3 ac
 - **Receiver-variable case-fold** — a case-varied receiver-variable reference resolves to its declaration.
 - **NFR-002** — every peer resolver suite green under the reorder (the Gate-4 measurement); a mixed-language
   regression sweep clean.
-- **Invalid-source-row non-regression (intra-Apex, `Fix=—`)** — the reorder leaves **every** BL-9…BL-14
-  outcome **byte-identical**: BL-9/BL-11 `.trigger`-file-excluded, BL-12/BL-13/BL-14 §3-inject-none (each
-  resolves through a channel the reorder leaves empty → QNI bind unchanged), and **BL-10** held byte-identical
-  by the **committed §3 trigger-kind exclusion** (§4 — the mis-filed trigger is no longer injected, so its
-  case-varied arm misses the workspace and hits QNI exact-case-only as ratified; its exact-case arm still
-  binds the same trigger via QNI). Pinned by the existing WI-3 collision/misfiled-heritage fixtures re-run
-  under the reorder, plus a **BL-10 fixture asserting the `.cls`-mis-filed trigger is NOT injected and a
-  case-varied reference stays unbound** — an Apex-only change the peer suites cannot see.
+- **Invalid-source-row disposition (intra-Apex, `Fix=—`)** — the reorder leaves BL-9/BL-11/BL-12/BL-13/BL-14
+  **byte-identical**: BL-9/BL-11 `.trigger`-file-excluded, BL-12/BL-13/BL-14 §3-inject-none (each resolves
+  through a channel the reorder leaves empty → QNI bind unchanged); **BL-10**'s non-heritage binds are
+  **unchanged** (already fold-bind the injected trigger today), and its reorder-introduced **case-varied
+  heritage arm** is dispositioned by a **committed SRS BL-10 amendment** (§4 — ratifying it as consistent with
+  the live non-heritage binding). Pinned by the existing WI-3 collision/misfiled-heritage fixtures re-run
+  under the reorder, plus a **BL-10 fixture asserting case-varied `extends <misfiledTrigger>` binds the
+  trigger post-reorder (per the amendment) with the non-heritage binds unchanged** — an Apex-only change the
+  peer suites cannot see.
 - **NFR-001** — the reorder + nested lookup + parameter-arg gate no-crash on a partial tree + a reference into
   a skipped sibling; cyclic cross-file heritage no-hang.
 
 **Scope note (SRS cascade).** Discharging BL-1…BL-8 updates the SRS §5.1 register (those rows carry
 `Fix=WI-4`) and the governing **REQ-007 / REQ-005 / REQ-009** limitation clauses (REQ-009 v1.15 co-governs
-BL-6) — a documented SRS amendment authored **upon Gate-3 verification** of each discharge (a Phase-5
-cascade), not pre-verification, so the register is never mutated ahead of the evidence. The parity (REQ-012) and external (REQ-013) forms complete the epic §9 scope
+BL-6); **plus a BL-10 amendment** ratifying the reorder's case-varied heritage arm (§4 — an invalid-source
+`Fix=—` row WI-4 perturbs, dispositioned by amendment). Each is a documented SRS amendment authored **upon
+Gate-3 verification** (a Phase-5 cascade), not pre-verification, so the register is never mutated ahead of the
+evidence. The parity (REQ-012) and external (REQ-013) forms complete the epic §9 scope
 WI-1/2/3 left to WI-4.
