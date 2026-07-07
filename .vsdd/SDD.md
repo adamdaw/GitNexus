@@ -2199,9 +2199,11 @@ not a Gate-3 reliance. (`emitDetectedInterfaceImplementations` — the *inferred
 (`run.ts:610-613`). The re-sequence builds `indexes` once with the empty `methodDispatch` (for
 `buildWorkspaceResolutionIndex`/`populateNamespaceSiblings`/the moved passes), then — after the moved
 `buildMro` — produces a **new** `{...indexes, methodDispatch: populatedFromMovedBuildMro}` threaded to the
-`:653-:687` tail; **no `indexes` field is mutated post-construction** (the re-spread carries forward the
-in-place `bindingAugmentations`/`workspaceFqnBindings` writes `populateNamespaceSiblings` made to the first
-`indexes`).
+`:653-:687` tail; **`methodDispatch` is swapped in by the fresh re-spread, never mutated post-construction**
+(preserving the `run.ts:610-613` readonly-cast avoidance). The `bindingAugmentations`/`workspaceFqnBindings`
+fields ARE written **in place** by `populateNamespaceSiblings` **by design** — exactly as in the un-gated flow —
+and the re-spread carries those in-place writes forward (so the moved-block `preEmitInheritanceEdges` sees
+them); the no-mutation invariant is specifically about `methodDispatch`, not those workspace writes.
 
 **Constitution §2.2 fit (resolved at Gate 2, Architect-ruled 2026-07-07).** The gated re-sequence **names no
 language** — the shared code reads `provider.resolveHeritageAfterSiblings`, a provider-configured flag — so it
@@ -2239,13 +2241,16 @@ full-path `QualifiedNameIndex` refuse-on-tie pass) AND the `findClassBindingInSc
 own QNI dotted-tail single-match fallback (`findClassBindingInScope`, `:320-329` — reached via the `:363`
 call, NOT a fallback of `resolveInheritanceBaseInScope` itself) is the pass that binds the same-tail decoy.
 The hook has **THREE return states** (a binary hit/miss contract would reintroduce BL-4): **(i) resolved** —
-the OUTER segment binds a workspace type AND the nested tail is a unique owned def → return that binding;
-**(ii) applicable-but-refuse** — the OUTER binds a workspace type but the nested tail is **absent or
-ambiguous** among its owned defs (a typo/near-miss inner, or a tie) → return a distinguished "refuse" (emit
-**no** edge); **(iii) not-applicable** — a non-dotted base, or the OUTER does not bind a workspace type →
-return "pass-through". **For BOTH (i) and (ii), `resolveInheritanceBaseInScope` skips `:353-361` AND the
-`:363` call (hence the `:320-329` dotted-tail fallback)** — so once the OUTER is a workspace type, no path can
-bind the same-tail decoy, whether the tail resolves or refuses. Only (iii) falls through to the unchanged
+the OUTER segment binds a **unique** workspace type AND the nested tail is a unique owned def → return that
+binding; **(ii) applicable-but-refuse** — EITHER the OUTER binds a unique workspace type but the nested tail is
+**absent or ambiguous** among its owned defs (a typo/near-miss inner, or a tie), **OR the OUTER itself binds
+ambiguously** (2+ folded workspace candidates, or an inject-none-suppressed case-collision under the OUTER's
+folded key — e.g. case-variant twin outers) → return a distinguished "refuse" (emit **no** edge); **(iii)
+not-applicable** — a non-dotted base, or the OUTER folded key is **genuinely absent** (0 workspace candidates →
+external) → return "pass-through". **For BOTH (i) and (ii), `resolveInheritanceBaseInScope` skips `:353-361` AND
+the `:363` call (hence the `:320-329` dotted-tail fallback)** — so once the OUTER binds uniquely OR binds
+ambiguously/suppressed (states i/ii), no path can bind the same-tail decoy, whether the tail resolves or
+refuses. Only (iii) — a genuinely-absent OUTER or a non-dotted base — falls through to the unchanged
 `resolveQualifiedInheritanceBase`/`findClassBindingInScope` path, so non-dotted and non-Apex bases are
 untouched. (State (ii) is what makes the §4 "outer resolves, tail absent + decoy" edge case emit no edge
 instead of re-binding the decoy.) **This must be a shared edit, not pure registration:** `preEmitInheritanceEdges`
@@ -2423,8 +2428,12 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
     rows, pinned by a parity fixture (§8). **(A *case-varied* `implements` has no case-sensitive benchmark
     equivalent, so REQ-012 v1.15 parity does not govern it — it is REQ-005 heritage-family case-insensitivity,
     the `implements`-analogue of BL-1's case-varied `extends`; the §5.1 register catalogues only the `extends`
-    BL rows, so a case-varied `implements` is uncatalogued and OUT of WI-4's committed BL-1…BL-8 scope — flagged
-    for the Architect, NOT retired under a parity label.)** (The separate
+    BL rows, so it is currently uncatalogued. Because the reorder **newly emits** that case-varied `implements`
+    edge (a reorder-perturbed behaviour — Constitution §7), WI-4 **commits a disposition** (not a bare flag): a
+    §5.1 amendment adding the **`implements`-arm of the heritage-family case-insensitivity limitation** (a
+    sibling to BL-1 — REQ-005/REQ-007 govern both `extends` and `implements` as heritage), recording the
+    pre-reorder miss as a liveness limitation and its WI-4 discharge, **authored on Gate-3 verification** (a
+    Phase-5 cascade, like the BL-10 amendment) and pinned by a case-varied cross-file `implements` fixture.)** (The separate
     `emitDetectedInterfaceImplementations` inferred-implements pass is inert for Apex — §1(1).)
 - **REQ-005/REQ-008 receiver-variable case-fold (case-insensitivity completeness).**
   - *Postcondition:* a case-varied receiver **variable** name (`Account a; A.foo()` where `A` refers to the
@@ -2459,9 +2468,10 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
   `findClassBindingInScope` call (`:363`, whose `:320-329` dotted-tail fallback binds the decoy). Apex's impl
   resolves the base OUTER-first (**case-folded** workspace binding → **case-folded** nested-member lookup among
   the outer's owned defs, per Apex REQ-005 case-insensitivity — the same folded channel the reorder relies on)
-  with **three return states** (§1(2)): **(i) resolved** → return the binding; **(ii) applicable-but-refuse**
-  (OUTER bound, tail absent/ambiguous) → return "refuse", no edge; **(iii) not-applicable** (non-dotted / OUTER
-  unbound) → pass-through. States (i) AND (ii) both **skip `:353-361` and the `:363` call** (so no path binds
+  with **three return states** (§1(2)): **(i) resolved** (OUTER binds uniquely, tail unique) → return the
+  binding; **(ii) applicable-but-refuse** (OUTER binds uniquely but tail absent/ambiguous, **OR OUTER binds
+  ambiguously / inject-none-suppressed**) → return "refuse", no edge; **(iii) not-applicable** (non-dotted /
+  OUTER folded key genuinely absent → external) → pass-through. States (i) AND (ii) both **skip `:353-361` and the `:363` call** (so no path binds
   the decoy — whether the tail resolves or refuses); only (iii) proceeds unchanged (non-dotted/non-Apex bases
   untouched). Names no language (Apex supplies the
   impl); fits §2.2(b) as a standard per-language provider hook (isolated-provider arm), its NFR-002
@@ -2556,9 +2566,13 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
   the top-level decoy, reintroducing the BL-4 mis-bind for the near-miss inner. So "never the decoy" holds for
   the outer-found/tail-absent shape too: an outer-bound dotted base resolves its nested tail or refuses,
   never the same-tail decoy.
-- **Dotted base, ambiguous nested tail:** `extends Outer.Inner` where two outers own an `Inner` → conservative
-  (the nested lookup refuses on tie, never guesses — mirrors REQ-015 / `resolveQualifiedInheritanceBase`'s
-  refuse-on-tie).
+- **Dotted base, ambiguous OUTER** (`extends Outer.Inner` where the OUTER folded name has 2+ workspace
+  candidates — case-variant twin outers, or an inject-none-suppressed collision): the seam **refuses** (state
+  ii — no edge), NOT pass-through, so the shared dotted-tail fallback never binds a same-tail decoy (the BL-4
+  guard holds for an ambiguous OUTER too, not only a uniquely-bound one).
+- **Dotted base, ambiguous nested tail:** `extends Outer.Inner` where a **uniquely-bound** `Outer` owns two
+  case-colliding `Inner` defs → conservative (the nested lookup refuses on tie, never guesses — mirrors
+  REQ-015 / `resolveQualifiedInheritanceBase`'s refuse-on-tie).
 - **Dotted base, case-varied outer** (`extends OUTER.Inner`, valid Apex): the OUTER segment is matched
   **case-folded** (REQ-005), binding the workspace type exactly as `Outer.Inner` would; the nested tail is
   likewise case-folded — no new shortfall (the dotted analogue of BL-1's case-varied simple `extends`).
@@ -2612,7 +2626,8 @@ byte-identical, unlike the flag-gated re-sequence; only its hookless-peer *behav
   `apex-resolution.test.ts`, auto-discovered by the CI parity glob per Constitution §2.5) — the parity
   suite is the REQ-012 leg of it. **Per SRS NFR-004, WI-4 completes the obligation that the aggregate
   `apex-resolution` suite exercises EVERY §9 resolution scenario** (REQ-005/006/007/008/009/010/011/012/013/015):
-  the WI-2/WI-3 suites cover REQ-005/006/007/009/010/011/015; WI-4 adds the REQ-012 parity, REQ-013 external,
+  the WI-2/WI-3 suites cover REQ-005/006/007/**008 (base arity/exact-type overload, SDD-002)**/009/010/011/015;
+  WI-4 adds the REQ-012 parity, REQ-013 external,
   REQ-008-completion, and BL-1…BL-8 discharge fixtures — closing the set. The parity suite is one leg *within*
   that full-coverage obligation, not a substitute for it.
 - **Performance:** the reorder adds no per-reference cost (it re-sequences existing passes; the workspace
@@ -2711,8 +2726,10 @@ Each REQ clause, BL-row discharge, and edge case maps to a sub-item. **Gate-3 ac
 `Fix=WI-4`) and the governing **REQ-007 / REQ-005 / REQ-009** limitation clauses (REQ-009 v1.15 co-governs
 BL-6), **and SRS §1's in-scope boundary + INTENT-001-acceptance wording** (v1.22–v1.27 frames BL-1…BL-8 as
 *pending* epic-deferred shortfalls and heritage-family as the sole non-full-SHALL area — the discharge
-falsifies that present-tense framing, so §1 is re-stated at the same Gate-3-triggered cascade); **plus a BL-10
-amendment** ratifying the reorder's case-varied heritage arm (§4 — an invalid-source `Fix=—` row WI-4 perturbs,
+falsifies that present-tense framing, so §1 is re-stated at the same Gate-3-triggered cascade); **plus a §5.1
+`implements`-arm amendment** (a sibling to BL-1 recording the case-varied cross-file `implements`
+heritage-family case-insensitivity limitation + its WI-4 discharge — §2, the reorder newly emits that edge);
+**plus a BL-10 amendment** ratifying the reorder's case-varied heritage arm (§4 — an invalid-source `Fix=—` row WI-4 perturbs,
 dispositioned by amendment). Each is a documented SRS amendment authored **upon
 Gate-3 verification** (a Phase-5 cascade), not pre-verification, so the register is never mutated ahead of the
 evidence. The parity (REQ-012) and external (REQ-013) forms complete the epic §9 scope
