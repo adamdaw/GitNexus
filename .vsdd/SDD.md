@@ -2087,8 +2087,7 @@ Architect-ruled settled** (the "configured by the isolated provider" arm — no 
 **seam** fits the same §2.2(b) arm as a **standard per-language provider hook** (like the host's existing
 `emitHeritageEdges`/`populateNamespaceSiblings` hooks), its §2.2(c) NFR-002 leg **Gate-4-measured** (not
 by-construction — it edits shared `resolveInheritanceBaseInScope` code peers execute), with the RESEARCH-004
-Addendum-2 escalation fallback if the seam-conformance review cannot be made clean — **pending Architect
-affirmation at the pass record**. What is owed at **Gate 4** is the code-level review that each *implementation*
+Addendum-2 escalation fallback if the seam-conformance review cannot be made clean — **Architect-affirmed 2026-07-07 (no §2.2 amendment)**. What is owed at **Gate 4** is the code-level review that each *implementation*
 names no language + the NFR-002 measurement (§7).*
 
 - **Consumes:** SRS-001 (**v1.28**) **REQ-012** (Java/Kotlin parity), **REQ-013** (external-reference
@@ -2109,7 +2108,7 @@ names no language + the NFR-002 measurement (§7).*
   per-language heritage-base-resolution seam), both under the §2.2 "configured by the isolated provider" arm
   (naming no language): the **re-sequence** Architect-ruled settled (2026-07-07, no §2.2 amendment); the
   **seam** a standard per-language provider hook whose §2.2(c) NFR-002 is Gate-4-**measured**, with the
-  RESEARCH-004 Addendum-2 fallback, **pending Architect affirmation**.
+  RESEARCH-004 Addendum-2 fallback; **Architect-affirmed 2026-07-07 (no §2.2 amendment)**.
 - **Builds on / completes:** WI-2's REQ-008 overload mechanic (SDD-002) — WI-4 **completes** its
   parameter-typed-argument sub-case (not re-owning it); and WI-3's REQ-010 registration (SDD-003) — the
   reorder makes WI-3's `workspaceFqnBindings` channel reachable by the heritage pass, discharging the
@@ -2259,8 +2258,8 @@ fitting §2.2(b) as a **standard per-language provider hook** (like the host's e
 `emitHeritageEdges`/`populateNamespaceSiblings`), its §2.2(c) NFR-002 **Gate-4-measured** (not by-construction —
 it adds a hook-consultation point to shared code peers execute; a behaviour-preserving no-op for a peer
 registering no hook, Gate-4 confirms no peer registers such a hook + peer suites green, §5/§7), with the
-RESEARCH-004 Addendum-2 escalation fallback if the seam-conformance review cannot be made clean — **pending
-Architect affirmation at the pass record**. (Pure `emitHeritageEdges`
+RESEARCH-004 Addendum-2 escalation fallback if the seam-conformance review cannot be made clean —
+**Architect-affirmed 2026-07-07 (no §2.2 amendment)**. (Pure `emitHeritageEdges`
 registration can at most *add* the correct edge for the **BL-3 no-decoy** shape — a partial contributor — but
 is insufficient for BL-4; the committed mechanism is the seam.) **Committed satisfaction path (finding #29):**
 if no §2.2-clean seam resolves the dotted form, the fallback is **Architect escalation → an SRS §5.1 amendment
@@ -2467,7 +2466,7 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
   untouched). Names no language (Apex supplies the
   impl); fits §2.2(b) as a standard per-language provider hook (isolated-provider arm), its NFR-002
   **Gate-4-measured** (not by-construction — it edits shared code peers execute; Addendum-2 fallback if unclean;
-  Architect affirmation at the pass record), Gate-4 = code-level §2.2 review + NFR-002 measurement (§1(2)/§5). (Must be a shared edit, not pure
+  Architect-affirmed 2026-07-07), Gate-4 = code-level §2.2 review + NFR-002 measurement (§1(2)/§5). (Must be a shared edit, not pure
   `emitHeritageEdges` registration — additive emission cannot remove the shared pre-pass's decoy edge, §1(2).)
   Fallback if no §2.2-clean seam works: Architect escalation → SRS §5.1 amendment **+ INTENT-001 revisit /
   Gate-1 re-entry** (§1 binds the discharge to Intent).
