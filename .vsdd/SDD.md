@@ -2432,13 +2432,15 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
     `implements`; not a BL discharge, no new SHALL), the resolution outcome a **[Gate-3 reliance]** like the BL
     rows, pinned by a parity fixture (§8). **(A *case-varied* `implements` has no case-sensitive benchmark
     equivalent, so REQ-012 v1.15 parity does not govern it — it is REQ-005 heritage-family case-insensitivity,
-    the `implements`-analogue of BL-1's case-varied `extends`; the §5.1 register catalogues only the `extends`
-    BL rows, so it is currently uncatalogued. Because the reorder **newly emits** that case-varied `implements`
-    edge (a reorder-perturbed behaviour — Constitution §7), WI-4 **commits a disposition** (not a bare flag): a
-    §5.1 amendment adding the **`implements`-arm of the heritage-family case-insensitivity limitation** (a
-    sibling to BL-1 — REQ-005/REQ-007 govern both `extends` and `implements` as heritage), recording the
-    pre-reorder miss as a liveness limitation and its WI-4 discharge, **authored on Gate-3 verification** (a
-    Phase-5 cascade, like the BL-10 amendment) and pinned by a case-varied cross-file `implements` fixture.)** (The separate
+    the `implements`-arm of **BL-1's** heritage-family case-insensitivity limitation. **Architect-ruled
+    2026-07-07:** REQ-007 covers "inheritance **AND** interface-implementation lookup", so the §5.1
+    heritage-family limitation *class* (BL-1…BL-8) encompasses both the `extends` and `implements` arms — the
+    register rows' `extends BASE` examples are **illustrative of the class, not exhaustive** — so the
+    case-varied `implements` is **already catalogued within BL-1** (SRS §1's "sole area of non-full-SHALL"
+    claim holds; no new §5.1 row, no Gate-1 reopen). The reorder discharges BL-1's `implements` arm along with
+    its `extends` arm (both ride `preEmitInheritanceEdges`' folded channel); the WI-4 Gate-3 discharge
+    amendment **makes BL-1's `implements` arm explicit**, pinned by a case-varied cross-file `implements`
+    fixture.)** (The separate
     `emitDetectedInterfaceImplementations` inferred-implements pass is inert for Apex — §1(1).)
 - **REQ-005/REQ-008 receiver-variable case-fold (case-insensitivity completeness).**
   - *Postcondition:* a case-varied receiver **variable** name (`Account a; A.foo()` where `A` refers to the
@@ -2738,9 +2740,10 @@ Each REQ clause, BL-row discharge, and edge case maps to a sub-item. **Gate-3 ac
 `Fix=WI-4`) and the governing **REQ-007 / REQ-005 / REQ-009** limitation clauses (REQ-009 v1.15 co-governs
 BL-6), **and SRS §1's in-scope boundary + INTENT-001-acceptance wording** (v1.22–v1.27 frames BL-1…BL-8 as
 *pending* epic-deferred shortfalls and heritage-family as the sole non-full-SHALL area — the discharge
-falsifies that present-tense framing, so §1 is re-stated at the same Gate-3-triggered cascade); **plus a §5.1
-`implements`-arm amendment** (a sibling to BL-1 recording the case-varied cross-file `implements`
-heritage-family case-insensitivity limitation + its WI-4 discharge — §2, the reorder newly emits that edge);
+falsifies that present-tense framing, so §1 is re-stated at the same Gate-3-triggered cascade); **making BL-1's
+`implements` arm explicit** (Architect-ruled 2026-07-07: the case-varied cross-file `implements` is within
+BL-1's heritage-family class — REQ-007 covers interface-implementation — not a new §5.1 row; the Gate-3
+discharge amendment records BL-1's `implements` arm alongside its `extends` arm, §2);
 **plus a BL-10 amendment** ratifying the reorder's case-varied heritage arm (§4 — an invalid-source `Fix=—` row WI-4 perturbs,
 dispositioned by amendment). Each is a documented SRS amendment authored **upon
 Gate-3 verification** (a Phase-5 cascade), not pre-verification, so the register is never mutated ahead of the
