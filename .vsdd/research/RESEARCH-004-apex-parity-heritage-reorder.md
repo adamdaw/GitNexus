@@ -287,3 +287,42 @@ nested tail a unique owned def) → return the binding; (ii) applicable-but-refu
 absent/ambiguous) → refuse, emit no edge; (iii) not-applicable (non-dotted / OUTER unbound) → pass through.
 States (i) and (ii) both suppress `resolveQualifiedInheritanceBase` (`:353-361`) and the
 `findClassBindingInScope` call (`:363`), so no path binds the decoy once the OUTER is a workspace type.
+
+## Addendum 3 (2026-07-07) — full read-verified `run.ts:554-693` pipeline (grounds the F2 pin + the `ln`-landing)
+
+Read-verified against `src/core/ingestion/scope-resolution/pipeline/run.ts` (2026-07-07). Each pass, its
+call args, and what it consumes re: `indexes.methodDispatch` (the `MethodDispatchIndex` / "`ln`"), heritage
+graph edges, and `indexes.scopeTree`:
+
+| Line | Pass | Args | Reads `methodDispatch`? | Heritage edges |
+|---|---|---|---|---|
+| `:573` | `preEmitInheritanceEdges` | `(graph, finalized, nodeLookup)` | no (runs before `buildMro`; today takes empty-`ln` `finalized`) | emits |
+| `:579` | `emitHeritageEdges?` | `(graph, parsedFiles, nodeLookup, finalized)` | no | emits |
+| `:584` | `emitImplicitImportEdges?` | `(graph, parsedFiles, nodeLookup, resolutionConfig)` | no | no |
+| `:591` | `postHeritageNodeLookup` rebuild | — | no | reads graph |
+| `:593` | `emitDetectedInterfaceImplementations` | `(graph, parsedFiles, postHeritageNodeLookup, provider, finalized, readonlyModel)` | no (takes `finalized`, empty `ln`) | emits IMPLEMENTS |
+| `:601` | `buildMro` | `(graph, parsedFiles, postHeritageNodeLookup)` | **produces** the MRO that populates `ln` | reads |
+| `:614` | `const indexes = {...finalized, methodDispatch: buildPopulatedMethodDispatch(...), normalizeIdentifier}` | — | **populates `ln` here** | — |
+| `:632` | `buildWorkspaceResolutionIndex` | `(parsedFiles, indexes.scopeTree)` | **no — takes only `indexes.scopeTree`** | no |
+| `:640` | `populateNamespaceSiblings?` | `(parsedFiles, indexes, {...})` | **no — Apex impl reads only `indexes.workspaceFqnBindings`** (`namespace-siblings.ts:127`) | no (iterates defs, Add. 1) |
+| `:653` | `mirrorNamespaceTypeBindings?` | `(parsedFiles, indexes, workspaceIndex, resolutionConfig)` | consumes `indexes` | no |
+| `:663` | `propagateImportedReturnTypes?` | `(parsedFiles, indexes, workspaceIndex)` | consumes `indexes` | no |
+| `:666` | `populateRangeBindings?` | `(parsedFiles, indexes, {...})` | consumes `indexes` | no |
+| `:680` | `validateBindingsImmutability` | `(indexes, onWarn)` | consumes `indexes` | no |
+| `:687` | `resolveReferenceSites` | `({scopes: indexes, ...})` | consumes `indexes` | no |
+
+**Consequences (grounding the SDD F2 pin + the `ln`-landing claim):**
+1. **F2 `methodDispatch`-independence of the empty-`ln`-window passes is a read-verified fact, not a
+   heritage-edge inference:** `buildWorkspaceResolutionIndex` takes only `indexes.scopeTree` (`:632`) and
+   Apex's `populateNamespaceSiblings` reads only `indexes.workspaceFqnBindings` (`namespace-siblings.ts:127`)
+   — neither reads `methodDispatch`. Running them before the moved `buildMro` (empty `ln`) is safe by
+   signature/body, independently of Addendum 1's heritage-edge point.
+2. **The `:653-:687` tail all consume `indexes`:** post-reorder the tail is threaded the re-spread
+   `{...indexes, methodDispatch: populatedFromMovedBuildMro}`, so `mirror`/`propagate`/`populateRange`/
+   `validate`/`resolve` each receive the **same** populated `ln` they receive un-gated (where `buildMro` at
+   `:601` populates `ln` at `:614` before the same tail). The empty-`ln` window is closed strictly between the
+   `indexes` build and the moved `buildMro`, which completes before `:653` in both orders.
+3. `preEmitInheritanceEdges` (`:573`) and `emitDetectedInterfaceImplementations` (`:593`) today take
+   `finalized` (empty `ln`), so they **already** run without a populated `methodDispatch` — threading them the
+   pre-heritage empty-`ln` `indexes` (which additionally carries `normalizeIdentifier` + the injected
+   `workspaceFqnBindings`) changes only those two fields, never a `methodDispatch` dependency.

@@ -2089,7 +2089,10 @@ branches on none + the NFR-002 confirmation (§7).*
 
 - **Consumes:** SRS-001 (**v1.28**) **REQ-012** (Java/Kotlin parity), **REQ-013** (external-reference
   handling), **NFR-004** (automated resolution test); the **§5.1 Bounded Limitations Register** rows
-  **BL-1…BL-8** (every row marked `Fix=WI-4` — the valid-source heritage-form limitations WI-4 discharges);
+  **BL-1…BL-8** (every row marked `Fix=WI-4` — the valid-source heritage-form limitations WI-4 discharges),
+  plus **REQ-010 / BL-10** (WI-3's invalid-source `.cls`-misfiled-trigger row, `Fix=—`) as the **perturbed
+  row** whose reorder-introduced case-varied heritage arm WI-4 dispositions by a committed SRS BL-10 amendment
+  (§3/§4/§8);
   the **REQ-008 parameter-typed-argument narrowing** deferral (SDD-002 §2, the WI-2→WI-4 argument-typing
   boundary); and the receiver-**variable**-name case-fold completeness item (the WI-2→WI-3→WI-4 re-deferral).
   **RESEARCH-004** (§A.6 host-API spike, 2026-07-07 — the heritage-reorder feasibility + the necessary-but-
@@ -2147,14 +2150,18 @@ moved `buildMro`) → **then** the unchanged post-block tail `mirrorNamespaceTyp
 `populateNamespaceSiblings` (`:640`) and BEFORE `mirrorNamespaceTypeBindings` (`:653`)** — critically, this
 restores the populated `indexes.ln` (`MethodDispatchIndex`, today populated at `:614-616`) **before every
 `:653-:687` consumer**, so on the Apex run `mirror`/`propagate`/`populateRange`/`validate`/`resolve` each
-receive the *same* populated `ln` they would un-gated (the empty-`ln` window is closed strictly between `:614`
+receive the *same* populated `ln` they would un-gated — **RESEARCH-004 Addendum 3 read-verifies the full
+`:653-:687` tail (`mirror`/`propagate`/`populateRange`/`validate`/`resolve`) all consume `indexes`** (the
+empty-`ln` window is closed strictly between `:614`
 and the moved `buildMro`, which now completes before `:653`). **[structural] pin (F2 — must hold on the Apex
 run):** `buildWorkspaceResolutionIndex` and Apex's `populateNamespaceSiblings` (which run in the empty-`ln`
 window) are **`methodDispatch`-independent** — read-verified they read `scopeTree`/`parsedFiles`/
-`workspaceFqnBindings`, never `indexes.ln`, **and — because the re-sequence runs them BEFORE the moved
-heritage block — consume no `EXTENDS`/`IMPLEMENTS` edge or MRO** (RESEARCH-004 Addendum 1: `populateNamespaceSiblings`
-iterates defs, not heritage edges; the same holds for `buildWorkspaceResolutionIndex`) — a Gate-4 check re-confirms
-both the `methodDispatch`- and the heritage-edge-independence. `buildMro` must stay after heritage
+`workspaceFqnBindings`, never `indexes.ln` (**RESEARCH-004 Addendum 3** pins the source:
+`buildWorkspaceResolutionIndex` takes only `indexes.scopeTree` — `run.ts:632`; Apex's
+`populateNamespaceSiblings` reads only `indexes.workspaceFqnBindings` — `namespace-siblings.ts:127`; neither
+reads `methodDispatch`). **And — because the re-sequence runs them BEFORE the moved heritage block — they
+consume no `EXTENDS`/`IMPLEMENTS` edge or MRO** (RESEARCH-004 Addendum 1: `populateNamespaceSiblings` iterates
+defs, not heritage edges; `buildWorkspaceResolutionIndex` takes only `scopeTree`) — a Gate-4 check re-confirms both. `buildMro` must stay after heritage
 emit (it reads the edges — `mro.ts:49`); moving the whole block preserves that, and the `:640`→`:653` landing
 preserves every downstream pass's `ln` view. **Peers are byte-identical (flag unset) — zero peer surface;**
 the Gate-4 NFR-002 obligation reduces to confirming peer suites stay green (they must, by construction — no
@@ -2314,7 +2321,9 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
 - **REQ-012 (Java/Kotlin resolution parity).**
   - *Precondition:* a repository of user-defined Apex types exercising the same resolution shapes peer
     languages resolve (calls, types, inheritance, overloads, field chains — same-file and cross-file).
-  - *Postcondition:* Apex resolves each shape to the same edge kinds a peer-language equivalent would, with
+  - *Postcondition:* Apex resolves each shape to the same edge kinds a peer-language equivalent would —
+    **including no standalone edge where the benchmark emits none (e.g. a bare declared-type usage, per
+    REQ-005/REQ-011 v1.3/v1.4 — REQ-012's own no-edge arm)** — with
     no Apex-specific gap — demonstrated by a parity fixture suite. **[Gate-3 reliance]** (the resolution
     outcomes vs the real host); **[structural]** only that the suite exists and runs (NFR-004).
 - **REQ-013 (external references are benign, not defects).**
@@ -2459,9 +2468,12 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
 
 - **Empty / no heritage:** a repo with no inheritance → the reorder is a no-op (no `inherits` sites); peers
   unaffected (NFR-002).
-- **Peer heritage under the re-sequence:** byte-identical by construction — the flag is unset on every peer
-  run, so no peer's pipeline re-sequences (NFR-002 discharged structurally; the Gate-4 check confirms peer
-  suites green, which they must be since no peer run changes).
+- **Peer heritage under the re-sequence + seam:** the **re-sequence** is byte-identical by construction — the
+  flag is unset on every peer run, so no peer's pipeline re-sequences. The **heritage-base seam** additionally
+  inserts a consultation guard at the top of `resolveInheritanceBaseInScope`, which peers *do* execute during
+  heritage resolution — so peer heritage is **not** byte-identical *code*; it is a behaviour-preserving no-op
+  for a peer registering no hook (§5), Gate-4-confirmed green. NFR-002 holds on both legs (flag unset +
+  hook-inert-for-hookless-peers); the Gate-4 check confirms peer suites green (they must).
 - **Invalid-source Apex heritage/name-reference rows under the reorder (BL-9…BL-14, `Fix=—`):** *(the
   injection, its inject-none collision guard, and the extension/`.trigger` discriminant referenced in the rows
   below are **WI-3's `populateNamespaceSiblings` machinery — SDD-003 §3**, inherited unmodified by WI-4; "§3"
@@ -2625,7 +2637,9 @@ Each REQ clause, BL-row discharge, and edge case maps to a sub-item. **Gate-3 ac
   external type → arity-only, unresolved-not-mis-bound.
 - **REQ-013 external reference** — a call/type-use on a stdlib/sObject/managed-package name → zero edges, zero
   unresolved defect, run completes.
-- **REQ-012 parity** — a parity fixture set resolving the peer-equivalent shapes at Java/Kotlin tier;
+- **REQ-012 parity** — a parity fixture set resolving the peer-equivalent shapes at Java/Kotlin tier,
+  **including a bare declared-type usage asserting NO standalone edge (the REQ-012 no-edge arm, per
+  REQ-005/REQ-011 v1.3/v1.4)**;
 - **NFR-004** — the aggregate `apex-resolution` suite exercises **every** §9 resolution scenario
   (REQ-005/006/007/008/009/010/011/012/013/015) at WI-4 completion — the WI-2/WI-3 suites plus WI-4's parity,
   external, parameter-arg, and BL-1…BL-8 discharge fixtures; the parity suite is its REQ-012 leg.
