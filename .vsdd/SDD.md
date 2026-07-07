@@ -2203,11 +2203,17 @@ edit).** The seam is a per-language hook consulted **at the TOP of `resolveInher
 full-path `QualifiedNameIndex` refuse-on-tie pass) AND the `findClassBindingInScope` call (`:363`)**, whose
 own QNI dotted-tail single-match fallback (`findClassBindingInScope`, `:320-329` — reached via the `:363`
 call, NOT a fallback of `resolveInheritanceBaseInScope` itself) is the pass that binds the same-tail decoy.
-When the hook (Apex's impl) resolves the OUTER segment via the workspace channel and finds the nested tail
-among the outer's owned defs, **that binding is returned and both `:353-361` and the `:363` call (hence the
-`:320-329` dotted-tail fallback) are skipped for that site** — so no path (neither the full-path QNI nor the
-dotted-tail fallback) can bind the decoy. (On a hook miss, `resolveInheritanceBaseInScope` proceeds unchanged,
-so non-dotted and non-Apex bases are untouched.) **This must be a shared edit, not pure registration:** `preEmitInheritanceEdges`
+The hook has **THREE return states** (a binary hit/miss contract would reintroduce BL-4): **(i) resolved** —
+the OUTER segment binds a workspace type AND the nested tail is a unique owned def → return that binding;
+**(ii) applicable-but-refuse** — the OUTER binds a workspace type but the nested tail is **absent or
+ambiguous** among its owned defs (a typo/near-miss inner, or a tie) → return a distinguished "refuse" (emit
+**no** edge); **(iii) not-applicable** — a non-dotted base, or the OUTER does not bind a workspace type →
+return "pass-through". **For BOTH (i) and (ii), `resolveInheritanceBaseInScope` skips `:353-361` AND the
+`:363` call (hence the `:320-329` dotted-tail fallback)** — so once the OUTER is a workspace type, no path can
+bind the same-tail decoy, whether the tail resolves or refuses. Only (iii) falls through to the unchanged
+`resolveQualifiedInheritanceBase`/`findClassBindingInScope` path, so non-dotted and non-Apex bases are
+untouched. (State (ii) is what makes the §4 "outer resolves, tail absent + decoy" edge case emit no edge
+instead of re-binding the decoy.) **This must be a shared edit, not pure registration:** `preEmitInheritanceEdges`
 (`:573`) runs *before* `emitHeritageEdges` (`:579`) inside the moved block and is unmodified shared code, so a
 purely-additive `emitHeritageEdges` registration would run *after* the pre-pass has already bound the decoy
 via the dotted-tail fallback — additive emission **cannot remove** that false edge, so it cannot meet BL-4's
@@ -2366,16 +2372,21 @@ authored pre-verification, so the register is not mutated ahead of the evidence)
   finding 4): a **generic per-language hook** consulted at the **top of `resolveInheritanceBaseInScope`
   (`walkers.ts:338`)** for a dotted base — before both `resolveQualifiedInheritanceBase` (`:353-361`) and the
   `findClassBindingInScope` call (`:363`, whose `:320-329` dotted-tail fallback binds the decoy). Apex's impl
-  resolves the base OUTER-first (workspace binding → nested-member lookup among the outer's owned defs) and,
-  on a hit, **returns it — skipping both `:353-361` and the `:363` call** — so no path binds the decoy; on a
-  miss, resolution proceeds unchanged (non-dotted/non-Apex bases untouched). Names no language (Apex supplies the
+  resolves the base OUTER-first (workspace binding → nested-member lookup among the outer's owned defs) with
+  **three return states** (§1(2)): **(i) resolved** → return the binding; **(ii) applicable-but-refuse**
+  (OUTER bound, tail absent/ambiguous) → return "refuse", no edge; **(iii) not-applicable** (non-dotted / OUTER
+  unbound) → pass-through. States (i) AND (ii) both **skip `:353-361` and the `:363` call** (so no path binds
+  the decoy — whether the tail resolves or refuses); only (iii) proceeds unchanged (non-dotted/non-Apex bases
+  untouched). Names no language (Apex supplies the
   impl); §2.2-reviewed + adversary + NFR-002-measured at Gate 4. (Must be a shared edit, not pure
   `emitHeritageEdges` registration — additive emission cannot remove the shared pre-pass's decoy edge, §1(2).)
   Fallback if no §2.2-clean seam works: Architect escalation → SRS §5.1 amendment **+ INTENT-001 revisit /
   Gate-1 re-entry** (§1 binds the discharge to Intent).
 - **REQ-008 parameter-arg narrowing gate** (`languages/apex/captures.ts`): `resolveVarTypeBindings` narrows a
-  parameter-typed argument **only when** the parameter's declared type is in `workspaceFqnBindings`
-  (user-defined); else arity-only. No shared edit.
+  parameter-typed argument **only when** the parameter's declared type resolves via `findClassBindingInScope`
+  to a unique user-defined class-like (top-level, nested, or method-local); no unique resolution / tie →
+  arity-only (conservative). No shared edit. (Uses the fuller oracle, not raw `workspaceFqnBindings`
+  membership — §1(3).)
 - **User-defined-vs-external oracle for the REQ-008 gate** (`findClassBindingInScope`, `walkers.ts:301` —
   scope-chain + workspace + QNI, refuse-on-tie) — no new type; used **only** to gate the parameter-type
   narrowing (finding 8): a parameter type that resolves to a unique user-defined class-like (top-level,

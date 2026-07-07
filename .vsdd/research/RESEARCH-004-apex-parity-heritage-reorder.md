@@ -143,9 +143,14 @@ what tells a user-defined parameter type from an external one?*
   resolution.** SDD-004 pins: (i) the **generic reorder** of the heritage block to after
   `populateNamespaceSiblings` (`run.ts` `:554-621` re-sequence, names no language — Constitution §2.2), with
   the Gate-4 **NFR-002 measurement obligation** and the Architect-ruled **committed per-language-gated
-  fallback** if a peer regresses; (ii) a **committed Apex-local nested-aware heritage base resolution** (the
-  inc-11 OUTER-first nested lookup, extended to the heritage path) engaged if the dotted-nested-parent
-  fixture (v1.10(iv)) stays red after the reorder — never a silent de-scope (Constitution §7 / finding #29).
+  fallback** if a peer regresses; (ii) a **committed nested-aware heritage base seam** (the inc-11 OUTER-first
+  nested lookup, extended to the heritage path). **[Reconciled 2026-07-07 — see Addendum 2: this seam is a
+  committed deliverable, NOT iff-red.** Finding 4's read-trace (folded-**simple**-name workspace keying + the
+  `walkers.ts:320-329` dotted-tail fallback, both source-confirmed) establishes *structurally* that the
+  reorder alone cannot resolve the dotted nested-parent form — so the seam's necessity is certain, and it is a
+  shared edit (additive `emitHeritageEdges` registration cannot remove the shared pre-pass's decoy edge). The
+  original "engaged if the fixture stays red" wording below is superseded.]** — never a silent de-scope
+  (Constitution §7 / finding #29).
   The v1.10(iv)/v1.13 fixtures (`apex-cross-file-collision` TailSub/TailMro/TInner) flip from
   documented-limitation pins to correct-resolution assertions; the v1.8(i)/v1.11(a) case-varied-heritage
   fixtures likewise flip (reorder-discharged), a scope the SDD must state so the SRS §5.1 register is updated.
@@ -176,7 +181,8 @@ The **pipeline structure** (findings 1-3), the **feasibility of the reorder** (f
   (the NFR-002 slice — measured at Gate 4);
 - that the dotted nested-parent form resolves after the reorder + the nested-aware base resolution (and does
   NOT mis-bind the decoy), and that the poisoned-MRO member (`s.decoy2()`) correspondingly no longer resolves
-  into the decoy — the committed Apex-local fallback (finding 4) engaged iff the reorder-only fixture is red;
+  into the decoy — the committed nested-aware base seam (finding 4; **structurally required, not iff-red** —
+  Addendum 2), a generic per-language hook consulted at the top of `resolveInheritanceBaseInScope`;
 - that a parameter argument whose type is user-defined narrows the overload, and one whose type is external
   leaves it arity-only (never mis-bound) — the finding-7/8 completion;
 - that an external (stdlib/sObject/managed-package) reference emits no edge and no unresolved defect
@@ -246,3 +252,34 @@ files** (RESEARCH-003 Addendum 12), the gate is per-run: set on the Apex run, un
 → the gated form has **zero** peer surface. Given five peers register an optional hook in the moved region, the
 gate is the **expected-engaged confinement**, not a rare fallback — the generic-vs-gated default is settled by
 the Gate-4 measurement per the Architect ruling.
+
+## Addendum 2 (2026-07-07) — the nested-aware heritage base seam is structurally required (reconciles the Conclusion's "iff-red" wording)
+
+The main Conclusion A(ii) and the Residual reliances originally framed the nested-aware heritage base
+resolution as "engaged **if/iff** the dotted-nested-parent fixture stays red after the reorder" — a
+contingency. Finding 4's read-trace, re-confirmed against source, establishes it is **structurally certain**,
+not contingent:
+
+- `workspaceFqnBindings` is keyed by the **folded SIMPLE name** (`walkers.ts:65-73`,
+  `namespace-siblings.ts` §3 fold), so `lookupBindingsAt('Outer.Inner')` (a dotted base) **cannot** hit the
+  workspace channel — the key is simple, the query dotted.
+- After the reorder, a dotted base therefore still falls to `findClassBindingInScope`'s **QNI dotted-tail
+  single-match fallback** (`walkers.ts:320-329`), which binds the same-tail top-level decoy (BL-4) — exactly
+  the pre-reorder mis-bind. The reorder populates the channel but the channel is unreachable by a dotted key.
+- So the reorder alone is **provably (by source structure) insufficient** for BL-3/BL-4; the seam is required,
+  not "engaged if red." And it **must be a shared edit** (a generic per-language hook consulted at the top of
+  `resolveInheritanceBaseInScope`, gating the shared pre-pass's dotted-tail fallback) — a purely-additive
+  `emitHeritageEdges` registration runs *after* `preEmitInheritanceEdges` has already bound the decoy and
+  cannot *remove* that false edge.
+
+**Reconciliation:** SDD-004 §1(2) pins the seam as a **committed deliverable (the epic's second shared edit),
+NOT iff-red** — this addendum is the source basis; the Conclusion/Residual "iff-red" wording is superseded.
+The seam carries the finding-#29 committed satisfaction path (Architect escalation → SRS §5.1 amendment +
+INTENT-001 revisit / Gate-1 re-entry) only for the case its §2.2 seam review cannot be made clean — that is
+the residual contingency, not the seam's existence.
+
+**Hook contract (three return states, per SDD-004 §1(2)/§3):** (i) resolved (OUTER binds a workspace type,
+nested tail a unique owned def) → return the binding; (ii) applicable-but-refuse (OUTER bound, tail
+absent/ambiguous) → refuse, emit no edge; (iii) not-applicable (non-dotted / OUTER unbound) → pass through.
+States (i) and (ii) both suppress `resolveQualifiedInheritanceBase` (`:353-361`) and the
+`findClassBindingInScope` call (`:363`), so no path binds the decoy once the OUTER is a workspace type.
