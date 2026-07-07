@@ -356,3 +356,26 @@ enclosing class** → an enclosing-scope owned-def lookup (scope-local; its reso
 not a read-verified pin). **Explicitly NOT `findClassBindingInScope`** (its `:320-329` tail is decoy-prone for
 nested types). This supersedes Status (C)'s `findClassBindingInScope` phrasing; Conclusion C's underlying
 *membership* mechanism stands (it is arm (a)).
+
+## Addendum 5 (2026-07-07) — seam state-(ii)/(iii) boundary correction (tightens Addendum 2's hook contract)
+
+Addendum 2's hook contract listed "(iii) not-applicable (non-dotted / **OUTER unbound**) → pass through" and
+scoped its decoy-safety lemma to "once the OUTER **is a workspace type**". That boundary is **too loose** and is
+**corrected** here (the SDD-004 §1(2)/§3/§4 contract is the authoritative version):
+
+- **The pass-through arm (iii) is for NON-DOTTED bases only.** For a **dotted** base, an unbound / external /
+  managed-package-namespace / **>2-segment** OUTER must **refuse (state ii — no edge)**, NOT pass through —
+  because passing a *dotted* base to the shared `resolveQualifiedInheritanceBase`/`findClassBindingInScope`
+  path reaches the `walkers.ts:320-329` dotted-tail single-match, which can bind a **same-tail top-level decoy**
+  (`extends Ext.Inner` with an external `Ext` and a top-level `Inner` → decoy mis-bind — a REQ-015 / §1.2
+  over-bind). So the decoy-safety guarantee holds for **every** dotted base (resolve or refuse), not only
+  workspace-bound OUTERs. **Only a non-dotted (simple) base falls through to the unchanged path** (where BL-1's
+  case-fold discharge lives).
+- **OUTER "ambiguity" is not a 2+-candidate state.** SDD-003 §3's inject-none guard keys **≤1 per folded
+  name**, so a folded-workspace OUTER query returns **0 or 1**, never 2+; a case-collision on the OUTER folded
+  name is **inject-none-suppressed → 0 candidates**, i.e. the *absent-OUTER refuse* arm. The seam therefore has
+  no "2+ candidates" branch; the collision case is subsumed by the absent/refuse arm.
+
+Apex user-defined nested types are at most **two segments** (one nesting level), so a >2-segment dotted base is
+namespace-qualified (external) → refuse. Net: **every dotted base is resolved (i) or refused (ii); pass-through
+(iii) is non-dotted only** — no dotted base can reach the decoy-prone fallback.

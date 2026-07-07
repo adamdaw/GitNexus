@@ -2244,8 +2244,9 @@ The hook has **THREE return states** (a binary hit/miss contract would reintrodu
 base is **dotted**: **(i) resolved** — a **dotted** base whose OUTER segment binds a **unique** workspace type
 AND whose nested tail is a unique owned def → return that binding; **(ii) applicable-but-refuse** — **any other
 dotted base**: OUTER binds uniquely but the tail is **absent or ambiguous** (typo/near-miss inner, or a tie);
-OR the OUTER **binds ambiguously** (2+ folded workspace candidates / an inject-none-suppressed case-collision —
-e.g. case-variant twin outers); OR the OUTER is **genuinely absent** (external / managed-package namespace); OR
+OR the OUTER is **not a unique workspace type** — 0 folded candidates: genuinely absent (external /
+managed-package namespace), OR inject-none-suppressed by a case-collision (SDD-003 §3 keys ≤1 per folded name,
+so a folded OUTER query returns 0 or 1 — **never 2+** — and a case-collision yields 0); OR
 the base has **>2 segments** (namespace-qualified `ns.Outer.Inner` — Apex user-defined nested types are at most
 two segments, one nesting level) → return a distinguished "refuse" (emit **no** edge); **(iii) not-applicable**
 — a **non-dotted** (simple) base → return "pass-through" to the unchanged simple-name channel (where BL-1's
@@ -2253,7 +2254,10 @@ case-fold discharge lives). **For BOTH (i) and (ii) — i.e. EVERY dotted base �
 skips `:353-361` AND the `:363` call (hence the `:320-329` dotted-tail fallback)**, so **no dotted base can bind
 the same-tail decoy** — whether it resolves, refuses on the tail, or refuses on an ambiguous/absent/external
 OUTER or a >2-segment namespace-qualified base. Only (iii) — a non-dotted base — falls through to the unchanged
-`resolveQualifiedInheritanceBase`/`findClassBindingInScope` path, so simple and non-Apex bases are untouched. (State (ii) is what makes the §4 "outer resolves, tail absent + decoy" edge case emit no edge
+`resolveQualifiedInheritanceBase`/`findClassBindingInScope` path, so simple and non-Apex bases are untouched.
+**(This tightens RESEARCH-004 Addendum 2's looser "OUTER unbound → pass through" — corrected in Addendum 5: for
+a DOTTED base an unbound/external/>2-segment OUTER refuses, never passes through, so the dotted-tail fallback
+binds no same-tail decoy even when the OUTER is external.)** (State (ii) is what makes the §4 "outer resolves, tail absent + decoy" edge case emit no edge
 instead of re-binding the decoy.) **This must be a shared edit, not pure registration:** `preEmitInheritanceEdges`
 (`:573`) runs *before* `emitHeritageEdges` (`:579`) inside the moved block and is unmodified shared code, so a
 purely-additive `emitHeritageEdges` registration would run *after* the pre-pass has already bound the decoy
@@ -2326,9 +2330,11 @@ suite comparable to peers (the NFR-004 `apex-resolution` suite — `apex-resolut
 fixtures as §2.5-permitted additive siblings) over the full same-file + cross-file surface, demonstrating
 Java/Kotlin-tier resolution. The **receiver-variable-name case-fold** (the WI-2→WI-3→WI-4 re-deferred
 case-insensitivity completeness item) folds a receiver **variable**'s name at its lookup, Apex-local. Per
-RESEARCH-004 it is **parity hardening, not a SHALL gap** — SRS §2's user-defined-symbol set does **not** include
-a local variable, so a variable-name reference is not a REQ-005 target, and no epic §9 scenario varies a
-variable's case. WI-4 verifies it as a **REQ-012 parity / NFR-004 hardening** fixture (part of the parity
+RESEARCH-004 it is **parity hardening, not a SHALL gap** — the **case-varied token is the receiver *variable***
+(`A`≡`a`), **not** the method (`foo` is referenced exact-case). REQ-005 case-insensitivity is exercised on
+user-defined *types/members* (SRS §2's symbol set); here **no type or member is case-varied** — only a
+local-variable reference, which SRS §2's set excludes — so no REQ-005 SHALL is exercised (and no epic §9
+scenario varies a variable's case). WI-4 verifies it as a **REQ-012 parity / NFR-004 hardening** fixture (part of the parity
 evidence), NOT a gated SHALL acceptance.
 
 **Acceptance boundary.** WI-4's acceptance is the parity + external + discharged-limitation forms: the BL-1…
@@ -2485,7 +2491,8 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
   the outer's owned defs, per Apex REQ-005 case-insensitivity — the same folded channel the reorder relies on)
   with **three return states** (§1(2)), keyed on whether the base is **dotted**: **(i) resolved** (a dotted
   base, OUTER binds uniquely, tail unique) → return the binding; **(ii) applicable-but-refuse** (any other
-  dotted base — tail absent/ambiguous, OR OUTER ambiguous/suppressed/absent/external, OR >2-segment
+  dotted base — tail absent/ambiguous, OR OUTER not a unique workspace type (0 candidates:
+  absent/external/inject-none-suppressed), OR >2-segment
   namespace-qualified) → return "refuse", no edge; **(iii) not-applicable** (a non-dotted simple base) →
   pass-through. Every dotted base is handled by the seam (i or ii) — never passed to the decoy-prone
   dotted-tail fallback. States (i) AND (ii) both **skip `:353-361` and the `:363` call** (so no path binds
@@ -2621,10 +2628,12 @@ cascade, not authored pre-verification, so the register is not mutated ahead of 
   conservative (WI-2's collision discipline).
 - **Malformed / partial tree under the reorder:** the reorder introduces no new throw; a heritage site whose
   base is in a skipped file stays unresolved (NFR-001 resolution slice).
-- **Cyclic cross-file heritage** (`A extends B`, `B extends A`): **the reorder newly enables this cross-file
-  cycle** (pre-reorder the cross-file base missed, so no cycle formed); that `buildMro`'s existing bounded-iteration cap
-  bounds it post-reorder (no new unbounded walk) is a **[NFR-001 Gate-3 reliance]** verified by a no-hang
-  fixture (§8), not an assumed Gate-2 pin.
+- **Cyclic cross-file heritage** (`A extends B`, `B extends A`): **exact-case** cross-file top-level heritage
+  already resolves pre-WI-4 (SRS REQ-007 v1.8; only the case-varied/dotted forms missed via the empty workspace
+  channel), so exact-case cross-file cycles **pre-exist WI-4** and `buildMro`'s cap was already load-bearing;
+  the reorder **newly enables cycle formation only for the case-varied/dotted cross-file bases** it now
+  resolves. That `buildMro`'s existing bounded-iteration cap bounds both (no new unbounded walk) is a
+  **[NFR-001 Gate-3 reliance]** verified by a no-hang fixture (§8), not an assumed Gate-2 pin.
 
 ## 5. Non-functional requirements (baked in)
 
