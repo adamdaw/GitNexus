@@ -5,7 +5,7 @@ Builder from the host project's existing conventions; **ratified by the Architec
 2026-06-28**. Changed only by the amendment process below.*
 
 - **Identifier:** CONST-gitnexus-apex
-- **Version:** 1.1.3 · **Date:** 2026-07-05 · **Status:** ratified · **Supersedes:** 1.1.2
+- **Version:** 1.1.4 · **Date:** 2026-07-08 · **Status:** ratified · **Supersedes:** 1.1.3
 - **Ratified:** Adam (Architect), 2026-06-28. §6 fuzz budget right-sized pre-ratification (saturation
   exit + parity bar, replacing the 500k-execution count) — a draft revision, not a §7 amendment.
 - **Amendment v1.1.0 (2026-06-29, Architect Adam):** §2.2 refined — generic, language-agnostic
@@ -44,10 +44,14 @@ Builder from the host project's existing conventions; **ratified by the Architec
   §1(1)/§1(2)) correct the underlying heritage edges, so none of those false edges is emitted any longer; the
   SRS §5.1 register and §1 in-scope framing reflect the discharge (SRS v1.29). The §1.2 (a) clause body is
   annotated discharged (its BL-row enumeration named the rows + their fix-path status, so the text change is
-  owed despite §1.2's register-deference head). **No exception is added or invented; the (b) invalid-source
-  class is unchanged.** Authored ON the WI-4 Gate-3 verification evidence (SDD-004 §8 — not ahead of it), a
-  §7 "committed as a new dated version" amendment. The non-waivable baseline (§7 — SECT-001, the empty-Prove
-  floor) is untouched.
+  owed despite §1.2's register-deference head). **No new (b) exception row is added.** The (b) invalid-source
+  class gains **no new member**; BL-10's already-ratified (b) trigger bind now additionally covers the
+  **case-varied heritage reference form** (`extends <.cls-misfiled trigger>`) the WI-4 heritage/sibling
+  re-sequence newly reaches — the *same* invalid-source trigger under the *same* case-fold and the *same*
+  §1.2(b) "globally referenceable" mechanism, not a distinct exception (SRS §5.1 BL-10 v1.29 ratifies it
+  consistent with BL-10's live non-heritage bind; Gate-2 committed the BL-10 amendment). Authored ON the WI-4
+  Gate-3 verification evidence (SDD-004 §8 — not ahead of it), a §7 "committed as a new dated version"
+  amendment. The non-waivable baseline (§7 — SECT-001, the empty-Prove floor) is untouched.
 
 This project is a fork of `abhigyanpatwari/GitNexus` adding Apex language support. Its prime
 directive: **honour the host project's standing conventions** (`DoD.md`, `CONTRIBUTING.md`,

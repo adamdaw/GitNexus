@@ -403,8 +403,14 @@ from INTENT-001; reviewed against it and the Constitution at Gate 1.*
   as a discharged historical shape; **Safety limitation** / **Documented false edge** annotated
   retained-for-provenance (no live instance post-discharge — the §1.2(a) class is empty; surviving §1.2(b)
   rows are correct channel binds, not false edges), and REQ-015's bounded-exceptions preamble narrowed so its
-  "documented false edge (§2)" cite names the now-discharged (a) class. Re-enters Gate 1 fidelity (a fresh
-  Gate 2 adversary reading SRS+SDD together re-clears the touched rows; cascade-invalidation per §A.7).
+  "documented false edge (§2)" cite names the now-discharged (a) class. (F10, Gate-1 re-clear R5 2026-07-08 —
+  behaviour-neutral) three BL-10 / Constitution reconciliations: REQ-010 gains a v1.29 note recording the
+  BL-10 case-varied-heritage trigger-bind arm (matching the REQ-005/007/009 treatment); Constitution
+  **v1.1.4** reworded to record that the (b) class gains **no new row** but BL-10's existing (b) bind now
+  covers the heritage reference form (Architect-dispositioned 2026-07-08 — same trigger/fold/mechanism, not a
+  new exception); Constitution header version field bumped 1.1.3→**1.1.4** (§7 new-dated-version, it lagged
+  its own v1.1.4 amendment). Re-enters Gate 1 fidelity (a fresh Gate 2 adversary reading SRS+SDD together
+  re-clears the touched rows; cascade-invalidation per §A.7).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope
@@ -697,6 +703,12 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   exact-case forms still resolve, a same-case sub-shape loses those too). All invalid-source; BL-13/BL-14
   are liveness-only, BL-10/BL-11 are §1.2(b) binds, and BL-9 resolves an exact-case arm while its
   typed-receiver/case-varied arm stays unresolved — see the register for each row's outcome.)
+  (**Amended v1.29 — BL-10 heritage arm:** the WI-4 heritage/sibling re-sequence newly lets a case-varied
+  `extends <.cls-misfiled trigger>` heritage clause bind the injected trigger — the same invalid-source
+  §1.2(b) trigger bind BL-10 already carried for non-heritage references, now reached via the heritage path
+  too (no new (b) exception; ratified consistent with BL-10's live bind — register BL-10, Constitution
+  v1.1.4). Its MRO downstream contributes no false inherited-member edge (a trigger declares no members). The
+  correctly-filed types and non-BL-10 forms retain the full SHALL.)
 - **REQ-011** *(type-usage sub-clause clarified v1.4)* — WHEN a user-defined Apex trigger body references a
   user-defined Apex type, method, or field, the system SHALL resolve the reference to that symbol. For a
   **method/constructor invocation** (incl. a static `Type.method()` call) or a **field/property access**,
