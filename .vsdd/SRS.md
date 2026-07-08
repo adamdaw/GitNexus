@@ -392,8 +392,10 @@ from INTENT-001; reviewed against it and the Constitution at Gate 1.*
   behaviour-neutral) REQ-015's **(a)** bounded-exception bullet (marked DISCHARGED, was "committed fix path
   WI-4") and the **retained-obligation** heritage carve-out ("heritage form excepted" → "including the
   heritage form, discharged") reconciled to the discharge — the two REQ-015 sub-clauses the first cascade
-  pass left carrying pre-discharge language. Re-enters Gate 1 fidelity (a fresh Gate 2 adversary reading
-  SRS+SDD together re-clears the touched rows; cascade-invalidation per §A.7).
+  pass left carrying pre-discharge language. (F7, Gate-1 re-clear R2 2026-07-08 — behaviour-neutral) the §5.1
+  register-preamble "—"-class exemplar dropped BL-8's discharged super-sourced-CALLS-without-EXTENDS shape
+  (now cites still-live BL-9 exact-case bind / BL-13/BL-14 edge-absent liveness). Re-enters Gate 1 fidelity (a
+  fresh Gate 2 adversary reading SRS+SDD together re-clears the touched rows; cascade-invalidation per §A.7).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope
@@ -718,8 +720,10 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
 is the source of truth. Each row is reachable only in the narrow shape named. "§1.2 class" is the
 Constitution §1.2 exception class: **(a)** valid-source false edge / mis-bind, **(b)** invalid-source
 channel bind, or **—** for a limitation that **emits no misleading binding** and so needs no §1.2 cover —
-whether edge-absent (a liveness limitation) or a *correct* edge on a degenerate shape (BL-8's super-sourced
-CALLS edge with no EXTENDS edge; BL-9's exact-case bind to the real, mis-filed class node). Exhaustive per-variant fixtures are pinned at Gate 3; the amendment log above carries the
+whether edge-absent (a liveness limitation — e.g. BL-13/BL-14) or a *correct* edge on a degenerate shape
+(BL-9's exact-case bind to the real, mis-filed class node). (BL-8's former super-sourced-CALLS-without-EXTENDS
+shape was a "—" exemplar until its v1.29 discharge — the EXTENDS edge now exists, so that shape no longer
+arises.) Exhaustive per-variant fixtures are pinned at Gate 3; the amendment log above carries the
 dated provenance.*
 
 | ID | Shape (reachable only as named) | Source | Outcome | Gov REQ · amend | §1.2 | Fix |
