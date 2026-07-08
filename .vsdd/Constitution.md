@@ -38,6 +38,16 @@ Builder from the host project's existing conventions; **ratified by the Architec
   exact-case-arm split noted for BL-12. No guarantee is altered and no exception is added or removed (the
   (a)/(b) membership is unchanged); a §7-editorial citation re-point, versioned per §7's "committed as a new
   dated version" rule.
+- **Amendment v1.1.4 (2026-07-08, Architect Adam):** §1.2's **(a) valid-source false edge** class — register
+  **BL-2, BL-4, BL-6, and the BL-7 `super.method()` self-loop** — is **DISCHARGED at WI-4** (ITEM-004). The
+  WI-4 heritage/namespace-sibling pipeline re-sequence and nested-aware heritage-base seam (SDD-004
+  §1(1)/§1(2)) correct the underlying heritage edges, so none of those false edges is emitted any longer; the
+  SRS §5.1 register and §1 in-scope framing reflect the discharge (SRS v1.29). The §1.2 (a) clause body is
+  annotated discharged (its BL-row enumeration named the rows + their fix-path status, so the text change is
+  owed despite §1.2's register-deference head). **No exception is added or invented; the (b) invalid-source
+  class is unchanged.** Authored ON the WI-4 Gate-3 verification evidence (SDD-004 §8 — not ahead of it), a
+  §7 "committed as a new dated version" amendment. The non-waivable baseline (§7 — SECT-001, the empty-Prove
+  floor) is untouched.
 
 This project is a fork of `abhigyanpatwari/GitNexus` adding Apex language support. Its prime
 directive: **honour the host project's standing conventions** (`DoD.md`, `CONTRIBUTING.md`,
@@ -53,7 +63,9 @@ govern. Nothing here weakens a host-project gate.
    *(Amended v1.1.2, 2026-07-04, Adam.)* A bounded, **Architect-ratified, fixture-pinned** set of
    limitations departs from the conservative default — each catalogued in the **SRS §5.1 Bounded
    Limitations Register** and reachable only in a narrow named shape: **(a) valid-source false edges** —
-   register **BL-2, BL-4, BL-6, and the BL-7 `super.method()` self-loop** (committed fix path WI-4); and
+   register **BL-2, BL-4, BL-6, and the BL-7 `super.method()` self-loop** (committed fix path WI-4 —
+   **DISCHARGED at WI-4, SRS v1.29 / Constitution v1.1.4, 2026-07-08: this (a) class now holds no live
+   valid-source false edge**); and
    **(b) invalid-source channel binds** — register **BL-10, BL-11, and the BL-12 exact-case arm** (BL-12's
    same-case arm is the retained conservative default, not a (b) exception), reachable only in uncompiled
    Apex. Both classes arise because suppressing them would require Apex-specific coupling in shared host

@@ -2811,3 +2811,38 @@ fix-path status, so the text change is owed despite §1.2's register-deference h
 SRS/Constitution amendment authored **upon Gate-3 verification** (a Phase-5 cascade), not pre-verification, so
 neither the register nor §1.2 is mutated ahead of the evidence. The parity (REQ-012) and external (REQ-013) forms complete the epic §9 scope
 WI-1/2/3 left to WI-4.
+
+## 9. WI-4 Gate-3 / Step-3b placement clarifications (2026-07-08, Architect-approved Adam)
+
+*Two `[Gate-3 reliance]` placement details surfaced during Step-3b and were Adam-approved 2026-07-08.
+Neither changes WI-4's behavioural deliverables (§2) or the discharge outcomes — they correct WHERE two
+mechanisms live relative to §1(3)/§1(4)/§5. Authored ON the green evidence (all 20 acceptance reds green;
+full resolver suite 3050/3050, 54 files).*
+
+- **§1(3) — the REQ-008 parameter-arg oracle runs at RESOLUTION phase, not capture.** §1(3) placed the
+  oracle in `resolveVarTypeBindings` (`captures.ts`). That runs at parse phase, per-file, with **no
+  cross-file `workspaceFqnBindings`** — but the §1(3)(a) top-level and §1(3)(b) dotted arms are inherently
+  cross-file (a param type is user-defined-vs-external only decidable against the workspace). So the oracle is
+  **split**: capture TAGS a param-sourced argument-type slot (`captures.ts`, `APEX_PARAM_ARG_MARKER` — the
+  parse-side change is confined to distinguishing `@type-binding.parameter` from `.annotation` and tagging),
+  and an **Apex-registered `populateRangeBindings` hook** (`param-arg-gate.ts`), run after
+  `populateNamespaceSiblings` and before `resolveReferenceSites`, resolves the tag through the §1(3)
+  decoy-safe oracle (workspace top-level membership + the enclosing-scope nested lookup, local-over-global to
+  shadow a same-tail top-level decoy) and rewrites the slot to the folded tail or blanks it (external / tie →
+  arity-only). **Still no shared edit** — an existing optional per-language hook; only Apex reference sites
+  are touched. The §1(3) decoy-safe oracle and every §2/§4 outcome are unchanged.
+
+- **§1(4)/§5 — the receiver-variable fold extends the shared `findReceiverTypeBinding` via the existing
+  `normalizeIdentifier` seam, so WI-4 commits THREE shared touches, not two.** §1(4)/§5 called the
+  receiver-var fold "Apex-local," and §5/§7 stated WI-4 commits **two** shared edits (the Apex-gated
+  re-sequence + the nested-aware heritage-base seam). Step-3b found the fold must sit at the shared
+  `findReceiverTypeBinding` (the receiver→type-binding lookup). Adam approved (2026-07-08) extending the
+  **existing WI-3 `normalizeIdentifier` seam** rather than authoring a new one: a folded fallback that runs
+  ONLY after the exact scope-walk misses, gated on `scopes.normalizeIdentifier` (inert for case-sensitive
+  peers), with a folded-key collision → `undefined` (ambiguous, never guess). This is the SAME §2.2 seam
+  mechanism WI-3's `workspaceBindingsFor` already established (not a new seam), but it IS a third shared-code
+  touch the epic's "two shared edits" statements did not budget — so §1/§5/§7's "two shared edits" now read
+  "**three shared touches**, the third via the already-sanctioned WI-3 fold seam." NFR-002 is measured green
+  (full resolver suite 3050/3050, 54 files). Gate 4's §2.2 code-level review + NFR-002 measurement cover all
+  three shared touches; the re-sequence stays byte-identical-for-peers (flag unset), the heritage-base seam
+  and the receiver-var fold are behaviour-preserving no-ops for peers (no hook / no normalizer).

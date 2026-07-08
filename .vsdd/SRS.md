@@ -370,6 +370,26 @@ from INTENT-001; reviewed against it and the Constitution at Gate 1.*
   BL-5/BL-7/BL-8 aligned. Both surfaced by the Gate-3 verification-split (a Gate-2 adversary reasoned host
   behaviour from spec logic; only Gate-3-against-the-real-host falsifies it). Re-enters Gate 1 fidelity
   (verified by the fresh Gate 2 adversary reading SRS+SDD together).
+  **Amended v1.29 (2026-07-08)** — **WI-4 Gate-3 Phase-5 discharge cascade** (Architect-approved Adam,
+  2026-07-08), authored ON the green WI-4 implementation evidence (all 20 acceptance reds green; full
+  resolver suite 3050/3050, 54 files — SDD-004 §8: the discharge amendments are authored upon Gate-3
+  verification, not ahead of the evidence). **The valid-source heritage-family limitations BL-1…BL-8 are
+  DISCHARGED at WI-4.** (F1) §5.1 register — BL-1…BL-8 outcome cells rewritten from limitation to the
+  discharged outcome, `Fix` marked `WI-4 ✓ v1.29`, §1.2 class for BL-2/BL-4/BL-6/BL-7 marked "a →
+  discharged"; BL-1's `implements` arm made explicit (Architect-ruled within BL-1 — REQ-007 covers
+  interface-implementation, so the register rows' `extends` examples are illustrative of the class, no new
+  row). (F2) §1 in-scope framing flipped from "epic-deferred with a committed fix at WI-4" to "discharged at
+  WI-4"; with the heritage family discharged, **no valid-source area of non-full-SHALL behaviour remains** and
+  the SRS *meets* INTENT-001's delegated acceptance by delivery. (F3) REQ-007 exceptions (i)–(v), REQ-005
+  BL-6/BL-7/BL-8, and REQ-009's poisoned-MRO carve-out marked DISCHARGED (historical exception text retained
+  as provenance). (F4) the §9 BL-1 and BL-4/BL-6 documented-limitation scenarios rewritten to their
+  discharged Then-clauses (kept as regression coverage). (F5) register BL-10 gains the reorder-introduced
+  case-varied `extends <.cls-misfiled trigger>` heritage arm + its no-false-inherited-member MRO disposition,
+  ratified consistent with BL-10's live §1.2(b) non-heritage bind (an invalid-source `Fix=—` row WI-4
+  perturbs, dispositioned by amendment). Paired with a dated Constitution §1.2(a) amendment (v1.1.4). Two
+  SDD-004 placement clarifications (WS3 param-arg oracle at resolution phase; WS4 receiver-var fold via the
+  existing `normalizeIdentifier` seam) recorded in SDD-004, not here. Re-enters Gate 1 fidelity (a fresh Gate
+  2 adversary reading SRS+SDD together re-clears the touched rows; cascade-invalidation per §A.7).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope
@@ -383,22 +403,26 @@ languages model no standard library, and parity excludes it.
 **In-scope boundary (settled per INTENT-001's delegation).** INTENT-001's acceptance condition
 delegates the precise scope of "in-scope" to this SRS ("the precise scope of 'in-scope' is settled in
 deliberation and recorded in the SRS"). Discharging that delegation: the **valid-source heritage-family limitations** (§5.1 register **BL-1…BL-8** —
-the heritage `extends`/`implements` edge and its `super`/inherited-member/poisoned-MRO downstream) are
-**epic-deferred with a committed in-epic fix at WI-4/ITEM-004**. Each is a documented, fixture-pinned
-limitation — an under-bind (a liveness shortfall) or a ratified over-bind (a documented false edge under
-Constitution §1.2(a)); the §5.1 register carries each row's observable outcome and §1.2 class. None is
+the heritage `extends`/`implements` edge and its `super`/inherited-member/poisoned-MRO downstream) were
+**epic-deferred with a committed in-epic fix at WI-4/ITEM-004, and are now DISCHARGED at WI-4 (v1.29)**: each
+former under-bind now emits its edge and each former over-bind is gone (verified against the resolution
+suite); the §5.1 register carries each row's discharged outcome. Before discharge each was a documented,
+fixture-pinned limitation — an under-bind (a liveness shortfall) or a ratified over-bind (a documented false
+edge under Constitution §1.2(a)). None was
 **parity-excluded** (peers are case-sensitive and never exhibit these shapes) or **out of scope** —
 INTENT-001's acceptance is met at epic completion. The **invalid-source shapes** (§5.1 register
 **BL-9…BL-14** — reachable only in uncompiled Apex) are genuinely **outside** the settled in-scope set for
 this cycle; an invalid-source shape whose conservative outcome is *correct* (e.g. a member-name
 case-collision — a positive unresolved record, no mis-bind) is not a limitation and remains in scope, and a
 BL row's correct-conservative arm (e.g. BL-12's same-case no-mis-bind default, BL-9's exact-case bind) is
-likewise the correct outcome, not a shortfall. Every valid, correctly-filed reference **outside the heritage
-family (BL-1…BL-8)** — case-varied or exact-case, and absent a colliding invalid-source sibling (BL-13/BL-14) — carries the full SHALL and resolves (case-varied
-non-heritage references resolve case-insensitively via the host's case-folding, verified against the
-resolution suite: a case-varied cross-file constructor, method, interface-typed, and `.CLS`-filed reference
-all resolve). So the sole area of non-full-SHALL behaviour is the heritage-family boundary (BL-1…BL-8; the §5.1 register gives each arm's under-bind or over-bind outcome), not a case-insensitivity one, and the SRS *meets* INTENT-001's delegated acceptance
-rather than falling short of it.
+likewise the correct outcome, not a shortfall. Every valid, correctly-filed reference — **including the
+heritage family (BL-1…BL-8), discharged at WI-4 (v1.29)** — carries the full SHALL and resolves, absent a
+colliding invalid-source sibling (BL-13/BL-14): case-varied and exact-case cross-file constructor, method,
+interface-typed, `.CLS`-filed, AND `extends`/`implements`/nested-parent heritage references all resolve
+case-insensitively via the host's case-folding plus the WI-4 heritage/sibling re-sequence and nested-aware
+base seam, verified against the resolution suite. So — with the heritage family discharged — **no valid-source
+area of non-full-SHALL behaviour remains**, and the SRS *meets* INTENT-001's delegated acceptance by delivery
+at epic completion, rather than by deferral.
 
 ## 2. Definitions
 
@@ -532,6 +556,11 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   implicit-this inherited-member resolution, whose unresolved-heritage-downstream limitations are BL-6
   (poisoned-MRO member edge), BL-7 (unresolved-heritage super/inherited arms), and BL-8 (v1.12 super
   resolves to parent without an EXTENDS edge).)
+  (**Amended v1.29 — BL-6/BL-7/BL-8 DISCHARGED at WI-4:** the heritage/sibling re-sequence + nested-aware
+  base seam correct the underlying heritage edge (BL-1/BL-3/BL-4/BL-5), so `super()`/`super.method()`/
+  implicit-this inherited-member resolve to the real parent (no self-loop, no unresolved arm), the
+  poisoned-MRO member edge is gone, and BL-8's super arms now ride an existing EXTENDS edge. The full SHALL
+  holds. Verified at WI-4 Gate-3.)
 - **REQ-006** — The system SHALL NOT report a reference that REQ-005 resolves as unresolved — i.e., SHALL
   emit no positive unresolved record (§2) for it. (This is INTENT-001's literal acceptance condition; REQ-005 emits the edge, REQ-006 forbids the
   false unresolved record for the same reference.)
@@ -577,9 +606,16 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   safety) — both documented limitations; exact-case heritage between top-level classes resolves.
   **Amended v1.10 — extended:** (iii) a nested-parent heritage clause remains unresolved (liveness);
   (iv) with a same-named top-level type present it mis-binds to that type (triple-narrow safety);
-  (v) the same-case valid trigger/class twin's heritage clause remains unresolved (liveness).)
+  (v) the same-case valid trigger/class twin's heritage clause remains unresolved (liveness).
+  **Amended v1.29 — exceptions (i)–(v) DISCHARGED at WI-4:** the WI-4 heritage/namespace-sibling pipeline
+  re-sequence and the nested-aware heritage-base seam (SDD-004 §1(1)/§1(2)) make every form resolve —
+  (i) case-varied `extends BASE` emits EXTENDS; (ii) the case-variant twin binds the **class**, never the
+  trigger; (iii)/(iv) the nested-parent binds the real nested type, never a same-tail top-level decoy;
+  (v) the same-case twin binds the class — and REQ-007's `implements` interface-implementation arm resolves
+  symmetrically (BL-1's `implements` arm made explicit). The full SHALL now holds for heritage; the
+  v1.8/v1.10 exception text is retained as provenance. Verified against the resolution suite at WI-4 Gate-3.)
   (**§5.1 register:** BL-1..BL-5 catalogue the heritage-edge forms; BL-7 (governed by REQ-005) and BL-8 (co-governed by REQ-007/REQ-005) catalogue the super/inherited-member
-  downstream of an unresolved/corrected heritage edge.)
+  downstream of an unresolved/corrected heritage edge — **all discharged at WI-4 (v1.29)**.)
 - **REQ-008** *(head reworded v1.2)* — The system SHALL resolve an overloaded user-defined Apex method at
   a call site to the unique overload remaining after narrowing by parameter count, then — among any
   equal-arity overloads — by exact declared parameter types: the unique equal-arity overload **every** one
@@ -601,6 +637,9 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   or property access chained off a receiver whose static type is a ratified v1.10(iv) heritage mis-bind
   resolves into the mis-bound parent's member (bounded false edge; WI-4 fix). Correctly-bound chains retain
   the full SHALL.)
+  (**Amended v1.29 — DISCHARGED at WI-4:** the poisoned-MRO carve-out (BL-6) is discharged — with the
+  v1.10(iv) heritage mis-bind corrected (BL-4, SDD-004 §1(2)), the MRO carries no decoy, so no member/property
+  access rides into a mis-bound parent's member; the full SHALL now holds. Verified at WI-4 Gate-3.)
 - **REQ-010** — The system SHALL resolve references between user-defined Apex symbols declared in
   different files of the analysed repository without requiring an explicit import statement.
   (**Amended v1.6 — bounded exception:** WHERE a class/interface/enum is mis-declared in a `.trigger`
@@ -679,16 +718,16 @@ dated provenance.*
 
 | ID | Shape (reachable only as named) | Source | Outcome | Gov REQ · amend | §1.2 | Fix |
 |----|----|----|----|----|----|----|
-| BL-1 | case-varied cross-file heritage clause (`class Sub extends BASE`, `Base.cls`) | valid | EXTENDS edge absent (liveness); super/inherited-member downstream — see BL-8 | REQ-007 v1.8(i) | — | WI-4 |
-| BL-2 | case-variant trigger/class twin, heritage naming the trigger's exact case (`extends Twist`, `Twist.trigger`+`class TWIST`) | valid | heritage mis-binds to the trigger | REQ-007 v1.8(ii) | a | WI-4 |
-| BL-3 | nested-parent heritage clause (`extends Outer.Inner`, parent in another file) | valid | EXTENDS edge absent (liveness); super/inherited — see BL-7 | REQ-007 v1.10(iii) | — | WI-4 |
-| BL-4 | nested-parent heritage + an unrelated same-tail top-level decoy present | valid | heritage mis-binds to the top-level decoy | REQ-007 v1.10(iv) | a | WI-4 |
-| BL-5 | same-case valid trigger/class twin heritage (`Foo.trigger`+`Foo.cls`) | valid | EXTENDS edge absent (liveness); super arms resolve to parent — see BL-8; inherited-member implicit-this unresolved | REQ-007 v1.10(v) | — | WI-4 |
-| BL-6 | typed-receiver member call on a BL-4 subtype (`Sub s; s.decoy2()`) | valid | rides the mis-bound MRO → false member edge into the decoy's member | REQ-005/REQ-009 v1.15 (ratified v1.13) | a | WI-4 |
-| BL-7 | super/inherited arms of an unresolved-heritage subtype (BL-3 nested-parent shape — qualified/dotted superclass) | valid | `super()` + inherited-member implicit-this unresolved; `super.method()` self-loops to the subtype's own override (false edge) | REQ-005 v1.11(a) | a (self-loop) / — (unresolved arms) | WI-4 |
-| BL-8 | super arms of a BL-1 or BL-5 subtype (simple-name superclass) (v1.12/v1.28 correction) | valid | `super()`/`super.method()` RESOLVE to the parent → subtype carries super-sourced CALLS edges into the parent with NO EXTENDS edge (documented consequence, not a defect); inherited-member implicit-this still unresolved | REQ-007/REQ-005 v1.28 (ratified v1.12) | — | WI-4 |
+| BL-1 | case-varied cross-file heritage clause (`class Sub extends BASE`, `Base.cls`; and the `implements IFACE` interface-implementation arm) | valid | **DISCHARGED WI-4 (v1.29):** EXTENDS (and, for the `implements` arm, IMPLEMENTS) edge emitted to the cross-file parent — the folded workspace channel resolves the case-varied base; super/inherited-member downstream resolve — see BL-8 | REQ-007 v1.8(i)/v1.29 | — | WI-4 ✓ v1.29 |
+| BL-2 | case-variant trigger/class twin, heritage naming the trigger's exact case (`extends Twist`, `Twist.trigger`+`class TWIST`) | valid | **DISCHARGED WI-4 (v1.29):** EXTENDS binds the injected **class** — the folded workspace-channel bind wins over the exact-case trigger — never the trigger | REQ-007 v1.8(ii)/v1.29 | a → discharged | WI-4 ✓ v1.29 |
+| BL-3 | nested-parent heritage clause (`extends Outer.Inner`, parent in another file) | valid | **DISCHARGED WI-4 (v1.29):** EXTENDS binds the real nested `Inner @ Outer` (the nested-aware heritage-base seam resolves OUTER-first); super/inherited resolve — see BL-7 | REQ-007 v1.10(iii)/v1.29 | — | WI-4 ✓ v1.29 |
+| BL-4 | nested-parent heritage + an unrelated same-tail top-level decoy present | valid | **DISCHARGED WI-4 (v1.29):** EXTENDS binds the real nested type, **never** the same-tail top-level decoy (the seam gates the shared dotted-tail fallback) | REQ-007 v1.10(iv)/v1.29 | a → discharged | WI-4 ✓ v1.29 |
+| BL-5 | same-case valid trigger/class twin heritage (`Foo.trigger`+`Foo.cls`) | valid | **DISCHARGED WI-4 (v1.29):** EXTENDS binds the injected class `Foo` (trigger excluded from injection); super + inherited-member implicit-this resolve — see BL-8 | REQ-007 v1.10(v)/v1.29 | — | WI-4 ✓ v1.29 |
+| BL-6 | typed-receiver member call on a BL-4 subtype (`Sub s; s.decoy2()`) | valid | **DISCHARGED WI-4 (v1.29):** no false member edge — once BL-4's EXTENDS is correct the MRO carries no decoy, so the poisoned-member edge is gone (BL-4 fallout) | REQ-005/REQ-009 v1.15/v1.29 (ratified v1.13) | a → discharged | WI-4 ✓ v1.29 |
+| BL-7 | super/inherited arms of an unresolved-heritage subtype (BL-3 nested-parent shape — qualified/dotted superclass) | valid | **DISCHARGED WI-4 (v1.29):** `super()`/`super.method()`/inherited-member implicit-this resolve to the real nested parent — no self-loop, no unresolved arm (BL-3 fallout) | REQ-005 v1.11(a)/v1.29 | a → discharged (self-loop gone) | WI-4 ✓ v1.29 |
+| BL-8 | super arms of a BL-1 or BL-5 subtype (simple-name superclass) (v1.12/v1.28 correction) | valid | **DISCHARGED WI-4 (v1.29):** BL-1/BL-5's EXTENDS edge now exists, so `super()`/`super.method()` AND the inherited-member implicit-this resolve to the parent *with* the EXTENDS edge (the prior no-EXTENDS/unresolved-inherited consequence is gone) | REQ-007/REQ-005 v1.28/v1.29 (ratified v1.12) | — | WI-4 ✓ v1.29 |
 | BL-9 | class/interface/enum mis-declared in a `.trigger` file | invalid | an exact-case constructor/inheritance/static-type reference whose case uniquely matches resolves to the mis-filed class (a correct bind on invalid source — the class is a real node); its typed-receiver (instance-member) and case-varied cross-file forms remain unresolved | REQ-010 v1.22 (ratified v1.6) | — | — |
-| BL-10 | trigger mis-declared in a `.cls` file | invalid | becomes globally referenceable — a name reference binds the trigger | REQ-010 v1.14 (ratified v1.6) | b | — |
+| BL-10 | trigger mis-declared in a `.cls` file | invalid | becomes globally referenceable — a name reference binds the trigger; **WI-4 (v1.29): the heritage/sibling re-sequence newly lets a case-varied `extends <.cls-misfiled trigger>` heritage clause bind the injected trigger — ratified consistent with BL-10's already-live §1.2(b) non-heritage bind (same invalid-source trigger, same fold); its MRO downstream contributes no false inherited-member edge (a trigger declares no members)** | REQ-010 v1.14/v1.29 (ratified v1.6) | b | — |
 | BL-11 | correctly-filed trigger's name referenced as a type, no same-named class exists | invalid | an exact-case reference whose case uniquely matches binds the trigger def | REQ-010 v1.14 (ratified v1.6) | b | — |
 | BL-12 | duplicate case-folded-colliding top-level type names (case-variant and same-case sub-arms) | invalid | an exactly-case-matching constructor/inheritance/static-type reference binds the unique exact-case match; a same-case duplicate reference binds nothing and emits no record — a type-name collision is discharged by edge-absence alone (probe-verified 2026-07-06); no mis-bind (the correct conservative default, not a shortfall) | REQ-015 v1.16 (ratified v1.5) | b (exact-case arm) / — (same-case arm = type-name collision, no record) | — |
 | BL-13 | malformed file re-parents a nested-type fragment to file scope, case-folded name collides with a legit top-level type | invalid | registration registers neither → the valid type's typed-receiver/case-varied cross-file forms unresolved (liveness) | REQ-010 v1.18 (ratified v1.9) | — | — |
@@ -830,14 +869,17 @@ Scenario: Inheritance and interface implementation resolve
   Then the graph contains an inheritance edge to the parent class
   And the graph contains an implementation edge to the interface
 
-# Documented limitations (representative — exhaustive per-variant pinning is at Gate 3)
+# Documented limitations + WI-4-discharged heritage regressions (representative — exhaustive per-variant
+# pinning is at Gate 3). The valid-source heritage scenarios below assert the WI-4-DISCHARGED outcomes
+# (v1.29); the invalid-source BL-9 scenario remains a live documented limitation.
 
-# REQ-007 v1.8(i) / register BL-1 — valid-source heritage liveness limitation
-Scenario: A case-varied cross-file heritage clause is left unresolved (documented limitation)
+# REQ-007 v1.8(i) / v1.29 / register BL-1 — DISCHARGED at WI-4
+Scenario: A case-varied cross-file heritage clause resolves (BL-1 discharged at WI-4)
   Given a user-defined `class Sub extends BASE` and a user-defined `Base` class in another file (valid Apex, case-varied)
   When GitNexus analyses the repository
-  Then no inheritance edge is emitted for the case-varied heritage clause
-  # exact-case cross-file heritage resolves; the case-varied form is the v1.8(i) liveness limitation
+  Then an EXTENDS edge is emitted from Sub to the cross-file `Base` (the folded workspace channel resolves the case-varied base)
+  And a case-varied cross-file `implements IFACE` resolves symmetrically to an IMPLEMENTS edge (BL-1's `implements` arm)
+  # WI-4 (SDD-004 §1(1)) discharges the v1.8(i) liveness limitation
 
 # REQ-010 v1.6 / register BL-9 — invalid-source misfile liveness limitation
 Scenario: A class mis-declared in a .trigger file resolves only to a unique exact-case reference (documented limitation)
@@ -846,12 +888,13 @@ Scenario: A class mis-declared in a .trigger file resolves only to a unique exac
   Then its typed-receiver and case-varied cross-file references from other files emit no binding
   And an exact-case constructor/inheritance/static reference to it emits a resolved edge to the mis-filed class node (a correct bind on invalid source)
 
-# REQ-007 v1.10(iv) / v1.13 / register BL-4 + BL-6 — nested-parent mis-bind, tripwire-ratified
-Scenario: A nested-parent heritage clause with a same-tail top-level decoy mis-binds (documented limitation)
+# REQ-007 v1.10(iv) / v1.29 / register BL-4 + BL-6 — DISCHARGED at WI-4
+Scenario: A nested-parent heritage clause binds the real nested type, never a same-tail decoy (BL-4/BL-6 discharged at WI-4)
   Given `class Sub extends TOuter.TInner` with an unrelated top-level `TInner` present (valid Apex)
   When GitNexus analyses the repository
-  Then the heritage clause binds the top-level decoy `TInner`
-  And a typed-receiver member call on Sub resolves into the decoy's member (v1.13 bounded false edge; WI-4 fix)
+  Then an EXTENDS edge is emitted from Sub to the real nested `TInner @ TOuter`, never the top-level decoy `TInner`
+  And a typed-receiver member call on Sub emits no false member edge into the decoy's member (the MRO is clean)
+  # WI-4 (SDD-004 §1(2), the nested-aware heritage-base seam) discharges the v1.10(iv) mis-bind and its v1.13 poisoned-MRO fallout (BL-6)
 
 # REQ-008
 Scenario: Overloaded method resolves by argument shape
