@@ -2304,23 +2304,34 @@ superseding the spike's Status (C) "gate on `findClassBindingInScope`" label; Co
 *membership* mechanism is arm (a).) The
 oracle instead: **(a) a simple type-name** → `workspaceFqnBindings` folded membership (every top-level user-defined type is injected workspace-wide by `populateNamespaceSiblings` —
 SDD-003 §3 — so a same-file top-level param type is recognised too;
-decoy-safe — the §3 inject-none guard keys ≤1 per folded name, so a collision resolves to nothing → external);
+decoy-safe — the §3 inject-none guard keys ≤1 per folded name, so a collision resolves to nothing → external).
+**[assumption made explicit]** arm (a) is correct *only because* every **correctly-filed** top-level
+user-defined type is workspace-injected (SDD-003 §3); a def the §3 guard suppresses (inject-none folded
+collision) or excludes (a `.trigger`-filed def) is absent from the registry → arm (a) treats it as external →
+**arity-only** — a conservative **under-narrow** (the param arg left untyped), **never a mis-bind** (the §1(3)
+safe floor holds by construction, so the boundary is deliberate);
 **(b) a dotted/nested type-name** (`Outer.Inner`) → the **Apex-local inc-11 OUTER-first nested lookup**
 (resolve `Outer` via the workspace channel, find the tail among its owned defs — the same decoy-safe resolver
 WI-3 built for the ctor/declared-type paths); **(c) a simple type-name that misses top-level membership but is
 a nested type referenced unqualified from within its enclosing class** (e.g. param `Inner p` inside `Outer`) →
 an **enclosing-scope owned-def lookup** (scope-local, decoy-safe — a unique owned match binds, else conservative
 skip; reuses WI-2's `walkScopeChain` scope-walk), so a simple-name nested param type is not silently
-under-resolved (a shape the Java/Kotlin benchmark narrows — REQ-008/REQ-012). **Arm (c)'s resolution is a
-[Gate-3 reliance]**, not a Gate-2 [structural] pin: RESEARCH-004 (findings 7-8) spike-grounds only arms (a)
-membership and (b) inc-11 dotted; the enclosing-scope arm is validated at Gate 3 (Addendum 4). A **unique** user-defined resolution (top-level via (a), nested-dotted via (b), or
+under-resolved. **Arm (c) is a sub-case of REQ-008's parameter-typed-argument *completion* (the ITEM-004
+cut, §A.17-settled), not a separately-pinned §9 acceptance** — the §9 REQ-008 scenarios illustrate the
+narrowing *mechanic* (they do not enumerate every param-type shape), and REQ-012 parity is that the
+Java/Kotlin benchmark narrows a nested-typed parameter argument generally; arm (c) completes that shape for
+Apex. **Arm (c)'s resolution is a
+[Gate-3 reliance]** (validated by the enclosing-scope fixture at Gate 3, not a Gate-2 [structural] pin):
+RESEARCH-004 (findings 7-8) spike-grounds only arms (a) membership and (b) inc-11 dotted; the enclosing-scope
+arm is validated at Gate 3 (Addendum 4). If Gate 3 could not confirm arm (c), the conservative floor holds —
+it degrades to arity-only (never a mis-bind), so arm (c) carries no un-derived SHALL-backed over-claim. A **unique** user-defined resolution (top-level via (a), nested-dotted via (b), or
 nested-simple-in-scope via (c)) → narrow; **anything else — no resolution, a tie, or a shape only the decoy-prone shared tail
 would "resolve"** → treat as external → arity-only, **never mis-bound** (the safe conservative default). Apex-
 local (`languages/apex/captures.ts`, reusing the WI-2/WI-3 folded/nested resolvers); **no shared edit**. This
 **completes** the parameter-typed-argument sub-case of WI-2's REQ-008 mechanic that SDD-002 §2 deferred, without
 re-owning REQ-008's selection algorithm. **WI-4's authority for it is the authoritative decomposition
 (work-items.md ITEM-004's Adam-approved scope + the Gate-1 decomposition checkpoint), NOT SRS §11** — which is
-explicitly *provisional* (SRS line 967: "the formal cut and its Gate-1 decomposition checkpoint follow") and
+explicitly *provisional* (SRS §11 preamble: "the formal cut and its Gate-1 decomposition checkpoint follow") and
 pre-dates the deferral. This mirrors §11.2's own WI-2→WI-3 cross-file carry-forward (REQ-010 completed WI-2's
 cross-file forms downstream). **Disposition of the WI-2 deferral
 rationale:** SDD-002 §2 framed this completion as needing "WI-4's REQ-013 external-type **detection**" (a
@@ -2400,11 +2411,14 @@ verification** of the discharge (a Phase-5 cascade, not authored pre-verificatio
     outcome` kinds stay `resolved`/`suppressed`). REQ-013's **observable acceptance is "no Apex-specific
     *defect*"** (SRS): the benchmark pre-filters builtins (`isBuiltInName`, RESEARCH-004 finding 6) so an
     external reference is never attempted; Apex attempt-and-misses → also no edge and **no defect** (a miss is
-    not a defect), so both satisfy "no defect". **[Gate-3 reliance]** on the host no-edge-on-miss behaviour AND
-    that the external reference's observable outcome (defect/count) is **parity-equivalent to the benchmark's
-    pre-filtered outcome**; committed Apex-local remediation — the `builtInNames` reuse — iff a parity fixture
-    surfaces **any** divergence (a false-positive external *attempt* OR an observable defect/count divergence),
-    not only a mis-bind (never a silent de-scope). *(The `workspaceFqnBindings`-membership check is REQ-008's
+    not a defect), so both satisfy "no defect". **REQ-013's gated acceptance is exactly SRS v1.29's obligation —
+    "no Apex-specific *defect*"** (SRS §5.1/REQ-013), a **[Gate-3 reliance]** on the host no-edge-on-miss
+    behaviour. **Beyond** that obligation, WI-4 additionally *checks* — as **self-imposed conservative
+    hardening, not a REQ-013 SHALL** — that the external reference's observable outcome (defect/count) is
+    parity-equivalent to the benchmark's pre-filtered outcome; the `builtInNames` reuse is a committed
+    Apex-local remediation available iff a parity fixture surfaces a divergence (a false-positive external
+    *attempt* OR a defect/count divergence). Only the "no defect" leg is a gated acceptance; the count-parity
+    check is hardening (never a silent de-scope, but not an obligation the SRS states). *(The `workspaceFqnBindings`-membership check is REQ-008's
     parameter-type narrowing gate — §3, finding 8 — NOT a REQ-013 classifier; "absent from the workspace
     registry" is not "external" — a same-file user-defined *reference site* can resolve via local scope, yet its type's top-level
 **definition** is still injected (SDD-003 §3) and so is **not** absent
@@ -2747,7 +2761,9 @@ name-collision already globally referenceable by ratified §1.2-(b), and (b) ter
   control flow — the pipeline invokes passes; no new state), (b) the **heritage-base seam's hook consultation
   point** in `resolveInheritanceBaseInScope` (host-structural — it calls the hook and, on a hit, skips the
   dotted-tail fallback; the Apex hook's *resolution* is the pure nested-base-lookup helper), (c) the
-  parameter-arg gate's write into the existing `varTypes`/narrowing path, and **(d) the receiver-var fold's
+  parameter-arg gate — the Apex-registered `populateRangeBindings` hook (§9) that rewrites a tagged
+  argument-type slot at resolution phase; its *decision* (the §1(3) decoy-safe oracle over
+  `workspaceFqnBindings` + enclosing-scope) is the pure part, the slot rewrite the effect — and **(d) the receiver-var fold's
   folded fallback in shared `findReceiverTypeBinding`** (§9 — host-structural: after the exact scope-walk
   misses it folds each scope's typeBinding keys via `scopes.normalizeIdentifier`; the fold decision — unique
   folded match vs collision-skip — is the pure part, inert for a peer with no normalizer). Dependency direction is shell→core.
