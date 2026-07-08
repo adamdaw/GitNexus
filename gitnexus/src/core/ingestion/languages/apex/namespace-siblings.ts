@@ -27,7 +27,10 @@
  */
 
 import type { BindingRef, ParsedFile, SymbolDefinition } from 'gitnexus-shared';
-import type { ScopeResolutionIndexes } from '../../model/scope-resolution-indexes.js';
+import type {
+  DottedHeritageBaseResolution,
+  ScopeResolutionIndexes,
+} from '../../model/scope-resolution-indexes.js';
 
 /** Predicate 1 — inject only the three Apex type-declaration kinds, never a
  *  member (Method/Property/Field/enum-constant); a member in `workspaceFqnBindings`
@@ -115,6 +118,59 @@ export function computeApexNamespaceBindings(
  * content or tree-sitter re-parse is needed (the discriminant is the read-verifiable
  * owning-scope shape, not an AST fact).
  */
+/**
+ * Return the unique class-like workspace type for a folded key, or `undefined`
+ * when the key is absent (external / inject-none-suppressed collision) or does
+ * not hold exactly one type def. `computeApexNamespaceBindings` injects at most
+ * one ref per folded key (inject-none on collision), so a populated bucket is a
+ * single entry; the length guard is defensive.
+ */
+export function uniqueWorkspaceType(
+  foldedKey: string,
+  scopes: ScopeResolutionIndexes,
+): SymbolDefinition | undefined {
+  const bucket = scopes.workspaceFqnBindings.get(foldedKey);
+  if (bucket === undefined || bucket.length !== 1) return undefined;
+  const def = bucket[0]!.def;
+  return isApexTypeDef(def.type) ? def : undefined;
+}
+
+/**
+ * The Apex dotted-heritage-base seam (SDD-004 §1(2)) — registered as
+ * `resolveDottedHeritageBase` and consulted at the top of
+ * `resolveInheritanceBaseInScope` for `extends`/`implements Outer.Inner`.
+ * Resolves OUTER-first through the folded `workspaceFqnBindings` channel that
+ * `populateApexNamespaceSiblings` fills (nested types are injected under the
+ * folded DOTTED key `outer.inner`), so no dotted base ever reaches the shared
+ * dotted-tail fallback that binds a same-tail top-level decoy (BL-3/BL-4).
+ *
+ * Three states (§1(2)):
+ *   - non-dotted base → `pass-through` (the simple-name discharge lives on the
+ *     unchanged channel);
+ *   - >2 segments (`ns.Outer.Inner`) — Apex nesting is one level deep, so this
+ *     is a managed-package namespace-qualified external → `refuse`;
+ *   - a two-segment `Outer.Inner`: `refuse` unless BOTH the OUTER folds to a
+ *     unique workspace type (0 candidates = external / absent / case-collided
+ *     inject-none) AND the folded full key binds a unique nested type
+ *     (absent = typo/near-miss tail, ambiguous = inject-none) — else `resolved`.
+ * Every dotted base returns `resolved` or `refuse` (never `pass-through`), so
+ * the decoy-prone tail fallback is unreachable for a dotted base. Case-folding
+ * (REQ-005) rides the same fold the injection used, so `HOUTER.HInner` resolves.
+ */
+export function resolveApexDottedHeritageBase(
+  baseName: string,
+  scopes: ScopeResolutionIndexes,
+): DottedHeritageBaseResolution {
+  const segments = baseName.split('.');
+  if (segments.length < 2) return { kind: 'pass-through' };
+  if (segments.length > 2) return { kind: 'refuse' };
+  if (uniqueWorkspaceType(foldIdentifier(segments[0]!), scopes) === undefined) {
+    return { kind: 'refuse' };
+  }
+  const nested = uniqueWorkspaceType(foldIdentifier(baseName), scopes);
+  return nested === undefined ? { kind: 'refuse' } : { kind: 'resolved', def: nested };
+}
+
 export function populateApexNamespaceSiblings(
   parsedFiles: readonly ParsedFile[],
   indexes: ScopeResolutionIndexes,

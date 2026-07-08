@@ -29,6 +29,7 @@ import {
   type SyntaxNode,
 } from '../../utils/ast-helpers.js';
 import { computeApexArityMetadata, normalizeApexParamType } from './arity-metadata.js';
+import { APEX_PARAM_ARG_MARKER } from './param-arg-gate.js';
 import { synthesizeApexReceiverBinding } from './receiver-binding.js';
 import { getApexParser, getApexScopeQuery } from './query.js';
 import { getTreeSitterBufferSize } from '../../constants.js';
@@ -234,6 +235,11 @@ function emitApexExplicitConstructorRef(out: CaptureMatch[], node: SyntaxNode): 
   if (enclosingType === null) return;
 
   let targetNameNode: SyntaxNode | null = null;
+  // A dotted superclass (`extends Outer.Inner`) makes `super()` a call to the
+  // NESTED parent ctor; the bare tail (`Inner`) alone would miss (no `inner`
+  // workspace key) or bind a same-tail decoy — so carry the qualified base so
+  // the ctor call resolves OUTER-first like `new Outer.Inner()` (BL-7 fallout).
+  let qualifierNode: SyntaxNode | null = null;
   if (ctor.type === 'this') {
     targetNameNode = enclosingType.childForFieldName('name');
   } else if (ctor.type === 'super') {
@@ -244,6 +250,7 @@ function emitApexExplicitConstructorRef(out: CaptureMatch[], node: SyntaxNode): 
       const nameNode = apexBaseLookupNameNode(base);
       if (nameNode !== null) {
         targetNameNode = nameNode;
+        if (base.type === 'scoped_type_identifier') qualifierNode = base;
         break;
       }
     }
@@ -262,6 +269,9 @@ function emitApexExplicitConstructorRef(out: CaptureMatch[], node: SyntaxNode): 
     '@reference.call.constructor': nodeToCapture('@reference.call.constructor', node),
     '@reference.name': nodeToCapture('@reference.name', targetNameNode),
     '@reference.arity': syntheticCapture('@reference.arity', node, String(args.length)),
+    ...(qualifierNode !== null
+      ? { '@reference.qualified-name': nodeToCapture('@reference.qualified-name', qualifierNode) }
+      : {}),
   });
 }
 
@@ -322,9 +332,19 @@ function emitApexInheritanceBase(out: CaptureMatch[], base: SyntaxNode | null): 
   if (base === null) return;
   const nameNode = apexBaseLookupNameNode(base);
   if (nameNode === null) return;
+  // A dotted base (`Outer.Inner`, `ns.Outer.Inner`, `Ext.Ghost`) carries its
+  // qualified form as `rawQualifiedName` so the shared resolver's
+  // dotted-heritage-base seam (SDD-004 §1(2)) can resolve it OUTER-first —
+  // `@reference.name` is only the bare tail (`Inner`), which the decoy-prone
+  // simple-tail fallback would mis-bind. Emitted only for a scoped (dotted) base.
+  const qualified =
+    base.type === 'scoped_type_identifier'
+      ? { '@reference.qualified-name': nodeToCapture('@reference.qualified-name', base) }
+      : {};
   out.push({
     '@reference.inherits': nodeToCapture('@reference.inherits', base),
     '@reference.name': nodeToCapture('@reference.name', nameNode),
+    ...qualified,
   });
 }
 
@@ -389,23 +409,40 @@ function resolveVarTypeBindings(matches: CaptureMatch[]): CaptureMatch[] {
 
   const varTypes = new Map<string, string>();
   const ambiguousVars = new Set<string>();
+  // Keys whose type came from a method PARAMETER (`@type-binding.parameter`), not a
+  // local declaration (`@type-binding.annotation`). A parameter's declared type may
+  // be external (`String`) — narrowing on it would mis-resolve (REQ-008 completion,
+  // SDD-004 §1(3)) — so param-sourced arg slots are tagged with `APEX_PARAM_ARG_MARKER`
+  // here and gated at resolution (`gateApexParamArgTypes`), where `workspaceFqnBindings`
+  // is available to confirm the type is user-defined. Local-sourced slots are untagged
+  // and patched as before (WI-2 behaviour unchanged).
+  const paramKeys = new Set<string>();
 
   for (const m of matches) {
-    if (
+    const isLocal =
       m['@type-binding.annotation'] !== undefined &&
       m['@type-binding.type'] !== undefined &&
-      m['@type-binding.name'] !== undefined
-    ) {
+      m['@type-binding.name'] !== undefined;
+    const isParam =
+      m['@type-binding.parameter'] !== undefined &&
+      m['@type-binding.type'] !== undefined &&
+      m['@type-binding.name'] !== undefined;
+    if (isLocal || isParam) {
       // Scope the local-variable type to its enclosing function (class-level
       // fields key to '' / global, still reachable via the fallback below).
-      const key = `${enclosingFnKey(m['@type-binding.name'].range)}\0${m['@type-binding.name'].text}`;
-      const t = m['@type-binding.type'].text;
+      const key = `${enclosingFnKey(m['@type-binding.name']!.range)}\0${m['@type-binding.name']!.text}`;
+      const t = m['@type-binding.type']!.text;
       const existing = varTypes.get(key);
       if (existing !== undefined && existing !== t) {
         ambiguousVars.add(key);
         varTypes.delete(key);
+        paramKeys.delete(key);
       } else if (!ambiguousVars.has(key)) {
         varTypes.set(key, t);
+        // A local declaration takes precedence over a same-named parameter key
+        // (Apex forbids the shadow, but be deterministic): a local un-tags it.
+        if (isParam && !isLocal) paramKeys.add(key);
+        else paramKeys.delete(key);
       }
     }
   }
@@ -426,13 +463,22 @@ function resolveVarTypeBindings(matches: CaptureMatch[]): CaptureMatch[] {
           // A `this.<field>` arg keys the class-level field ONLY (the `\0` scope);
           // a bare name tries the same-function local first, then the class field.
           const nm = names[i]!;
-          const rt = nm.startsWith('this.')
-            ? varTypes.get(`\0${nm.slice('this.'.length)}`)
-            : (varTypes.get(`${callFnKey}\0${nm}`) ?? varTypes.get(`\0${nm}`));
+          const localKey = `${callFnKey}\0${nm}`;
+          const fieldKey = `\0${nm.slice('this.'.length)}`;
+          const bareFieldKey = `\0${nm}`;
+          const matchedKey = nm.startsWith('this.')
+            ? fieldKey
+            : varTypes.has(localKey)
+              ? localKey
+              : bareFieldKey;
+          const rt = varTypes.get(matchedKey);
           if (rt !== undefined) {
             // Fold the resolved var type (Apex case-insensitivity) to match the
-            // folded declared param types in overload narrowing.
-            types[i] = normalizeApexParamType(rt);
+            // folded declared param types in overload narrowing. A param-sourced
+            // type is tagged so resolution can gate it on workspace membership
+            // (SDD-004 §1(3)); a local/field type is applied directly (WI-2).
+            const folded = normalizeApexParamType(rt);
+            types[i] = paramKeys.has(matchedKey) ? APEX_PARAM_ARG_MARKER + folded : folded;
             patched = true;
           }
         }

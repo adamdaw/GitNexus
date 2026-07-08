@@ -52,8 +52,28 @@ import type {
   ReferenceSite,
   ScopeId,
   ScopeTree,
+  SymbolDefinition,
   TypeRef,
 } from 'gitnexus-shared';
+
+/**
+ * Three-state result of the per-language dotted-heritage-base seam
+ * (`resolveDottedHeritageBase`, SDD-004 §1(2)). A binary hit/miss contract
+ * would reintroduce the same-tail-decoy mis-bind (BL-4): a `refuse` MUST be
+ * distinct from a `pass-through` so the caller can suppress the shared
+ * dotted-tail fallback on a refuse but keep it on a pass-through.
+ *
+ *   - `resolved`     — the dotted base binds a unique nested type; emit that edge.
+ *   - `refuse`       — a dotted base whose outer/tail cannot uniquely resolve;
+ *                      emit NO edge and DO NOT fall through (the outer bound, or
+ *                      is external/collided/namespace-qualified — never guess).
+ *   - `pass-through` — the seam does not apply (a non-dotted base); resume the
+ *                      unchanged simple-name channel.
+ */
+export type DottedHeritageBaseResolution =
+  | { readonly kind: 'resolved'; readonly def: SymbolDefinition }
+  | { readonly kind: 'refuse' }
+  | { readonly kind: 'pass-through' };
 
 export interface ScopeResolutionIndexes {
   readonly scopeTree: ScopeTree;
@@ -95,6 +115,19 @@ export interface ScopeResolutionIndexes {
    *  misses, so case-sensitive languages (identity / absent normalizer) are
    *  unchanged. Undefined for languages that don't fold. */
   readonly normalizeIdentifier?: (identifier: string) => string;
+  /** The active language's dotted-heritage-base seam (SDD-004 §1(2)), threaded
+   *  per language-run like `normalizeIdentifier`. Consulted at the TOP of
+   *  `resolveInheritanceBaseInScope` for a DOTTED base, BEFORE the shared
+   *  qualified/simple-tail fallbacks that would bind a same-tail decoy. It
+   *  resolves the base outer-first through the workspace channel and either
+   *  binds the unique nested type (`resolved`), refuses (`refuse` — outer
+   *  bound/external/collided or tail absent/ambiguous → no edge, no
+   *  fall-through), or declines (`pass-through` — non-dotted). Undefined for
+   *  languages that register no hook — the resolver behaves exactly as before. */
+  readonly resolveDottedHeritageBase?: (
+    baseName: string,
+    scopes: ScopeResolutionIndexes,
+  ) => DottedHeritageBaseResolution;
   /** Workspace-level *type* binding lookup — the typeBindings analogue of
    *  `workspaceFqnBindings`. Holds names that are type-visible from every file
    *  (e.g. C# global/default-namespace method return-type bindings, keyed by

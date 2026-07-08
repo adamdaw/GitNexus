@@ -223,6 +223,36 @@ export function findReceiverTypeBinding(
     if (scope.kind === 'Module') moduleScopeId = currentId;
     currentId = scope.parent;
   }
+  // Receiver-variable case-fold (SDD-004 §1(4)) via the §2.2 `normalizeIdentifier`
+  // seam — the same folded fallback `workspaceBindingsFor` already uses. Inert for
+  // case-sensitive languages (no normalizer). Runs ONLY after the exact scope walk
+  // above misses, so an exact-cased receiver still wins. A case-varied receiver
+  // (`A` for `Widget a`) folds to its declaration; a folded-key COLLISION at a
+  // scope (`pa`/`PA` both fold to `pa`) is ambiguous → `undefined` (never guess,
+  // matching the language's case-insensitive variable semantics).
+  const normalize = scopes.normalizeIdentifier;
+  if (normalize !== undefined) {
+    const foldedReceiver = normalize(receiverName);
+    let scanId: ScopeId | null = startScope;
+    const scanVisited = new Set<ScopeId>();
+    while (scanId !== null) {
+      if (scanVisited.has(scanId)) break;
+      scanVisited.add(scanId);
+      const scope = scopes.scopeTree.getScope(scanId);
+      if (scope === undefined) break;
+      let folded: TypeRef | undefined;
+      let foldedCount = 0;
+      for (const [name, ref] of scope.typeBindings) {
+        if (normalize(name) === foldedReceiver) {
+          folded = ref;
+          if (++foldedCount > 1) break;
+        }
+      }
+      if (foldedCount === 1) return folded;
+      if (foldedCount > 1) return undefined;
+      scanId = scope.parent;
+    }
+  }
   // Fallback 1 — named namespaces accessible from this file (own + `using`d),
   // gated by `accessibleNamespacesByScope`. Consulted BEFORE the global channel
   // so a more-specific named binding wins, matching the pre-#1871 order where
@@ -342,6 +372,22 @@ export function resolveInheritanceBaseInScope(
   rawQualifiedName?: string,
   enclosingClassDef?: SymbolDefinition,
 ): SymbolDefinition | undefined {
+  // SDD-004 §1(2): consult the per-language dotted-heritage-base seam FIRST —
+  // before the qualified/simple-tail fallbacks below, whose dotted-tail
+  // single-match (`findClassBindingInScope`, `:320-329`) binds a same-tail
+  // top-level decoy. The dotted base is the qualified form (`rawQualifiedName`,
+  // e.g. `Outer.Inner`); `baseName` is only the bare tail (`Inner`), so the
+  // seam must see the qualified string. Three states: `resolved` returns the
+  // nested binding; `refuse` returns undefined WITHOUT falling through (an outer
+  // that bound / is external / collided / namespace-qualified, or a tail
+  // absent/ambiguous → no edge, never the decoy); `pass-through` (a non-dotted
+  // base) resumes the unchanged channel where the simple-name discharge lives.
+  // Absent hook = behaviour unchanged.
+  if (scopes.resolveDottedHeritageBase !== undefined) {
+    const outcome = scopes.resolveDottedHeritageBase(rawQualifiedName ?? baseName, scopes);
+    if (outcome.kind === 'resolved') return outcome.def;
+    if (outcome.kind === 'refuse') return undefined;
+  }
   // #1982: when the source wrote a qualified base (`Other::Inner`), resolve it
   // against the full-path QualifiedNameIndex FIRST, so a same-tail nested base
   // binds to the matching sibling instead of the first-inserted one that the

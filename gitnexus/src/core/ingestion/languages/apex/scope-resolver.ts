@@ -17,7 +17,11 @@ import { populateClassOwnedMembers } from '../../scope-resolution/scope/walkers.
 import type { ScopeResolver } from '../../scope-resolution/contract/scope-resolver.js';
 import { apexProvider } from './index.js';
 import { apexArityCompatibility, apexResolveReceiverMember } from './resolution.js';
-import { populateApexNamespaceSiblings } from './namespace-siblings.js';
+import {
+  populateApexNamespaceSiblings,
+  resolveApexDottedHeritageBase,
+} from './namespace-siblings.js';
+import { gateApexParamArgTypes } from './param-arg-gate.js';
 
 const apexScopeResolver: ScopeResolver = {
   language: SupportedLanguages.Apex,
@@ -30,6 +34,25 @@ const apexScopeResolver: ScopeResolver = {
   // top-level user-defined types into the shared `workspaceFqnBindings` channel so
   // every WI-2 resolution mechanic reaches across files.
   populateNamespaceSiblings: populateApexNamespaceSiblings,
+
+  // WI-4 (SDD-004 §1(1)): resolve heritage AFTER sibling registration so a
+  // cross-file case-varied/nested `extends`/`implements` base reaches the
+  // `workspaceFqnBindings` channel `populateNamespaceSiblings` fills (empty
+  // until then). Discharges BL-1…BL-8. Peers keep today's order (flag unset).
+  resolveHeritageAfterSiblings: true,
+
+  // WI-4 (SDD-004 §1(2)): the dotted-heritage-base seam. Resolves `extends
+  // Outer.Inner` OUTER-first through the folded workspace channel so a nested
+  // parent binds the real nested type, never the same-tail top-level decoy
+  // (BL-3/BL-4); refuses on an external/collided outer or absent/ambiguous tail.
+  resolveDottedHeritageBase: resolveApexDottedHeritageBase,
+
+  // WI-4 (SDD-004 §1(3)): gate parameter-typed-argument overload narrowing on a
+  // decoy-safe user-defined oracle. Capture tags param-sourced arg-type slots;
+  // this resolution-phase pass (after sibling registration, before reference
+  // resolution) rewrites each to its canonical user-defined type or blanks it
+  // (external/tie → arity-only), so an external param type never mis-narrows.
+  populateRangeBindings: gateApexParamArgTypes,
 
   mergeBindings: (existing, incoming) => [...existing, ...incoming],
 
