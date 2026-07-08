@@ -388,8 +388,12 @@ from INTENT-001; reviewed against it and the Constitution at Gate 1.*
   ratified consistent with BL-10's live §1.2(b) non-heritage bind (an invalid-source `Fix=—` row WI-4
   perturbs, dispositioned by amendment). Paired with a dated Constitution §1.2(a) amendment (v1.1.4). Two
   SDD-004 placement clarifications (WS3 param-arg oracle at resolution phase; WS4 receiver-var fold via the
-  existing `normalizeIdentifier` seam) recorded in SDD-004, not here. Re-enters Gate 1 fidelity (a fresh Gate
-  2 adversary reading SRS+SDD together re-clears the touched rows; cascade-invalidation per §A.7).
+  existing `normalizeIdentifier` seam) recorded in SDD-004, not here. (F6, Gate-1 re-clear R1 2026-07-08 —
+  behaviour-neutral) REQ-015's **(a)** bounded-exception bullet (marked DISCHARGED, was "committed fix path
+  WI-4") and the **retained-obligation** heritage carve-out ("heritage form excepted" → "including the
+  heritage form, discharged") reconciled to the discharge — the two REQ-015 sub-clauses the first cascade
+  pass left carrying pre-discharge language. Re-enters Gate 1 fidelity (a fresh Gate 2 adversary reading
+  SRS+SDD together re-clears the touched rows; cascade-invalidation per §A.7).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope
@@ -580,7 +584,9 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   (§2) or a bind the conservative default would withhold; each is Architect-ratified, fixture-pinned, and
   reachable only in the narrow shape named — recorded as a limitation, not a silent departure:
   - **(a) Valid-source false edges** — BL-2, BL-4, BL-6, and the BL-7 `super.method()` self-loop (§5.1
-    register). Committed fix path: WI-4 (ITEM-004).
+    register). **DISCHARGED at WI-4 (v1.29): this (a) class now holds no live valid-source false edge — the
+    heritage/sibling re-sequence + nested-aware base seam correct each underlying heritage edge (see the §5.1
+    register rows and Constitution §1.2(a) v1.1.4); the exception text is retained as provenance.**
   - **(b) Invalid-source channel binds** — BL-10, BL-11, and the **BL-12 exact-case arm** (§5.1 register);
     reachable only in uncompiled Apex. Suppressing these would require Apex-specific coupling in shared host
     code (Constitution §2). BL-12's **same-case arm is NOT a (b) exception** — it emits no binding and no
@@ -589,8 +595,8 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
 
   **Retained obligation.** Every reference of an in-scope observable shape — a typed-receiver member
   access, a correctly-filed cross-file reference (exact-case or case-varied, per case-insensitive folding —
-  the heritage form excepted, BL-1/3/5), and any reference not matching a named (a)/(b)
-  exception shape — retains the full conservative SHALL above.
+  **including the heritage form (BL-1/3/5), discharged at WI-4 (v1.29)**), and any reference not matching a
+  named (a)/(b) exception shape — retains the full conservative SHALL above.
   (**Consolidated v1.16 (2026-07-05):** REQ-015's head + the v1.5 bounded exception + the v1.7 observability
   interpretation were unified into this single treatment, triggered by the §A.8 three-cycle checkpoint
   (REQ-015 flagged in three consecutive Gate-1 rounds). No behaviour change from v1.5/v1.7: the positive
