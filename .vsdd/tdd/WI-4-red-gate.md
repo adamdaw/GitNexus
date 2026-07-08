@@ -32,14 +32,29 @@ WI-1/2/3 are DONE and green, so the WI-4 tests **run** (they do not skip). No **
 mechanics all exist; WI-4 adds no new capability that must be registered before its behavioural
 targets can execute. No scaffold ledger.
 
-**Measured Red-Gate (pre-impl, HEAD after the flips):**
+**Measured Red-Gate (pre-impl, HEAD after the flips + Gate-3 R1 fixes):**
 
-- `apex-cross-file.test.ts` — **10 red / 97 passed of 107**. The 10 reds are exactly the
-  BL-1…BL-8 flips + the BL-10 heritage arm (enumerated below).
-- `apex-parity.test.ts` — **6 red / 14 passed of 20**. The 6 reds are the genuinely-new WI-4
-  behaviours; the 14 passing are already-green parity/external/bare-decl anchors (no-red
-  justification below).
-- **WI-4 red total: 16.**
+- `apex-cross-file.test.ts` — **10 red / 98 passed of 108**. The 10 reds are exactly the
+  BL-1…BL-8 flips + the BL-10 heritage arm (enumerated below). (R1 added a REQ-006-negative test
+  for the flipped collision-block discharges — a conservative-negative anchor, green.)
+- `apex-parity.test.ts` — **10 red / 20 passed of 30**. The 10 reds are the genuinely-new WI-4
+  behaviours (incl. the four seam decoy-safety refuse/resolve shapes added in R1); the 20 passing
+  are already-green parity/external/bare-decl/refuse anchors (no-red justification below).
+- **WI-4 red total: 20.**
+
+**Gate-3 R1 (vsdd-test-validator, distinct cold reviewer) — 9 findings, all fixed-only,
+Adam-dispositioned "fix all + add #8":** (#1/#2) BL-3/BL-4 EXTENDS assertions strengthened to pin
+the nested target node (`ext.target === 'Inner'/'TInner'`), not just the file — a file-only check
+greened on a seam bug returning the OUTER binding; (#3/#4) added the `apex-heritage-refuse` fixture
+dir + describe block covering the six SDD-004 §4 dotted-base shapes (case-varied-OUTER resolve;
+external-OUTER, tail-absent, case-collided-OUTER refuses — all decoy-safety RED; >2-segment and
+ambiguous-nested-tie refuses — green anchors), including the ambiguous-nested refuse-on-tie fixture
+§7 names; (#5) BL-10 MRO-downstream made non-vacuous (PhantomSub gains an implicit-this `ghost()`
+call so the trigger-parent MRO walk is exercised; documented that a memberless trigger is
+structurally poison-free); (#6) added the enclosing-scope tie param fixture (ETie owns colliding
+Amb/AMB) exercising the §1(3)(c) tie-refuse path the external arm did not; (#7) added the REQ-006
+negative for the flipped BL-2/BL-4/BL-5/BL-6 collision-block discharges; (#8) added the two-variable
+receiver-variable collision fixture (PColl).
 
 **Pre-existing suite stays green (Step 3a changed ONLY test + fixture files — zero production
 source — so nothing outside the two WI-4-owned files can change status):** `apex-resolution`,
@@ -125,10 +140,17 @@ serve as **regression anchors + parity evidence**, so they are retained green wi
   (#11–14) are the reds.
 - **dangling-edge sweeps** across all four fixtures — structural NFR-001 guards; green throughout.
 
-## Note — REQ-008 ambiguous-duplicate param type (edge catalog)
+## Additional already-green anchors added in Gate-3 R1
 
-SDD-004 §4 lists "Parameter arg, duplicate-named (ambiguous) user-defined type → oracle refuses on
-tie → external → arity-only." Its observable outcome is **identical** to the external-typed arm
-(#external anchor above): conservative arity-only skip, no mis-bind. It is covered by the same
-conservative-skip assertion; a dedicated duplicate-typed fixture is deferred as redundant with the
-external arm (flagged here so the Gate-3 adversary sees the deliberate coverage decision, not a gap).
+- **REQ-008 ambiguous-duplicate param type** (`apex-param-arg/ETie.cls`) — the §1(3)(c)
+  enclosing-scope tie-refuse path (colliding nested Amb/AMB, param typed Amb → arity-only skip). A
+  conservative-negative anchor: WI-2 leaves param args untyped pre-impl → no `h` edge; post-impl the
+  oracle refuses on the tie → still no edge. (R1 finding #6 — the external arm did not exercise the
+  scope-local tie-refuse path, which inject-none does not foreclose.)
+- **Receiver-variable case-collision** (`apex-parity/PColl.cls`) — `Pa.foo()` case-varies against
+  both `pa`:Widget and `PA`:Gadget → ambiguous → conservative skip. A conservative-negative anchor,
+  green pre-impl (no fold) and post-impl (ambiguous skip); anchored red by the happy-path fold.
+- **Seam refuse shapes — >2-segment (RNamespace) and ambiguous-nested-tie (RAmbiguous)** — green
+  anchors: no same-tail top-level decoy exists for either, so nothing mis-binds pre- or post-seam;
+  the seam formalizes the refuse. (The external-OUTER / tail-absent / case-collided-OUTER refuses DO
+  mis-bind a same-tail decoy pre-impl and are genuinely RED.)

@@ -364,10 +364,12 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     // among Outer's owned nested type defs — SDD-004 §1(2), the epic's second shared edit), the
     // dotted `Outer.Inner` base binds the REAL nested Inner @ Outer.cls. [Gate-3 reliance] — RED
     // until the reorder + seam ship.
-    const ext = getRelationships(result, 'EXTENDS').find(
-      (e) => e.source === 'NestSub' && e.targetFilePath.includes('Outer.cls'),
-    );
-    expect(ext, 'NestSub extends Outer.Inner -> the nested Inner @ Outer.cls').toBeDefined();
+    const ext = getRelationships(result, 'EXTENDS').find((e) => e.source === 'NestSub');
+    expect(ext, 'NestSub extends Outer.Inner resolves').toBeDefined();
+    // Pin the NESTED target node, not just the file: Outer.cls also holds the top-level Outer,
+    // Helper, and Mood, so a file-only check would green on a seam bug returning the OUTER binding.
+    expect(ext!.target, 'the nested Inner, never the top-level Outer').toBe('Inner');
+    expect(ext!.targetFilePath, 'declared in Outer.cls').toContain('Outer.cls');
   });
 
   // BL-7 heritage-downstream super arms (SDD-004 §2 BL-7): WI-4 FLIP. Post-reorder BL-3's dotted
@@ -882,12 +884,15 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     // reorder + seam ship.
     const ext = getRelationships(result, 'EXTENDS').find((e) => e.source === 'TailSub');
     expect(ext, 'TailSub extends TOuter.TInner resolves').toBeDefined();
-    expect(ext!.targetFilePath, 'the real nested TInner @ TOuter.cls').toContain('TOuter.cls');
+    // Pin the NESTED target node: TOuter.cls also holds the top-level TOuter class, so a file-only
+    // check would green on a seam bug returning the OUTER binding instead of the nested tail.
+    expect(ext!.target, 'the nested TInner, never the top-level TOuter').toBe('TInner');
+    expect(ext!.targetFilePath, 'declared in TOuter.cls').toContain('TOuter.cls');
     expect(
       getRelationships(result, 'EXTENDS').filter(
         (e) => e.source === 'TailSub' && e.targetFilePath.endsWith('TInner.cls'),
       ),
-      'never the same-tail top-level decoy',
+      'never the same-tail top-level decoy TInner.cls',
     ).toEqual([]);
   });
 
@@ -1073,13 +1078,23 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     const ext = getRelationships(result, 'EXTENDS').find((e) => e.source === 'PhantomSub');
     expect(ext, 'PhantomSub extends PHANTOM binds the injected misfiled trigger').toBeDefined();
     expect(ext!.targetFilePath, 'the misfiled trigger def in Phantom.cls').toContain('Phantom.cls');
-    // MRO-downstream disposition: the trigger declares no members, so no false inherited-member edge
-    // rides the trigger-parent MRO (the BL-6/BL-7-analogue check, SDD-004 §4).
+    // MRO-downstream disposition (SDD-004 §4, the BL-6/BL-7-analogue check): PhantomSub.run() makes
+    // an implicit-this `ghost()` call, so post-reorder the MRO walk over [PhantomSub, Phantom-trigger]
+    // actually runs. The trigger declares no members, so `ghost` binds nothing and NO false
+    // inherited-member edge rides the trigger-parent MRO — neither into Phantom.cls nor any `ghost`
+    // edge at all. (A memberless trigger parent makes member-poisoning structurally impossible, unlike
+    // BL-6's decoy which owned decoy2() — the ratified §1.2-(b) over-bind is the EXTENDS edge alone.)
     expect(
       getRelationships(result, 'CALLS').filter(
         (e) => e.sourceFilePath.includes('PhantomSub') && e.targetFilePath.includes('Phantom.cls'),
       ),
       'no false inherited-member edge rides the trigger-parent MRO',
+    ).toEqual([]);
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'ghost' && e.sourceFilePath.includes('PhantomSub'),
+      ),
+      'the implicit-this ghost() binds nothing through the trigger-parent MRO',
     ).toEqual([]);
     // the non-heritage case-varied bind (PhantomCaller `new PHANTOM()`) stays unchanged (already green).
     expect(
@@ -1104,6 +1119,19 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
       suppressed(result).some((o) => o.name.toLowerCase() === 'act'),
       'obligation 2: the c.Act() reference is recorded unresolved',
     ).toBe(true);
+  });
+
+  it('records no false unresolved/suppressed outcome for the flipped BL-2/BL-4/BL-5/BL-6 discharges (REQ-006, SDD-004 §8)', () => {
+    // SDD-004 §8: each newly-resolved BL discharge also asserts the REQ-006 negative. Scoped to the
+    // collision-block heritage/member names WI-4 newly resolves — Twist (BL-2 -> TWIST), TInner
+    // (BL-4 nested), Twin (BL-5 -> class), decoy2 (BL-6 cleared) — so a discharge that emits both the
+    // correct edge AND a spurious suppressed record is caught. (The unrelated CaseColl `act` member
+    // collision legitimately records; it is excluded from this scope.)
+    const dischargedNames = new Set(['Twist', 'TInner', 'Twin', 'decoy2']);
+    expect(
+      suppressed(result).filter((o) => dischargedNames.has(o.name)),
+      'no false unresolved record for the flipped BL discharges',
+    ).toEqual([]);
   });
 
   it('leaves no dangling resolution edges', () => {

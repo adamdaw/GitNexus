@@ -115,6 +115,19 @@ describe.skipIf(!apexAvailable)('Apex parameter-typed-argument narrowing (REQ-00
     expect(g!.rel.targetId, 'the nested overload, not g(String)').not.toContain('String');
   });
 
+  it('SKIPS narrowing on a duplicate-named (ambiguous) parameter type — the enclosing-scope tie refuses -> arity-only, never mis-bound (REQ-008 §4)', () => {
+    // §4 duplicate-named ambiguous arm: ETie owns colliding nested Amb/AMB, useAmb(p:Amb) -> the
+    // §1(3)(c) enclosing-scope owned-def lookup finds a genuine tie (NOT foreclosed by workspace
+    // inject-none, since it is scope-local) -> refuses -> arity-only -> h(p) binds nothing. A pick-one
+    // oracle bug would narrow to h(ETie.Amb); this asserts the conservative skip.
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'h' && e.sourceFilePath.includes('ETie'),
+      ),
+      'no binding edge for the ambiguous duplicate-typed parameter arg',
+    ).toEqual([]);
+  });
+
   it('records no false unresolved/suppressed outcome for the resolving parameter-arg cases (REQ-006)', () => {
     // The user-defined narrowing cases resolve, so `f`/`g` from the resolving callers emit no
     // suppressed record. (The external ParamExtCaller case is a conservative arity-only miss —
@@ -236,6 +249,19 @@ describe.skipIf(!apexAvailable)('Apex resolution parity (REQ-012 / NFR-004, SDD-
     expect(foo!.targetFilePath, 'targets Widget.foo').toContain('Widget.cls');
   });
 
+  it('conservatively SKIPS a case-COLLIDING receiver variable (Widget pa; Gadget PA; Pa.foo()) — never mis-bound (§4)', () => {
+    // §4 receiver-variable collision arm: the reference `Pa` case-varies against BOTH same-folded
+    // receiver variables (pa:Widget, PA:Gadget) — it exact-matches neither, and folds to 'pa' ->
+    // an ambiguous receiver -> the fold must not guess -> no CALLS edge from PColl (never Widget.foo
+    // nor Gadget.foo). Non-gated hardening; conservative-negative anchored by the happy-path fold above.
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'foo' && e.sourceFilePath.includes('PColl'),
+      ),
+      'no mis-bind on the ambiguous receiver-variable collision',
+    ).toEqual([]);
+  });
+
   it('records no unresolved/suppressed outcome for the resolving parity references (REQ-006)', () => {
     const resolvingNames = new Set(['start', 'PEngine', 'label', 'PBase', 'PIface', 'foo']);
     expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
@@ -268,6 +294,90 @@ describe.skipIf(!apexAvailable)('Apex cross-file heritage cycle (NFR-001, SDD-00
       exts.find((e) => e.source === 'CycloneB' && e.target === 'CycloneA'),
       'CycloneB extends CYCLONEA resolves (case-varied, folded)',
     ).toBeDefined();
+  });
+
+  it('leaves no dangling resolution edges', () => {
+    expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
+  });
+});
+
+// ── SDD-004 §4 — nested-aware heritage-base seam: dotted-base refuse/resolve shapes ──
+describe.skipIf(!apexAvailable)('Apex nested-aware heritage-base seam — dotted refuse/resolve shapes (SDD-004 §1(2)/§4)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-heritage-refuse'), () => {});
+  }, 120000);
+
+  const extendsFrom = (src: string) =>
+    getRelationships(result, 'EXTENDS').filter((e) => e.source === src);
+
+  it('RESOLVES a case-varied OUTER (RCaseOuter extends HOUTER.HInner) to the nested HInner (seam state-i)', () => {
+    // The dotted analogue of BL-1: the OUTER folds to HOuter, the tail HInner resolves. RED until the
+    // reorder + seam ship (pre-WI-4 the folded workspace channel is empty for heritage).
+    const ext = extendsFrom('RCaseOuter').find((e) => e.target === 'HInner');
+    expect(ext, 'RCaseOuter extends HOUTER.HInner -> the nested HInner').toBeDefined();
+    expect(ext!.targetFilePath, 'declared in HOuter.cls').toContain('HOuter.cls');
+  });
+
+  it('REFUSES an external/absent OUTER (RExtOuter extends Ext.Ghost) — no edge, never the same-tail decoy Ghost (seam state-ii)', () => {
+    // Pre-WI-4 the shared QNI dotted-tail fallback mis-binds the top-level decoy Ghost (BL-4 pattern);
+    // the seam gates that fallback for any dotted base with a non-unique OUTER. RED until the seam.
+    expect(extendsFrom('RExtOuter'), 'no EXTENDS edge for an external-OUTER dotted base').toEqual([]);
+    expect(
+      getRelationships(result, 'EXTENDS').filter(
+        (e) => e.source === 'RExtOuter' && e.targetFilePath.endsWith('Ghost.cls'),
+      ),
+      'never the same-tail top-level decoy Ghost',
+    ).toEqual([]);
+  });
+
+  it('REFUSES an OUTER-found/tail-absent dotted base (RTailAbsent extends HOuter.Ghost) — no edge, never the decoy (seam state-ii, the BL-4 near-miss guard)', () => {
+    // HOuter binds but owns no Ghost; a top-level Ghost decoy exists. The seam must refuse rather than
+    // fall through to re-bind the decoy. RED until the seam (pre-WI-4 mis-binds Ghost).
+    expect(extendsFrom('RTailAbsent'), 'no EXTENDS for the tail-absent dotted base').toEqual([]);
+    expect(
+      getRelationships(result, 'EXTENDS').filter(
+        (e) => e.source === 'RTailAbsent' && e.targetFilePath.endsWith('Ghost.cls'),
+      ),
+      'never the same-tail decoy Ghost',
+    ).toEqual([]);
+  });
+
+  it('REFUSES a case-collided OUTER (RCollidedOuter extends COuter.CInner) — no edge, never the decoy CInner (seam state-ii)', () => {
+    // COuter/couter collide -> inject-none -> 0 workspace candidates -> OUTER not unique -> refuse; the
+    // BL-4 guard holds for a case-collided OUTER too. RED until the seam (pre-WI-4 mis-binds CInner).
+    expect(extendsFrom('RCollidedOuter'), 'no EXTENDS for the case-collided-OUTER dotted base').toEqual([]);
+    expect(
+      getRelationships(result, 'EXTENDS').filter(
+        (e) => e.source === 'RCollidedOuter' && e.targetFilePath.endsWith('CInner.cls'),
+      ),
+      'never the same-tail top-level decoy CInner',
+    ).toEqual([]);
+  });
+
+  it('REFUSES a >2-segment namespace-qualified base (RNamespace extends ns.HOuter.HInner) — no edge (seam state-ii)', () => {
+    // A managed-package namespace-qualified external reference (Apex user-defined nesting is at most
+    // two segments). Conservative-negative anchor (no same-tail top-level decoy exists for the tail).
+    // [no-red justification: the >2-segment tail has no top-level match, so it binds nothing pre- or
+    // post-seam; the seam formalizes the refuse.]
+    expect(extendsFrom('RNamespace'), 'no EXTENDS for a >2-segment namespace-qualified base').toEqual([]);
+  });
+
+  it('REFUSES an ambiguous nested tail (RAmbiguous extends HOuter.Dup, HOuter owns Dup+DUP) — refuse-on-tie, no guess (SDD-004 §7)', () => {
+    // The uniquely-bound OUTER owns two case-colliding nested Dup/DUP -> the nested lookup refuses on
+    // the tie (mirrors REQ-015 / resolveQualifiedInheritanceBase). Conservative-negative anchor (no
+    // top-level Dup decoy exists). [no-red justification: no decoy to mis-bind pre- or post-seam.]
+    expect(extendsFrom('RAmbiguous'), 'no EXTENDS for the ambiguous nested tail').toEqual([]);
+  });
+
+  it('records no false unresolved *defect* for the refuse shapes (REQ-013-adjacent — a refuse is benign, not a defect)', () => {
+    // The refused heritage bases emit no edge and no defect (benign, like an external reference).
+    const refuseNames = new Set(['Ghost', 'CInner', 'Dup', 'HInner']);
+    expect(
+      suppressed(result).filter((o) => refuseNames.has(o.name)),
+      'no unresolved defect for the refused dotted bases',
+    ).toEqual([]);
   });
 
   it('leaves no dangling resolution edges', () => {
