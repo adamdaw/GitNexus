@@ -2079,10 +2079,12 @@ Java/Kotlin-tier resolution parity (REQ-012), handles external references as ben
 **discharges the WI-3-carried heritage limitations BL-1…BL-8** via the committed heritage/namespace-sibling
 pipeline reorder, **completes REQ-008's parameter-typed-argument narrowing** (deferred by WI-2), and folds a
 receiver **variable**'s name for case-insensitivity completeness. Unlike WI-1 (parse) and WI-3 (pure
-registration), WI-4 commits **two shared-code edits, both §2.2-clean (name no language, inert for peers)** —
-an **Apex-gated** pipeline re-sequence (a provider-configured flag; peers byte-identical) and a generic
+registration), WI-4 commits **three shared-code touches, all §2.2-clean (name no language, inert for peers)** —
+an **Apex-gated** pipeline re-sequence (a provider-configured flag; peers byte-identical), a generic
 per-language heritage-base-resolution seam (required for the dotted nested-parent form, since additive
-registration cannot remove the shared pre-pass's decoy edge — §1(2)). The **re-sequence's §2.2 fit is
+registration cannot remove the shared pre-pass's decoy edge — §1(2)), and (surfaced at Step-3b, §9) the
+**receiver-variable case-fold's folded fallback in shared `findReceiverTypeBinding`** via the *existing* WI-3
+`normalizeIdentifier` seam (§1(4) — inert for a peer with no normalizer; not a new seam). The **re-sequence's §2.2 fit is
 Architect-ruled settled** (the "configured by the isolated provider" arm — no amendment, 2026-07-07). The
 **seam** fits the same §2.2(b) arm as a **standard per-language provider hook** (like the host's existing
 `emitHeritageEdges`/`populateNamespaceSiblings` hooks), its §2.2(c) NFR-002 leg **Gate-4-measured** (not
@@ -2090,7 +2092,7 @@ by-construction — it edits shared `resolveInheritanceBaseInScope` code peers e
 Addendum-2 escalation fallback if the seam-conformance review cannot be made clean — **Architect-affirmed 2026-07-07 (no §2.2 amendment)**. What is owed at **Gate 4** is the code-level review that each *implementation*
 names no language + the NFR-002 measurement (§7).*
 
-- **Consumes:** SRS-001 (**v1.28**) **REQ-012** (Java/Kotlin parity), **REQ-013** (external-reference
+- **Consumes:** SRS-001 (**v1.29**) **REQ-012** (Java/Kotlin parity), **REQ-013** (external-reference
   handling), **NFR-004** (automated resolution test); the **§5.1 Bounded Limitations Register** rows
   **BL-1…BL-8** (every row marked `Fix=WI-4` — the valid-source heritage-form limitations WI-4 discharges),
   plus **REQ-010 / BL-10** (WI-3's invalid-source `.cls`-misfiled-trigger row, `Fix=—`) as the **perturbed
@@ -2101,14 +2103,19 @@ names no language + the NFR-002 measurement (§7).*
   **RESEARCH-004** (§A.6 host-API spike, 2026-07-07 — the heritage-reorder feasibility + the necessary-but-
   insufficient trace for the dotted nested-parent form, the REQ-013 host-default-benign finding, and the
   REQ-008 user-defined-vs-external oracle — Apex-local, decoy-safe).
-- **Constitution:** CONST-gitnexus-apex **v1.1.3** (this SDD section is authored under, and Gate 2 checks it
-  against, v1.1.3 — matching SDD-003). **Security-critical = false** (operates on WI-1's safe-parsed output +
+- **Constitution:** CONST-gitnexus-apex **v1.1.4** (this SDD section is authored under, and Gate 2 checks it
+  against, v1.1.4 — the amendment that discharges the §1.2(a) valid-source false-edge class WI-4 delivers).
+  **Security-critical = false** (operates on WI-1's safe-parsed output +
   WI-2/WI-3's resolution model; introduces no new untrusted-source parse path — SECT-001 stays WI-1's). No
-  new SEC clause. WI-4 commits **two shared-code edits** (the Apex-gated pipeline re-sequence and the
-  per-language heritage-base-resolution seam), both under the §2.2 "configured by the isolated provider" arm
+  new SEC clause. WI-4 commits **three shared-code touches** (the Apex-gated pipeline re-sequence, the
+  per-language heritage-base-resolution seam, and the receiver-var fold's folded fallback in shared
+  `findReceiverTypeBinding` via the existing WI-3 `normalizeIdentifier` seam — §1(4)/§9), all under the §2.2
+  "configured by the isolated provider" arm
   (naming no language): the **re-sequence** Architect-ruled settled (2026-07-07, no §2.2 amendment); the
   **seam** a standard per-language provider hook whose §2.2(c) NFR-002 is Gate-4-**measured**, with the
-  RESEARCH-004 Addendum-2 fallback; **Architect-affirmed 2026-07-07 (no §2.2 amendment)**.
+  RESEARCH-004 Addendum-2 fallback (**Architect-affirmed 2026-07-07, no §2.2 amendment**); the
+  **receiver-var fold** extends the WI-3 `normalizeIdentifier` seam already sanctioned under §2.2
+  (Architect-approved 2026-07-08, §9), inert for a peer with no normalizer, its NFR-002 leg Gate-4-**measured**.
 - **Builds on / completes:** WI-2's REQ-008 overload mechanic (SDD-002) — WI-4 **completes** its
   parameter-typed-argument sub-case (not re-owning it); and WI-3's REQ-010 registration (SDD-003) — the
   reorder makes WI-3's `workspaceFqnBindings` channel reachable by the heritage pass, discharging the
@@ -2335,7 +2342,10 @@ Apex-local config, not a new mechanism. **REQ-012 / NFR-004** are the parity *ev
 suite comparable to peers (the NFR-004 `apex-resolution` suite — `apex-resolution.test.ts`, with WI-4 parity
 fixtures as §2.5-permitted additive siblings) over the full same-file + cross-file surface, demonstrating
 Java/Kotlin-tier resolution. The **receiver-variable-name case-fold** (the WI-2→WI-3→WI-4 re-deferred
-case-insensitivity completeness item) folds a receiver **variable**'s name at its lookup, Apex-local. Per
+case-insensitivity completeness item) folds a receiver **variable**'s name at its lookup — the **third shared
+touch** (§9), a folded fallback added to shared `findReceiverTypeBinding` via the *existing* WI-3
+`normalizeIdentifier` seam (inert for a peer with no normalizer; runs only after the exact scope-walk misses,
+so an exact-cased receiver still wins), **not** a new Apex-local mechanism (Architect-approved 2026-07-08). Per
 RESEARCH-004 it is **parity hardening, not a SHALL gap** — the **case-varied token is the receiver *variable***
 (`A`≡`a`), **not** the method (`foo` is referenced exact-case). REQ-005 case-insensitivity is exercised on
 user-defined *types/members* (SRS §2's symbol set); here **no type or member is case-varied** — only a
@@ -2473,12 +2483,15 @@ verification** of the discharge (a Phase-5 cascade, not authored pre-verificatio
     amendment **makes BL-1's `implements` arm explicit**, pinned by a case-varied cross-file `implements`
     fixture.)** (The separate
     `emitDetectedInterfaceImplementations` inferred-implements pass is inert for Apex — §1(1).)
-- **Receiver-variable case-fold (Apex case-insensitivity hardening — no governing SHALL/parity/NFR-004, §1(4)).**
+- **Receiver-variable case-fold (case-insensitivity hardening — no governing SHALL/parity/NFR-004, §1(4);
+  the THIRD shared touch — §9).**
   - *Postcondition:* a case-varied receiver **variable** name (`Widget a; A.foo()` where `A` refers to the
-    user-defined-typed variable `a`) folds to its declaration, so `A.foo()` resolves `Widget.foo`. Apex-local
-    parity hardening (RESEARCH-004: not a SHALL gap — SRS §2's user-defined-symbol set excludes local
-    variables); **[Gate-3 reliance]** on the folded lookup resolving. (`Account` is an external sObject,
-    reserved for REQ-013 illustrations.)
+    user-defined-typed variable `a`) folds to its declaration, so `A.foo()` resolves `Widget.foo`. Implemented
+    as a folded fallback in shared `findReceiverTypeBinding` via the existing WI-3 `normalizeIdentifier` seam
+    (§9 — inert for a peer with no normalizer; a folded-key collision → conservative skip), NOT a new
+    Apex-local mechanism; parity hardening (RESEARCH-004: not a SHALL gap — SRS §2's user-defined-symbol set
+    excludes local variables); **[Gate-3 reliance]** on the folded lookup resolving. (`Account` is an external
+    sObject, reserved for REQ-013 illustrations.)
 
 ## 3. Interface definition (what WI-4 adds)
 
@@ -2660,10 +2673,10 @@ verification** of the discharge (a Phase-5 cascade, not authored pre-verificatio
 
 ## 5. Non-functional requirements (baked in)
 
-- **NFR-002 (both shared edits inert for peers — the re-sequence by construction; the seam a
-  behaviour-preserving no-op for hookless peers, Gate-4-confirmed).** WI-4's two
-  shared-code edits are both **provider-gated / provider-hooked**, so neither affects a peer that does not opt
-  in. (i) The **Apex-gated re-sequence**: `resolveHeritageAfterSiblings` is unset on every peer run, so no
+- **NFR-002 (all three shared touches inert for peers — the re-sequence by construction; the seam and the
+  receiver-var fold behaviour-preserving no-ops for hookless / normalizer-less peers, Gate-4-confirmed).**
+  WI-4's three shared-code touches are each **provider-gated / provider-hooked / seam-guarded**, so none
+  affects a peer that does not opt in. (i) The **Apex-gated re-sequence**: `resolveHeritageAfterSiblings` is unset on every peer run, so no
   peer's pipeline re-sequences — byte-identical, **zero peer surface** (§1(1)). (ii) The **heritage-base
   seam**: a generic per-language hook consulted at the top of `resolveInheritanceBaseInScope` — for a peer
   that registers **no** hook the consultation is a no-op, so `resolveInheritanceBaseInScope`'s peer **behaviour
@@ -2676,8 +2689,12 @@ byte-identical, unlike the flag-gated re-sequence; only its hookless-peer *behav
   that every peer executes (the consultation guard), so its peer non-regression is a **behaviour-preserving
   no-op whose correctness the Gate-4 peer-suite run is the load-bearing evidence for** — trivially inert for a
   hookless peer, but confirmed, not by-construction-certain like (i). The Gate-4 check also confirms no peer
-  registers the hook + re-checks the F2 `methodDispatch`-independence premise. The parameter-arg gate, external
-  oracle, and receiver-var fold are all Apex-local.
+  registers the hook + re-checks the F2 `methodDispatch`-independence premise. **(iii) The receiver-var fold**
+  (§9) adds a folded fallback to shared `findReceiverTypeBinding` gated on `scopes.normalizeIdentifier` — inert
+  for a peer with no normalizer (same *measured*-no-op class as (ii), not by-construction). The parameter-arg
+  gate and the external oracle are Apex-local (no shared edit). **Step-3b measured NFR-002 green across all
+  three touches — full resolver suite 3050/3050 (54 files), zero peer regressions (§9); Gate 4 formally
+  confirms this measurement.**
 - **NFR-001 (resolution-stage slice).** The reorder + nested lookup + parameter-arg gate complete without
   crashing on partial/error-recovery trees and references into skipped files; an unresolvable base/reference
   is left unresolved, never a throw.
@@ -2717,9 +2734,11 @@ name-collision already globally referenceable by ratified §1.2-(b), and (b) ter
   edge to the decoy; the ambiguous-nested fixture asserts refuse-on-tie) — **not** a data-integrity or
   trust-boundary invariant over unbounded state (WI-4 opens no trust boundary, §6). It guards no
   security/financial/data-integrity/safety/concurrency invariant, so no Prove obligation arises. **NFR-002**
-  holds for the re-sequence by construction (byte-identical) and for the seam as a Gate-4-confirmed
-  behaviour-preserving no-op (§5) — the peer suites green are the seam's load-bearing evidence, not a mere
-  formality. Gate 5 for WI-4 reduces to
+  holds for the re-sequence by construction (byte-identical), and for the seam AND the receiver-var fold's
+  `findReceiverTypeBinding` fallback (§9) as behaviour-preserving no-ops for peers (a peer registers no hook
+  and has no normalizer) — the peer suites green are the load-bearing evidence. **Step-3b measured this green
+  (full resolver suite 3050/3050, 54 files, §9); Gate 4 formally confirms that measurement** as the NFR-002
+  objective evidence (the seam + fold legs are measured, the re-sequence leg is by-construction). Gate 5 for WI-4 reduces to
   the resolution-slice no-crash fuzz + mutation over the new `languages/apex/` code and the reordered region
   (same calibration as WI-1/2/3, by per-property reasoning).
 - **Purity boundary.** Pure core = the **def-selection / nested-base-lookup / oracle-membership helpers** —
@@ -2727,8 +2746,11 @@ name-collision already globally referenceable by ratified §1.2-(b), and (b) ter
   unit-anchor targets, dogfood #16). Effectful shell = (a) the `run.ts` **pass re-sequence** (host-structural
   control flow — the pipeline invokes passes; no new state), (b) the **heritage-base seam's hook consultation
   point** in `resolveInheritanceBaseInScope` (host-structural — it calls the hook and, on a hit, skips the
-  dotted-tail fallback; the Apex hook's *resolution* is the pure nested-base-lookup helper), and (c) the
-  parameter-arg gate's write into the existing `varTypes`/narrowing path. Dependency direction is shell→core.
+  dotted-tail fallback; the Apex hook's *resolution* is the pure nested-base-lookup helper), (c) the
+  parameter-arg gate's write into the existing `varTypes`/narrowing path, and **(d) the receiver-var fold's
+  folded fallback in shared `findReceiverTypeBinding`** (§9 — host-structural: after the exact scope-walk
+  misses it folds each scope's typeBinding keys via `scopes.normalizeIdentifier`; the fold decision — unique
+  folded match vs collision-skip — is the pure part, inert for a peer with no normalizer). Dependency direction is shell→core.
   The reorder moves *existing* effectful passes (a new order, no new effect); the seam adds a hook-consultation
   point whose decision logic is the pure core helper.
 - **Tooling.** Host test framework (vitest) — integration resolution tests over multi-file fixtures (the
@@ -2740,10 +2762,12 @@ name-collision already globally referenceable by ratified §1.2-(b), and (b) ter
   resolves each simple-name heritage form (BL-1/BL-2/BL-5/BL-8) — validated by the flipped fixtures; (2) that
   the reorder + nested-aware base resolution resolves the dotted form (BL-3/BL-4) and clears the poisoned MRO
   (BL-6/BL-7) — the nested-aware base seam is a committed deliverable (§1(2), structurally required per RESEARCH-004 finding 4; the epic's second shared edit — a generic per-language hook gating the shared pre-pass's dotted-tail fallback, since additive `emitHeritageEdges` registration cannot remove the decoy edge), with the Architect-escalation → SRS §5.1 amendment + INTENT-001 revisit / Gate-1 re-entry path if no §2.2-clean seam resolves the dotted form; (3) **(Gate-4 NFR-002)**
-  that peer resolver suites stay green under BOTH shared edits — for the **re-sequence** by construction (the
-  flag is unset on peer runs, so no peer re-sequences); for the **seam** the peer suites are the **load-bearing
-  evidence** (§5) that its added consultation guard is a behaviour-preserving no-op for a hookless peer
-  (measured, not by-construction) — +
+  that peer resolver suites stay green under all **three** shared touches — for the **re-sequence** by
+  construction (the flag is unset on peer runs, so no peer re-sequences); for the **seam** AND the
+  **receiver-var fold** (§9) the peer suites are the **load-bearing evidence** (§5) that each added guard (the
+  seam's consultation point in `resolveInheritanceBaseInScope`; the fold's folded fallback in
+  `findReceiverTypeBinding`) is a behaviour-preserving no-op for a peer that registers no hook / has no
+  normalizer (measured, not by-construction — Step-3b measured 3050/3050, Gate 4 confirms) — +
   the F2 `methodDispatch`-independence premise holds; (4) that gating `resolveVarTypeBindings` on the
   §1(3) Apex-local decoy-safe oracle (workspace membership + inc-11 nested, NOT the shared decoy-prone tail)
   narrows the user-defined (top-level + nested) parameter-arg case and conservatively skips the external,
@@ -2830,7 +2854,13 @@ full resolver suite 3050/3050, 54 files).*
   decoy-safe oracle (workspace top-level membership + the enclosing-scope nested lookup, local-over-global to
   shadow a same-tail top-level decoy) and rewrites the slot to the folded tail or blanks it (external / tie →
   arity-only). **Still no shared edit** — an existing optional per-language hook; only Apex reference sites
-  are touched. The §1(3) decoy-safe oracle and every §2/§4 outcome are unchanged.
+  are touched. The §1(3) decoy-safe oracle and every §2/§4 outcome are unchanged. **Ordering under the §1(1)
+  Apex-run re-sequence:** `populateRangeBindings` keeps its host position (`run.ts:666`) and consumes the
+  re-spread `indexes`; the §1(1) re-sequence moves only the heritage/MRO block to *before* it (landing after
+  `populateNamespaceSiblings :640`, before `mirrorNamespaceTypeBindings :653`), so on the Apex run the
+  param-arg hook still runs after `populateNamespaceSiblings` (its `workspaceFqnBindings` input is populated)
+  and before `resolveReferenceSites :687` (which consumes the gated argument types) — the two Apex-run shared
+  changes do not perturb each other's inputs.
 
 - **§1(4)/§5 — the receiver-variable fold extends the shared `findReceiverTypeBinding` via the existing
   `normalizeIdentifier` seam, so WI-4 commits THREE shared touches, not two.** §1(4)/§5 called the
@@ -2841,8 +2871,11 @@ full resolver suite 3050/3050, 54 files).*
   ONLY after the exact scope-walk misses, gated on `scopes.normalizeIdentifier` (inert for case-sensitive
   peers), with a folded-key collision → `undefined` (ambiguous, never guess). This is the SAME §2.2 seam
   mechanism WI-3's `workspaceBindingsFor` already established (not a new seam), but it IS a third shared-code
-  touch the epic's "two shared edits" statements did not budget — so §1/§5/§7's "two shared edits" now read
-  "**three shared touches**, the third via the already-sanctioned WI-3 fold seam." NFR-002 is measured green
-  (full resolver suite 3050/3050, 54 files). Gate 4's §2.2 code-level review + NFR-002 measurement cover all
-  three shared touches; the re-sequence stays byte-identical-for-peers (flag unset), the heritage-base seam
-  and the receiver-var fold are behaviour-preserving no-ops for peers (no hook / no normalizer).
+  touch the epic's original "two shared edits" statements did not budget. **This §9 correction has been
+  propagated into the SDD-004 body** (Gate-2 re-clear R1, 2026-07-08): the header, §Constitution, §1(4), §2,
+  §5, and §7 now read "**three shared touches**" (the third via the already-sanctioned WI-3 fold seam) and §7's
+  purity boundary carries the fold as effectful-shell item (d) — §9 is the dated record, not a floating
+  erratum against un-amended body text. NFR-002 was **measured** green at Step-3b (full resolver suite
+  3050/3050, 54 files); Gate 4's §2.2 code-level review + NFR-002 measurement formally confirm it across all
+  three touches; the re-sequence stays byte-identical-for-peers (flag unset), the heritage-base seam and the
+  receiver-var fold are behaviour-preserving no-ops for peers (no hook / no normalizer).
