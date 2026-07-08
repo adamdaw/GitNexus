@@ -262,6 +262,18 @@ describe.skipIf(!apexAvailable)('Apex resolution parity (REQ-012 / NFR-004, SDD-
     ).toEqual([]);
   });
 
+  it('does NOT fall through a method-scope receiver-var collision to an enclosing same-folded field (Rc.foo(); local rc/RC collide, field rC) — refuse, never guess (§4)', () => {
+    // Gate-5 mutation-kill (M6): the fold collision at method scope must REFUSE at the collision, not
+    // keep scanning outer scopes and bind the enclosing class field `rC`:Widget. A "keep scanning on
+    // collision" mutant would emit PCollField -> Widget.foo; the conservative-skip pins no edge.
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'foo' && e.sourceFilePath.includes('PCollField'),
+      ),
+      'a method-scope fold collision must not resolve to the enclosing class field',
+    ).toEqual([]);
+  });
+
   it('records no unresolved/suppressed outcome for the resolving parity references (REQ-006)', () => {
     const resolvingNames = new Set(['start', 'PEngine', 'label', 'PBase', 'PIface', 'foo']);
     expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
