@@ -398,8 +398,13 @@ from INTENT-001; reviewed against it and the Constitution at Gate 1.*
   2026-07-08 — behaviour-neutral) §4 **BR-2**'s success-clause exception list dropped BL-1…BL-8 (discharged,
   now retain the full SHALL), leaving only the invalid-source BL-9…BL-14 as catalogued in-repository
   exceptions — the cascade's last un-revisited discharge site (BR-2 was last touched at v1.14, pre-discharge).
-  Re-enters Gate 1 fidelity (a fresh Gate 2 adversary reading SRS+SDD together re-clears the touched rows;
-  cascade-invalidation per §A.7).
+  (F9, Gate-1 re-clear R4 2026-07-08 — behaviour-neutral) §2 defined terms reconciled: the **MRO**
+  "poisoned/mis-bound" illustration (present-tense BL-4 mis-bound edge → BL-6 wrong-ancestor lookup) rewritten
+  as a discharged historical shape; **Safety limitation** / **Documented false edge** annotated
+  retained-for-provenance (no live instance post-discharge — the §1.2(a) class is empty; surviving §1.2(b)
+  rows are correct channel binds, not false edges), and REQ-015's bounded-exceptions preamble narrowed so its
+  "documented false edge (§2)" cite names the now-discharged (a) class. Re-enters Gate 1 fidelity (a fresh
+  Gate 2 adversary reading SRS+SDD together re-clears the touched rows; cascade-invalidation per §A.7).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope
@@ -485,14 +490,20 @@ at epic completion, rather than by deferral.
 - **Liveness limitation** — an under-bind: a reference the SHALL would resolve emits no edge (edge-absence);
   a bounded shortfall, not a mis-bind.
 - **Safety limitation** — an over-bind: a ratified *documented false edge* — a resolved edge to a
-  wrong-but-internally-consistent target, emitted where the SHALL would withhold or redirect it.
+  wrong-but-internally-consistent target, emitted where the SHALL would withhold or redirect it. (Terminology
+  retained for provenance: after the WI-4 discharge (v1.29) the §1.2(a) valid-source false-edge class holds no
+  live instance — the surviving §1.2(b) invalid-source rows BL-10/BL-11/BL-12 are *correct* channel binds on
+  invalid source, not false edges.)
 - **Documented false edge** — a resolved edge deliberately emitted to a wrong-but-internally-consistent
   target under a ratified bounded limitation (Constitution §1.2), reachable only in a narrow named shape
-  and carrying a committed fix path; not a conservatism waiver.
+  and carrying a committed fix path; not a conservatism waiver. (Retained for provenance — no live instance
+  after the WI-4 discharge (v1.29), which emptied the §1.2(a) class; REQ-015's bounded-exceptions preamble
+  invokes this term only for that now-discharged (a) class.)
 - **MRO (method resolution order)** — the linearised ancestor order along which an inherited-member or
   implicit-`this` reference is resolved (the type's own members first, then its supertypes in order). A
-  "poisoned" or "mis-bound" MRO is one built from a mis-bound heritage edge (register BL-4), so a member
-  lookup walks into the wrong ancestor (register BL-6).
+  "poisoned" or "mis-bound" MRO *was* one built from a mis-bound heritage edge (register BL-4), so a member
+  lookup walked into the wrong ancestor (register BL-6) — a shape **discharged at WI-4 (v1.29)**: with BL-4's
+  heritage edge corrected the MRO carries no decoy, so no such poisoned lookup arises.
 - **Benchmark** — GitNexus's Java/Kotlin support, the parity target for resolution behaviour.
 - **Analysed repository** — the codebase passed to a single GitNexus analysis run.
 
@@ -589,7 +600,8 @@ minted during Gate 1 and is slotted by theme (resolution), not appended numerica
   resolution: prefer no binding over a misleading one — Constitution §1.2.)
 
   **Bounded exceptions (documented limitations — Constitution §1.2).** Each emits a documented false edge
-  (§2) or a bind the conservative default would withhold; each is Architect-ratified, fixture-pinned, and
+  (§2 — the (a) class, discharged at WI-4 v1.29) or a bind the conservative default would withhold (the
+  still-live (b) invalid-source channel binds); each is Architect-ratified, fixture-pinned, and
   reachable only in the narrow shape named — recorded as a limitation, not a silent departure:
   - **(a) Valid-source false edges** — BL-2, BL-4, BL-6, and the BL-7 `super.method()` self-loop (§5.1
     register). **DISCHARGED at WI-4 (v1.29): this (a) class now holds no live valid-source false edge — the
