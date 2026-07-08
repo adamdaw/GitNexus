@@ -394,8 +394,12 @@ from INTENT-001; reviewed against it and the Constitution at Gate 1.*
   heritage form, discharged") reconciled to the discharge — the two REQ-015 sub-clauses the first cascade
   pass left carrying pre-discharge language. (F7, Gate-1 re-clear R2 2026-07-08 — behaviour-neutral) the §5.1
   register-preamble "—"-class exemplar dropped BL-8's discharged super-sourced-CALLS-without-EXTENDS shape
-  (now cites still-live BL-9 exact-case bind / BL-13/BL-14 edge-absent liveness). Re-enters Gate 1 fidelity (a
-  fresh Gate 2 adversary reading SRS+SDD together re-clears the touched rows; cascade-invalidation per §A.7).
+  (now cites still-live BL-9 exact-case bind / BL-13/BL-14 edge-absent liveness). (F8, Gate-1 re-clear R3
+  2026-07-08 — behaviour-neutral) §4 **BR-2**'s success-clause exception list dropped BL-1…BL-8 (discharged,
+  now retain the full SHALL), leaving only the invalid-source BL-9…BL-14 as catalogued in-repository
+  exceptions — the cascade's last un-revisited discharge site (BR-2 was last touched at v1.14, pre-discharge).
+  Re-enters Gate 1 fidelity (a fresh Gate 2 adversary reading SRS+SDD together re-clears the touched rows;
+  cascade-invalidation per §A.7).
 - **Classification:** epic (fans out into multiple independently-deployable work items).
 
 ## 1. Purpose and Scope
@@ -508,8 +512,10 @@ at epic completion, rather than by deferral.
   symbols for in-repository targets. *Success:* no deviation from clean in-repository parity in either
   direction — neither an unresolved reference where resolution is due nor a mis-resolution — for unambiguous
   in-repository Apex symbols across the acceptance scenarios (§9), **except the bounded, Architect-ratified limitations
-  catalogued in the §5.1 register (with their governing REQs in its Gov-REQ column) (the valid-source heritage-family limitations BL-1…BL-8 — the heritage edges plus their
-  BL-7/BL-8 super/inherited-member arms; and the invalid-source shapes BL-9…BL-14) — each a documented, fixture-pinned exception, not open
+  catalogued in the §5.1 register (with their governing REQs in its Gov-REQ column) — the **invalid-source
+  shapes BL-9…BL-14** (the valid-source heritage-family limitations BL-1…BL-8 — the heritage edges plus their
+  BL-7/BL-8 super/inherited-member arms — were exceptions here until **discharged at WI-4 (v1.29)**, and now
+  retain the full SHALL) — each a documented, fixture-pinned exception, not open
   drift.**
 - **BR-3 (Must):** Apex resolution quality matches the Java/Kotlin benchmark for applicable capabilities.
   *Success:* the §9 parity scenario (REQ-012) resolves each applicable construct equivalently to the
