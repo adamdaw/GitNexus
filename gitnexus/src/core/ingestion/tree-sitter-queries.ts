@@ -1772,4 +1772,9 @@ export const LANGUAGE_QUERIES: Record<SupportedLanguages, string> = {
   [SupportedLanguages.Dart]: DART_QUERIES,
   [SupportedLanguages.Vue]: TYPESCRIPT_QUERIES, // Vue <script> blocks are parsed as TypeScript
   [SupportedLanguages.Cobol]: '', // Standalone regex processor — no tree-sitter queries
+  // Apex's canonical query lives with its provider (languages/apex/queries.ts,
+  // consumed via provider.treeSitterQueries). This map is unused at runtime —
+  // the worker reads provider.treeSitterQueries — so the entry is an exhaustive
+  // -Record stub only; importing APEX_QUERIES here would invert layering.
+  [SupportedLanguages.Apex]: '',
 };

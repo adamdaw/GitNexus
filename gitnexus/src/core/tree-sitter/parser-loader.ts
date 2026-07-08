@@ -177,6 +177,18 @@ const SOURCES: Record<string, GrammarSource> = {
       'Likely cause: no prebuilt `.node` for this platform/architecture. ' +
       `See ${ISSUES_URL}/2107.`,
   },
+  // Apex — vendored ABI-14 regeneration of `aheber/tree-sitter-sfapex` (upstream
+  // parser.c is ABI-15 and will not load on the pinned tree-sitter@0.21.1).
+  // Optional / userSkippable like the other vendored grammars (Swift/Kotlin/C/Dart).
+  [SupportedLanguages.Apex]: {
+    load: () => requireVendoredGrammar('tree-sitter-apex'),
+    optional: true,
+    userSkippable: true,
+    unavailableNote:
+      'Apex parsing disabled: vendored `tree-sitter-apex` (under ' +
+      '`gitnexus/vendor/tree-sitter-apex`) failed to load. ' +
+      'Likely cause: no prebuilt `.node` for this platform/architecture.',
+  },
 };
 
 /**

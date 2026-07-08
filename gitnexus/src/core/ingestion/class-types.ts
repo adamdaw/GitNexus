@@ -11,6 +11,10 @@ export interface ExtractedClassSymbol {
   type: ClassLikeNodeLabel;
   qualifiedName: string;
   templateArguments?: string[];
+  /** Extra marker properties merged onto the emitted node (e.g. a node-kind
+   *  discriminant for a type captured under a shared label). Mirrors how method
+   *  markers like `isPartial` flow from the extractor to node properties. */
+  properties?: Record<string, unknown>;
 }
 
 export interface ClassCaptureContext {
@@ -76,6 +80,10 @@ export interface ClassExtractionConfig {
   extractType?: (node: SyntaxNode) => ClassLikeNodeLabel | undefined;
   extractScopeSegments?: (node: SyntaxNode) => string[] | null | undefined;
   extractTemplateArguments?: (node: SyntaxNode) => string[] | undefined;
+  /** Optional: extra marker properties to merge onto the emitted node, derived
+   *  from the declaration node (e.g. a node-kind discriminant for a construct
+   *  captured under a shared label). */
+  extractProperties?: (node: SyntaxNode) => Record<string, unknown> | undefined;
   shouldSkipClassCapture?(
     context: ClassCaptureContext & { nodeLabel: ClassLikeNodeLabel },
   ): boolean;

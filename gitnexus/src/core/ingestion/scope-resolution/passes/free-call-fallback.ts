@@ -46,6 +46,7 @@ import {
   isOverloadAmbiguousAfterNormalization,
   narrowOverloadCandidates,
   type ConversionRankFn,
+  type OverloadNarrowingHookCtx,
 } from './overload-narrowing.js';
 
 export function emitFreeCallFallback(
@@ -88,6 +89,16 @@ export function emitFreeCallFallback(
      *  fail at the call site. Three-valued; `'unknown'` keeps the
      *  candidate (monotonicity). */
     readonly constraintCompatibility?: ScopeResolver['constraintCompatibility'];
+    /** REQ-015 (Apex): when an unqualified implicit-`this` call is a genuine
+     *  overload set that argument-type narrowing cannot disambiguate, suppress
+     *  the call (record unresolved + mark handled) instead of leaving it for the
+     *  reference-index emitter to guess a first-overload target. Default false. */
+    readonly conservativeOverloadResolution?: boolean;
+    /** When true, an unqualified implicit-`this` call resolves through the
+     *  enclosing class's MRO (inherited members), not just its own methods.
+     *  Off by default — peer semantics (C++ two-phase lookup) require own-class-
+     *  only. Apex opts in (REQ-005/007 inherited-member resolution). */
+    readonly resolveInheritedImplicitThisCall?: boolean;
     readonly recordResolutionOutcome?: ResolutionOutcomeRecorder;
     /** Resolved-callee-id capture sink (#2227 U2). Threaded in only under
      *  `--pdg`; `undefined` ⇒ zero overhead, byte-identity (R4). Captured at
@@ -129,7 +140,35 @@ export function emitFreeCallFallback(
       // to the Class node itself (implicit constructor). Legacy emits
       // the same two targets; see test expectations.
       let fnDef: SymbolDefinition | undefined;
+      // Constructor overloads that a conservative-overload language (Apex) could
+      // not disambiguate by argument types — recorded UNRESOLVED after the block
+      // rather than guessing the first-declared ctor. Undefined for every other
+      // language (the default arity-only path never sets it).
+      let ctorUnresolved: readonly SymbolDefinition[] | undefined;
       if (site.callForm === 'constructor') {
+        // Most languages link `Type(...)` to the explicit Constructor def when one
+        // exists (else the Class). `constructorCallTargetsClass` opts into always
+        // linking to the Class. `conservativeOverloadResolution` (Apex, REQ-015)
+        // narrows the constructor overloads by argument types and records an
+        // undisambiguable set as unresolved; every other language keeps the
+        // byte-identical arity-only `pickConstructorOrClass` path.
+        const resolveCtorTarget = (cls: SymbolDefinition): SymbolDefinition | undefined => {
+          if (options.constructorCallTargetsClass === true) return cls;
+          if (options.conservativeOverloadResolution === true) {
+            const outcome = selectConstructorConservative(cls, site, workspaceIndex, scopes, {
+              argumentTypeClasses: site.argumentTypeClasses,
+              conversionRankFn: options.conversionRankFn,
+              conversionOnlyArgTypePrefixes: options.conversionOnlyArgTypePrefixes,
+              constraintCompatibility: options.constraintCompatibility,
+            });
+            if ('unresolved' in outcome) {
+              ctorUnresolved = outcome.unresolved;
+              return undefined;
+            }
+            return outcome.def;
+          }
+          return pickConstructorOrClass(cls, workspaceIndex, scopes, site.arity);
+        };
         const classDef = resolveInheritanceBaseInScope(
           site.inScope,
           site.name,
@@ -137,30 +176,29 @@ export function emitFreeCallFallback(
           site.rawQualifiedName,
         );
         if (classDef !== undefined && classDef.type !== 'Interface') {
-          // Most languages link `Type(...)` to the explicit Constructor def
-          // when one exists (else the Class). Languages that model the call
-          // as a reference to the type itself opt into
-          // `constructorCallTargetsClass` and always link to the Class.
-          fnDef =
-            options.constructorCallTargetsClass === true
-              ? classDef
-              : pickConstructorOrClass(classDef, workspaceIndex, scopes, site.arity);
+          fnDef = resolveCtorTarget(classDef);
         } else if (options.allowGlobalFallback === true) {
           // The constructed type may live in a sibling/imported file that is
           // not in the call-site's lexical scope-chain bindings. Fall back to
           // a unique workspace-wide Class def by simple name (gated on the
-          // same global-fallback opt-in as free calls). Then target the
-          // Class or its Constructor per the language's preference.
+          // same global-fallback opt-in as free calls).
           const globalClass = pickUniqueGlobalClass(site.name, globalClassesBySimpleName);
-          if (globalClass !== undefined) {
-            fnDef =
-              globalClass.type === 'Interface'
-                ? undefined
-                : options.constructorCallTargetsClass === true
-                  ? globalClass
-                  : pickConstructorOrClass(globalClass, workspaceIndex, scopes, site.arity);
+          if (globalClass !== undefined && globalClass.type !== 'Interface') {
+            fnDef = resolveCtorTarget(globalClass);
           }
         }
+      }
+      if (ctorUnresolved !== undefined) {
+        recordSuppressedOutcome(options.recordResolutionOutcome, {
+          phase: 'free-call-fallback',
+          filePath: parsed.filePath,
+          name: site.name,
+          range: site.atRange,
+          reason: 'overload-ambiguous',
+          candidates: ctorUnresolved,
+        });
+        handledSites.add(siteKey(parsed.filePath, site));
+        continue;
       }
       // Implicit-this overload narrowing: an unqualified call inside
       // a method body might be calling a sibling overload on the
@@ -169,12 +207,33 @@ export function emitFreeCallFallback(
       // arity + argument types.
       let fnDefFromImplicitThis = false;
       if (fnDef === undefined) {
-        fnDef = pickImplicitThisOverload(site, scopes, workspaceIndex, model, {
+        const implicitThis = resolveImplicitThisCall(site, scopes, workspaceIndex, model, {
           conversionRankFn: options.conversionRankFn,
           conversionOnlyArgTypePrefixes: options.conversionOnlyArgTypePrefixes,
           constraintCompatibility: options.constraintCompatibility,
+          resolveInheritedImplicitThisCall: options.resolveInheritedImplicitThisCall,
         });
+        fnDef = implicitThis.def;
         fnDefFromImplicitThis = fnDef !== undefined;
+        // REQ-015 (Apex): a genuine implicit-`this` overload set that narrowing
+        // could not disambiguate is left UNRESOLVED — record it and mark the site
+        // handled so the reference-index emitter does not guess a first overload.
+        if (
+          fnDef === undefined &&
+          implicitThis.ambiguous &&
+          options.conservativeOverloadResolution === true
+        ) {
+          recordSuppressedOutcome(options.recordResolutionOutcome, {
+            phase: 'free-call-fallback',
+            filePath: parsed.filePath,
+            name: site.name,
+            range: site.atRange,
+            reason: 'overload-ambiguous',
+            candidates: implicitThis.candidates,
+          });
+          handledSites.add(siteKey(parsed.filePath, site));
+          continue;
+        }
       }
       // Scope-chain callable lookup. First-match preserves scope-chain
       // precedence (local shadows import). When a conversion-rank function
@@ -741,19 +800,17 @@ function logicalCallableKey(def: SymbolDefinition): string {
   ].join('\0');
 }
 
-/** For a constructor call `new X(...)`, return the X class's explicit
- *  Constructor def (by walking the class scope's ownedDefs) or the
- *  Class def itself when no explicit Constructor exists. Matches
- *  legacy behavior — tests assert targetLabel === 'Class' for implicit
- *  ctors and targetLabel === 'Constructor' for explicit ones. */
-function pickConstructorOrClass(
+/** Collect a class's explicit Constructor defs (own class-scope ownedDefs
+ *  plus any nested non-Class child scopes). Empty when the class has only an
+ *  implicit constructor. Shared by `pickConstructorOrClass` (arity-only, the
+ *  default) and `selectConstructorConservative` (argument-type narrowing). */
+function collectConstructors(
   classDef: SymbolDefinition,
   workspaceIndex: WorkspaceResolutionIndex,
   scopes?: ScopeResolutionIndexes,
-  callArity?: number,
-): SymbolDefinition {
+): SymbolDefinition[] {
   const classScope = workspaceIndex.classScopeByDefId.get(classDef.nodeId);
-  if (classScope === undefined) return classDef;
+  if (classScope === undefined) return [];
   const ctors: SymbolDefinition[] = [];
   for (const def of classScope.ownedDefs) {
     if (def.type === 'Constructor') ctors.push(def);
@@ -767,12 +824,54 @@ function pickConstructorOrClass(
       }
     }
   }
+  return ctors;
+}
+
+/** For a constructor call `new X(...)`, return the X class's explicit
+ *  Constructor def (by walking the class scope's ownedDefs) or the
+ *  Class def itself when no explicit Constructor exists. Matches
+ *  legacy behavior — tests assert targetLabel === 'Class' for implicit
+ *  ctors and targetLabel === 'Constructor' for explicit ones. */
+function pickConstructorOrClass(
+  classDef: SymbolDefinition,
+  workspaceIndex: WorkspaceResolutionIndex,
+  scopes?: ScopeResolutionIndexes,
+  callArity?: number,
+): SymbolDefinition {
+  const classScope = workspaceIndex.classScopeByDefId.get(classDef.nodeId);
+  if (classScope === undefined) return classDef;
+  const ctors = collectConstructors(classDef, workspaceIndex, scopes);
   if (ctors.length === 0) return classDef;
   if (callArity !== undefined) {
     const narrowed = narrowByArity(ctors, callArity);
     if (narrowed !== undefined) return narrowed;
   }
   return ctors[0]!;
+}
+
+/**
+ * Constructor selection for conservative-overload languages (Apex, REQ-015):
+ * narrow a class's constructors by the call's ARGUMENT TYPES, not arity alone.
+ * A single exact match binds; an undisambiguable multi-constructor set (no exact
+ * match, or >1 surviving candidate) is left UNRESOLVED so the caller records it
+ * rather than guessing the first-declared constructor (which `pickConstructorOrClass`
+ * would do via `narrowByArity` → `ctors[0]`). A class with 0 constructors binds the
+ * Class node (implicit ctor); a single constructor binds unconditionally (no
+ * ambiguity to resolve), mirroring `pickOverload`'s single-overload short-circuit.
+ */
+function selectConstructorConservative(
+  classDef: SymbolDefinition,
+  site: ParsedFile['referenceSites'][number],
+  workspaceIndex: WorkspaceResolutionIndex,
+  scopes: ScopeResolutionIndexes | undefined,
+  hookCtx: OverloadNarrowingHookCtx,
+): { def: SymbolDefinition } | { unresolved: readonly SymbolDefinition[] } {
+  const ctors = collectConstructors(classDef, workspaceIndex, scopes);
+  if (ctors.length === 0) return { def: classDef };
+  if (ctors.length === 1) return { def: ctors[0]! };
+  const candidates = narrowOverloadCandidates(ctors, site.arity, site.argumentTypes, hookCtx);
+  if (candidates.length === 1) return { def: candidates[0]! };
+  return { unresolved: candidates.length > 0 ? candidates : ctors };
 }
 
 /** Find a unique workspace-wide class-like def by simple name, for a
@@ -820,8 +919,10 @@ export function pickUniqueGlobalClass(
  *  in the same file (Codex PR #1497 review, finding 2).
  *
  *  Exported for unit testing — language-agnostic logic, exercised
- *  via synthetic stubs in `pick-implicit-this-overload.test.ts`. The
- *  production call site is `applyFreeCallFallback` immediately above. */
+ *  via synthetic stubs in `pick-implicit-this-overload.test.ts`. In
+ *  production, `emitFreeCallFallback` calls the underlying
+ *  `resolveImplicitThisCall` (below) directly; this wrapper only
+ *  exposes the overload-narrowing outcome for those tests. */
 export function pickImplicitThisOverload(
   site: {
     readonly inScope: ScopeId;
@@ -837,8 +938,46 @@ export function pickImplicitThisOverload(
     readonly conversionRankFn?: ConversionRankFn;
     readonly conversionOnlyArgTypePrefixes?: readonly string[];
     readonly constraintCompatibility?: ScopeResolver['constraintCompatibility'];
+    readonly resolveInheritedImplicitThisCall?: boolean;
   },
 ): SymbolDefinition | undefined {
+  return resolveImplicitThisCall(site, scopes, workspaceIndex, model, hookCtx).def;
+}
+
+/**
+ * Resolve an unqualified implicit-`this` call to a method on the enclosing class,
+ * distinguishing three outcomes:
+ *   - `{ def }` — a unique target (single method, or overloads narrowed to one).
+ *   - `{ def: undefined, ambiguous: true, candidates }` — a genuine same-name
+ *     overload set that argument-type narrowing could NOT reduce to one. A
+ *     conservative language (Apex, REQ-015) suppresses; others fall through to
+ *     the next fallback.
+ *   - `{ def: undefined, ambiguous: false }` — no enclosing class, or no method
+ *     of that name (not an overload-ambiguity).
+ */
+function resolveImplicitThisCall(
+  site: {
+    readonly inScope: ScopeId;
+    readonly name: string;
+    readonly arity?: number;
+    readonly argumentTypes?: readonly string[];
+    readonly argumentTypeClasses?: readonly import('gitnexus-shared').ParameterTypeClass[];
+  },
+  scopes: ScopeResolutionIndexes,
+  workspaceIndex: WorkspaceResolutionIndex,
+  model: SemanticModel,
+  hookCtx?: {
+    readonly conversionRankFn?: ConversionRankFn;
+    readonly conversionOnlyArgTypePrefixes?: readonly string[];
+    readonly constraintCompatibility?: ScopeResolver['constraintCompatibility'];
+    readonly resolveInheritedImplicitThisCall?: boolean;
+  },
+): {
+  readonly def: SymbolDefinition | undefined;
+  readonly ambiguous: boolean;
+  readonly candidates: readonly SymbolDefinition[];
+} {
+  const none = { def: undefined, ambiguous: false, candidates: [] as const };
   // Find the enclosing Class scope by walking parents.
   let curId: ScopeId | null = site.inScope;
   let classScopeId: ScopeId | undefined;
@@ -851,15 +990,33 @@ export function pickImplicitThisOverload(
     }
     curId = sc.parent;
   }
-  if (classScopeId === undefined) return undefined;
+  if (classScopeId === undefined) return none;
 
   // O(1) reverse-lookup via inverse map on WorkspaceResolutionIndex.
   const classDefId = workspaceIndex.classScopeIdToDefId.get(classScopeId);
-  if (classDefId === undefined) return undefined;
+  if (classDefId === undefined) return none;
 
-  const overloads = model.methods.lookupAllByOwner(classDefId, site.name);
-  if (overloads.length === 0) return undefined;
-  if (overloads.length === 1) return overloads[0];
+  // Default: own-class lookup only. Peer semantics rely on this — C++ two-phase
+  // lookup forbids an unqualified name in a template body binding to a dependent
+  // base, so an unconditional MRO walk over-connects. A language whose dispatch
+  // DOES resolve inherited implicit-`this` calls (Apex REQ-005/007) opts into the
+  // MRO walk: the enclosing class + its MRO (most-derived-first), first owner that
+  // declares `site.name` supplying the overload set (a subclass override shadows).
+  let overloads: readonly SymbolDefinition[];
+  if (hookCtx?.resolveInheritedImplicitThisCall === true) {
+    overloads = [];
+    for (const ownerId of [classDefId, ...scopes.methodDispatch.mroFor(classDefId)]) {
+      const found = model.methods.lookupAllByOwner(ownerId, site.name);
+      if (found.length > 0) {
+        overloads = found;
+        break;
+      }
+    }
+  } else {
+    overloads = model.methods.lookupAllByOwner(classDefId, site.name);
+  }
+  if (overloads.length === 0) return none;
+  if (overloads.length === 1) return { def: overloads[0], ambiguous: false, candidates: overloads };
 
   // Narrow on arity + argument types. Require a UNIQUE survivor —
   // ambiguous narrowing (multiple compatible candidates with no
@@ -871,6 +1028,7 @@ export function pickImplicitThisOverload(
     conversionOnlyArgTypePrefixes: hookCtx?.conversionOnlyArgTypePrefixes,
     constraintCompatibility: hookCtx?.constraintCompatibility,
   });
-  if (candidates.length !== 1) return undefined;
-  return candidates[0];
+  if (candidates.length === 1) return { def: candidates[0], ambiguous: false, candidates };
+  // Genuine overload set, not disambiguated → ambiguous.
+  return { def: undefined, ambiguous: true, candidates: overloads };
 }

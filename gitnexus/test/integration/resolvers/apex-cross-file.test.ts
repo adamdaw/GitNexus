@@ -1,0 +1,1438 @@
+/**
+ * Apex (Salesforce) — WI-3: cross-file binding & trigger resolution.
+ *
+ * Gate-3 acceptance suite for SDD-003 (.vsdd/SDD.md "# SDD-003" §8). Tests are
+ * authored BEFORE the cross-file implementation (VSDD Phase 3, TDD). WI-1 (parse)
+ * and WI-2 (resolution mechanics) are DONE and green, so these tests RUN and the
+ * cross-file positives go RED: the Apex resolver registers no
+ * `populateNamespaceSiblings` hook yet, so `workspaceFqnBindings` holds no Apex
+ * entries and every cross-file lookup misses. Step 3b registers the hook (plus
+ * committed fallbacks ONLY where their fixture stays red) red→green. Peers stay
+ * green (NFR-002 — the hook is Apex-only).
+ *
+ * Acceptance boundary (SDD-003 §1/§8): every fixture is MULTI-FILE — ≥2 top-level
+ * types in separate files (and a trigger file). These complete the epic §9
+ * cross-file forms WI-2 verified only same-unit; WI-3 adds no resolution
+ * algorithm, only the REQ-010 enabler + REQ-011 trigger resolution.
+ *
+ * Observability (pinned at WI-2 Gate 3, unchanged here):
+ *   - resolved reference  -> a CALLS / ACCESSES / EXTENDS / IMPLEMENTS edge
+ *     (bare declared-type usage resolves as a BINDING, not a standalone edge —
+ *      REQ-005 v1.3 / REQ-011 v1.4; observable via the member access it enables)
+ *   - lookup MISS          -> edge ABSENCE only (ResolveStats.unresolved is logged,
+ *                             not exposed on PipelineResult)
+ *   - AMBIGUITY suppressed -> a positive record in result.resolutionOutcomes
+ *                             ({ kind: 'suppressed', name, ... })
+ * The §3 collision guard injects NOTHING for a colliding folded key, so the
+ * cross-file duplicate case surfaces to the host as a plain MISS (edge absence),
+ * not a suppressed record — the REQ-015 "recorded" obligation for that case is
+ * documented as a conservative-negative in .vsdd/tdd/WI-3-red-gate.md (mirroring
+ * the WI-2 discipline). The overload-ambiguous case (equal-arity candidates
+ * surviving) IS recorded via a `suppressed` outcome, as validated at WI-2.
+ *
+ * TWO HOST CHANNELS (SDD-003 §1, validated 2026-07-02, Architect-accepted): the
+ * pre-existing exact-case first-match workspace fallback (workspace-index /
+ * findExportedDefByName + the heritage pass) already resolves cross-file ctor,
+ * top-level extends/implements, super-delegation, and static type-name-receiver
+ * Property access with NO WI-3 code — those acceptance tests are ALREADY-GREEN
+ * with committed no-red justifications in WI-3-red-gate.md. Everything routed
+ * through the bindings channel (instance receivers, case-folding, enum constants,
+ * overloads, nested types, trigger instance receivers) is genuinely RED.
+ */
+import { describe, it, expect, beforeAll } from 'vitest';
+import path from 'path';
+import {
+  FIXTURES,
+  getRelationships,
+  getResolutionOutcomes,
+  findDanglingEdges,
+  runPipelineFromRepo,
+  type PipelineResult,
+} from './helpers.js';
+import { isLanguageAvailable } from '../../../src/core/tree-sitter/parser-loader.js';
+import { SupportedLanguages } from '../../../src/config/supported-languages.js';
+
+const APEX = 'apex' as SupportedLanguages;
+
+let apexAvailable = false;
+try {
+  apexAvailable = isLanguageAvailable(APEX);
+} catch {
+  apexAvailable = false;
+}
+
+const suppressed = (result: PipelineResult) =>
+  getResolutionOutcomes(result).filter((o) => o.kind === 'suppressed');
+
+// Same scoping as the WI-2 suite: the NFR-001 dangling check excludes the
+// downstream community-detection MEMBER_OF edges (a separate graph phase).
+const RESOLUTION_EDGE_TYPES = [
+  'CALLS',
+  'ACCESSES',
+  'EXTENDS',
+  'IMPLEMENTS',
+  'HAS_METHOD',
+  'HAS_PROPERTY',
+  'DEFINES',
+];
+
+// ── REQ-010 — the cross-file enabler, completing WI-2's §9 forms ─────────────
+describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-cross-file'), () => {});
+  }, 120000);
+
+  // two-class call (REQ-005 cross-file form) ─────────────────────────────────
+  it('resolves a two-class cross-file method call (e.start()) via CALLS (REQ-010/REQ-005)', () => {
+    const call = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'start' && e.targetFilePath.includes('Engine'),
+    );
+    expect(call, 'App.run -> Engine.start across files').toBeDefined();
+  });
+
+  it('resolves a cross-file constructor (new Engine()) to the type via CALLS (REQ-010/REQ-005)', () => {
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'Engine' && e.sourceFilePath.includes('App'),
+      ),
+    ).toBeDefined();
+  });
+
+  // bare declared-type usage binds — no standalone edge (REQ-005 v1.3) ───────
+  it('binds a cross-file bare declared-type usage (Engine held) — observable via held.label → ACCESSES (REQ-010)', () => {
+    expect(
+      getRelationships(result, 'ACCESSES').find(
+        (e) => e.target === 'label' && e.targetFilePath.includes('Engine'),
+      ),
+      'the binding enables the member access',
+    ).toBeDefined();
+    // the binding itself emits NO standalone edge (REQ-005 v1.3 parity)
+    expect(
+      getRelationships(result, 'USES').filter((e) => e.target === 'Engine'),
+    ).toEqual([]);
+  });
+
+  // cross-file chain (REQ-009 cross-file form) ────────────────────────────────
+  it('resolves each segment of a cross-file property chain (h.leaf.value) via ACCESSES (REQ-009)', () => {
+    const accesses = getRelationships(result, 'ACCESSES');
+    expect(
+      accesses.find((e) => e.target === 'leaf' && e.targetFilePath.includes('Holder')),
+      'h.leaf (declared on Holder)',
+    ).toBeDefined();
+    expect(
+      accesses.find((e) => e.target === 'value' && e.targetFilePath.includes('Leaf')),
+      '(h.leaf).value (declared on Leaf)',
+    ).toBeDefined();
+  });
+
+  // top-level inheritance (REQ-007 cross-file form) ───────────────────────────
+  it('resolves top-level class inheritance (Derived extends Base) across files via EXTENDS (REQ-007)', () => {
+    expect(
+      getRelationships(result, 'EXTENDS').find(
+        (e) => e.source === 'Derived' && e.target === 'Base',
+      ),
+    ).toBeDefined();
+  });
+
+  it('resolves top-level interface implementation (Derived implements Iface) across files via IMPLEMENTS (REQ-007)', () => {
+    expect(
+      getRelationships(result, 'IMPLEMENTS').find(
+        (e) => e.source === 'Derived' && e.target === 'Iface',
+      ),
+    ).toBeDefined();
+  });
+
+  it('resolves top-level interface-extends-interface (SubIface extends Iface) via IMPLEMENTS (REQ-007 parity)', () => {
+    // The host's edge-label selection on target kind (the REQ-012-parity behaviour
+    // SDD-002 established) — a [Gate-3 reliance], validated here for the cross-file source.
+    expect(
+      getRelationships(result, 'IMPLEMENTS').find(
+        (e) => e.source === 'SubIface' && e.target === 'Iface',
+      ),
+    ).toBeDefined();
+  });
+
+  // top-level-parent super delegation (REQ-005 sub-clause, cross-file form) ───
+  it('resolves super() to a top-level parent constructor in another file via CALLS (REQ-005)', () => {
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'Base' && e.sourceFilePath.includes('Derived'),
+      ),
+      'Derived() super() -> Base()',
+    ).toBeDefined();
+  });
+
+  it('resolves super.greet() to the PARENT member in another file, not the override (REQ-005)', () => {
+    // Derived.greet overrides Base.greet; a bare target==='greet' check would green
+    // on a self/override mis-bind. Pin the resolved target to the Base file.
+    const greetCall = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'greet' && e.sourceFilePath.includes('Derived'),
+    );
+    expect(greetCall, 'super.greet() resolves').toBeDefined();
+    expect(greetCall!.rel.targetId, 'targets Base.greet across files').toContain('Base');
+  });
+
+  // cross-file inherited member (REQ-005/007 ∘ member lookup) ────────────────
+  it('resolves a member declared on a cross-file parent (c.inherited() via Child extends Base) (REQ-005/007)', () => {
+    // Source-pinned to InhCaller: the implicit-this form (Child.callUp -> Base.inherited,
+    // asserted below) resolves to the SAME target, so without the source pin this typed-receiver
+    // find would green off that edge even if InhCaller's c.inherited() path were broken (§8 names
+    // the two as materially different paths).
+    const call = getRelationships(result, 'CALLS').find(
+      (e) =>
+        e.target === 'inherited' &&
+        e.targetFilePath.includes('Base') &&
+        e.sourceFilePath.includes('InhCaller'),
+    );
+    expect(call, 'the MRO walks the cross-file parent').toBeDefined();
+  });
+
+  it('resolves an implicit-this inherited member (inherited() inside Child) to the cross-file parent (REQ-005/007)', () => {
+    // The unqualified own-scope-MRO form — a materially different path from the
+    // typed-receiver form asserted above (§8 names both).
+    const call = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'inherited' && e.sourceFilePath.includes('Child.cls'),
+    );
+    expect(call, 'callUp() -> Base.inherited across files').toBeDefined();
+    expect(call!.targetFilePath, 'declared on the cross-file parent').toContain('Base');
+  });
+
+  // case-varied cross-file (§2.2 seam ∘ REQ-010) ─────────────────────────────
+  it('resolves a case-varied cross-file reference (ENGINE e; e.STOP()) via the folded global key (REQ-010)', () => {
+    expect(
+      getRelationships(result, 'CALLS').find((e) => e.target === 'stop'),
+    ).toBeDefined();
+  });
+
+  it('resolves a CASE-VARIED cross-file constructor (new ENGINE()) via the folded key (REQ-010/§7(11))', () => {
+    // The ctor callsite-folding reliance: red until the injection lands AND the free-call
+    // path reaches the folded workspace key.
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'Engine' && e.sourceFilePath.includes('CaseRef'),
+      ),
+    ).toBeDefined();
+  });
+
+  it('resolves CaseKid\'s inherited() to the cross-file parent Base — BL-8 discharge (WI-4 reorder, SDD-004 §2)', () => {
+    // WI-4 FLIP (was: pinned unresolved, SRS v1.11(a)/BL-8). Post-reorder BL-1's case-varied
+    // EXTENDS edge exists, so buildMro includes Base and inc-15's gated MRO walk reaches the
+    // inherited implicit-this — the BL-8 super/inherited fallout of the BL-1 discharge
+    // (SDD-004 §2 BL-8, §8). [Gate-3 reliance] — RED until the reorder ships.
+    const call = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'inherited' && e.sourceFilePath.includes('CaseKid'),
+    );
+    expect(call, 'callUp2() -> Base.inherited via the now-populated MRO').toBeDefined();
+    expect(call!.targetFilePath, 'declared on the cross-file parent Base').toContain('Base');
+  });
+
+  it('resolves the super() arm to the PARENT ctor (SRS v1.12; heritage EDGE now resolves too — BL-1)', () => {
+    // The super-receiver synthesis folds the `extends BASE` identifier and consults the cross-file
+    // channel to reach Base's ctor (SRS v1.12). Pre-WI-4 this held even though the EXTENDS edge was
+    // unresolved (independent reach); post-WI-4 reorder the EXTENDS edge resolves too (BL-1, flipped
+    // below), so super() and the heritage edge now agree — this assertion is unchanged (green pre-
+    // and post-reorder), the BL-1 EXTENDS/IMPLEMENTS discharge is asserted in the flipped pin below.
+    const kidCalls = getRelationships(result, 'CALLS').filter(
+      (e) => e.sourceFilePath.includes('CaseKid'),
+    );
+    const superCtor = kidCalls.find((e) => e.target === 'Base');
+    expect(superCtor, 'super() resolves to the parent ctor').toBeDefined();
+    expect(superCtor!.rel.targetId, 'the Base ctor across files').toContain('Base.Base');
+    expect(kidCalls.filter((e) => e.target === 'CaseKid'), 'no ctor self-loop').toEqual([]);
+  });
+
+  it('resolves super.greet() to the PARENT member (SRS v1.12; heritage EDGE now resolves too — BL-1)', () => {
+    // super.method() resolves to Base.greet via the super-receiver synthesis, NOT CaseKid's own
+    // override. Unchanged by the WI-4 reorder (green pre- and post-reorder); post-reorder CaseKid's
+    // implicit-this inherited() (MRO path) ALSO resolves (BL-8, flipped above) now that BL-1's
+    // EXTENDS edge exists and buildMro includes Base.
+    const call = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'greet' && e.sourceFilePath.includes('CaseKid'),
+    );
+    expect(call, 'super.greet() resolves').toBeDefined();
+    expect(call!.rel.targetId, "targets Base's greet, not CaseKid's override").toContain('Base.greet');
+  });
+
+  it('resolves CASE-VARIED heritage (CaseKid extends BASE implements IFACE) — BL-1 discharge + its implements arm (WI-4 reorder, SDD-004 §2)', () => {
+    // WI-4 FLIP (was: pinned unresolved, SRS v1.8(i)/BL-1). Post-reorder heritage resolves AFTER
+    // populateNamespaceSiblings, so preEmitInheritanceEdges reaches the folded workspace key and the
+    // case-varied `extends BASE`/`implements IFACE` bind — the BL-1 discharge. The `implements` arm
+    // rides the SAME preEmitInheritanceEdges folded channel as `extends` (the emitter discriminates
+    // edge kind by target type, run.ts:189); Architect-ruled 2026-07-07 to be within BL-1's
+    // heritage-family class (REQ-007 covers interface-implementation), so BL-1's implements arm is
+    // made explicit here (SDD-004 §2/§8). [Gate-3 reliance] — RED until the reorder ships.
+    const ext = getRelationships(result, 'EXTENDS').find((e) => e.source === 'CaseKid');
+    expect(ext, 'CaseKid extends BASE resolves').toBeDefined();
+    // Pin the target node, not a file substring: `Base` folded from `BASE` (case-varied).
+    expect(ext!.target, 'the parent class Base').toBe('Base');
+    const impl = getRelationships(result, 'IMPLEMENTS').find((e) => e.source === 'CaseKid');
+    expect(impl, 'CaseKid implements IFACE resolves').toBeDefined();
+    // Pin the interface node: `targetFilePath.includes('Iface')` would also match IfaceUser.cls and
+    // SubIface.cls, greening on a mis-bind to the wrong interface. The real interface is Iface.
+    expect(impl!.target, 'the real interface Iface, never SubIface').toBe('Iface');
+  });
+
+  // nested-type qualified access (REQ-010 SHALL) ─────────────────────────────
+  it('resolves qualified nested-type access (Outer.Inner from another file) — new Outer.Inner() + i.ping() via CALLS (REQ-010, §8 both kinds)', () => {
+    // §8 (SDD.md:1839-1841): each nested-qualified fixture exercises BOTH the constructor form
+    // (new Outer.Inner()) AND the instance-member form (i.ping()) — a single-kind green does
+    // not discharge the other.
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) =>
+          e.target === 'Inner' &&
+          e.sourceFilePath.includes('NestedCaller') &&
+          e.targetFilePath.includes('Outer.cls'),
+      ),
+      'new Outer.Inner() ctor edge to the nested Inner',
+    ).toBeDefined();
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'ping' && e.sourceFilePath.includes('NestedCaller'),
+      ),
+      'i.ping() instance-member edge',
+    ).toBeDefined();
+  });
+
+  it('resolves CASE-VARIED qualified nested access (OUTER.Inner → new OUTER.Inner() + c.ping()) via the folded outer key (REQ-010, §8 both kinds)', () => {
+    // The case-varied completion of the nested-qualified form (§8): OUTER must reach
+    // Outer's folded workspace key before .Inner member lookup can run. Both reference
+    // kinds asserted (§8:1839-1841).
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) =>
+          e.target === 'Inner' &&
+          e.sourceFilePath.includes('CaseNested') &&
+          e.targetFilePath.includes('Outer.cls'),
+      ),
+      'new OUTER.Inner() ctor edge to the nested Inner',
+    ).toBeDefined();
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'ping' && e.sourceFilePath.includes('CaseNested'),
+      ),
+      'c.ping() instance-member edge',
+    ).toBeDefined();
+  });
+
+  it('keeps a valid nested/top-level name share collision-free — h.assist() still resolves (§4)', () => {
+    // Outer declares a NESTED class Helper; Utils.cls declares the top-level class Helper.
+    // The owning-scope discriminant selects only the top-level def, so no false collision
+    // strips it of REQ-010 (this strengthens the misfiled-type test above: with the v1
+    // qualifiedName discriminant this fixture WOULD collide, since the nested def's
+    // resolution-side qualifiedName is bare — Addendum 7).
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'assist' && e.targetFilePath.includes('Utils'),
+      ),
+      'h.assist() binds the top-level Utils.Helper, not the nested Outer.Helper (a mis-bind to the nested def has no assist member and would MISS here)',
+    ).toBeDefined();
+  });
+
+  it('resolves nested-enum constants (Outer.Mood.UP exact + OUTER.MOOD.DOWN case-varied) (REQ-010/§7(5)∘§2)', () => {
+    // The valid qualified static-member shape: nested-member lookup ∘ enum-constant arm.
+    const accesses = getRelationships(result, 'ACCESSES');
+    expect(accesses.find((e) => e.target === 'UP'), 'exact-case constant').toBeDefined();
+    expect(accesses.find((e) => e.target === 'DOWN'), 'case-varied form').toBeDefined();
+  });
+
+  it('resolves TAIL-VARIED qualified nested access (Outer.INNER → new Outer.INNER() + d.ping()) via the folded member segment (REQ-010/§7(5), §8 both kinds)', () => {
+    // The third case dimension of the qualified form: the outer is exact-case, the member
+    // segment case-varied — rides §7(5)'s fold-extended nested-member fallback. Both
+    // reference kinds asserted (§8:1839-1841).
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) =>
+          e.target === 'Inner' &&
+          e.sourceFilePath.includes('TailCase') &&
+          e.targetFilePath.includes('Outer.cls'),
+      ),
+      'new Outer.INNER() ctor edge to the nested Inner',
+    ).toBeDefined();
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'ping' && e.sourceFilePath.includes('TailCase'),
+      ),
+      'd.ping() instance-member edge',
+    ).toBeDefined();
+  });
+
+  it('resolves nested-parent heritage (NestSub extends Outer.Inner) to the real nested type — BL-3 discharge (WI-4 reorder + nested-aware base seam, SDD-004 §1(2)/§2)', () => {
+    // WI-4 FLIP (was: pinned unresolved, SRS v1.10(iii)/BL-3). Post-reorder + the committed generic
+    // nested-aware heritage-base seam (resolve OUTER via the workspace channel, then the nested tail
+    // among Outer's owned nested type defs — SDD-004 §1(2), the epic's second shared edit), the
+    // dotted `Outer.Inner` base binds the REAL nested Inner @ Outer.cls. [Gate-3 reliance] — RED
+    // until the reorder + seam ship.
+    const ext = getRelationships(result, 'EXTENDS').find((e) => e.source === 'NestSub');
+    expect(ext, 'NestSub extends Outer.Inner resolves').toBeDefined();
+    // Pin the NESTED target node, not just the file: Outer.cls also holds the top-level Outer,
+    // Helper, and Mood, so a file-only check would green on a seam bug returning the OUTER binding.
+    expect(ext!.target, 'the nested Inner, never the top-level Outer').toBe('Inner');
+    expect(ext!.targetFilePath, 'declared in Outer.cls').toContain('Outer.cls');
+  });
+
+  // BL-7 heritage-downstream super arms (SDD-004 §2 BL-7): WI-4 FLIP. Post-reorder BL-3's dotted
+  // EXTENDS edge resolves (NestSub extends the real Outer.Inner), so buildMro includes the nested
+  // parent and the super arms reach it: super.ping() resolves to Outer.Inner.ping (NOT NestSub's own
+  // override — no self-loop), super() resolves to the parent Inner ctor. Discharged as BL-3 fallout.
+  // [Gate-3 reliance] — RED until the reorder + seam ship.
+  it('resolves NestSub super.ping() to the PARENT Outer.Inner.ping, not its own override — BL-7 discharge (WI-4)', () => {
+    const pingCalls = getRelationships(result, 'CALLS').filter(
+      (e) => e.target === 'ping' && e.sourceFilePath.includes('NestSub'),
+    );
+    const resolved = pingCalls.find((e) => e.targetFilePath.includes('Outer.cls'));
+    expect(resolved, 'super.ping() resolves to the nested parent Outer.Inner.ping').toBeDefined();
+    expect(
+      pingCalls.filter((e) => e.targetFilePath.includes('NestSub.cls')),
+      "never self-loops to NestSub's own override",
+    ).toEqual([]);
+  });
+
+  it('resolves NestSub super() to the PARENT nested Inner ctor — BL-7 discharge (WI-4)', () => {
+    // Post-reorder the dotted parent is reachable, so super() binds the nested Inner ctor @ Outer.cls.
+    const superCtor = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'Inner' && e.sourceFilePath.includes('NestSub'),
+    );
+    expect(superCtor, 'super() resolves to the parent Inner ctor').toBeDefined();
+    expect(superCtor!.targetFilePath, 'the nested Inner @ Outer.cls').toContain('Outer.cls');
+  });
+
+  it('resolves DOUBLY-VARIED qualified nested access (OUTER.INNER → new OUTER.INNER() + e.ping()) (REQ-010/§7(13)∘§7(5), §8 both kinds)', () => {
+    // The composition of the outer-folding and tail-folding mechanisms — fixtured because
+    // compositions are not assumed free. Both reference kinds asserted (§8:1839-1841).
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) =>
+          e.target === 'Inner' &&
+          e.sourceFilePath.includes('DoubleCase') &&
+          e.targetFilePath.includes('Outer.cls'),
+      ),
+      'new OUTER.INNER() ctor edge to the nested Inner',
+    ).toBeDefined();
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'ping' && e.sourceFilePath.includes('DoubleCase'),
+      ),
+      'e.ping() instance-member edge',
+    ).toBeDefined();
+  });
+
+  it('does NOT inject a nested type by bare simple name — bare Inner stays unresolved (REQ-015)', () => {
+    // [conservative-negative; see WI-3-red-gate.md] — never mis-binds; anchored red
+    // by the qualified-access positive above.
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'ping' && e.sourceFilePath.includes('BareInner'),
+      ),
+    ).toEqual([]);
+  });
+
+  // misfiled + non-exported top-level types (§3 inject-all) ──────────────────
+  it('injects a misfiled top-level type (class Helper in Utils.cls) — h.assist() resolves (REQ-010/§3)', () => {
+    expect(
+      getRelationships(result, 'CALLS').find((e) => e.target === 'assist'),
+    ).toBeDefined();
+  });
+
+  it('does not MIS-BIND a cross-file non-exported-type reference (hd.reveal()) — §8 pins no-throw + no-mis-bind only (§7(7))', () => {
+    // SDD-003 §7(7)/§8 (line 1355): the §8 acceptance pins ONLY no-throw and no-mis-bind; whether
+    // the non-exported type RESOLVES is a disclosed forward-dependency deferred to WI-4 REQ-012,
+    // NOT a committed WI-3 SHALL. So assert only that no `reveal` edge mis-binds to a NON-Hidden
+    // target (run-completion is implicit in the shared beforeAll). A future WI-4 visibility filter
+    // that stops resolving it must NOT fail this test.
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'reveal' && !e.targetFilePath.includes('Hidden'),
+      ),
+      'no mis-bind: any reveal edge targets Hidden.cls, never another type',
+    ).toEqual([]);
+  });
+
+  // static field / enum-constant via a type-name receiver (§2 static-receiver arm)
+  it('resolves a cross-file static field via a type-name receiver (Consts.MAX_SIZE) via ACCESSES (REQ-010)', () => {
+    expect(
+      getRelationships(result, 'ACCESSES').find(
+        (e) => e.target === 'MAX_SIZE' && e.targetFilePath.includes('Consts'),
+      ),
+    ).toBeDefined();
+  });
+
+  it('resolves DECLARATION-ONLY interface-typed variables — BOTH Iface v; v.act() AND case-varied IFACE w; w.act() to Iface.act (REQ-010/§3, §8 both arms)', () => {
+    // Declaration-only isolates the Interface workspace entry from constructor-type
+    // inference; the CALLS edge must target the interface's OWN member declaration.
+    // §8 (SDD.md:1826-1830) requires BOTH the exact-case (Iface v) and the case-varied
+    // (IFACE w) arm. Assert the count so a case-varied miss fails (a single find() would
+    // green on the exact-case match alone).
+    const actCalls = getRelationships(result, 'CALLS').filter(
+      (e) => e.target === 'act' && e.sourceFilePath.includes('IfaceUser'),
+    );
+    expect(
+      actCalls.length,
+      'both v.act() (Iface) and w.act() (IFACE, case-varied) resolve via the injected Interface entry',
+    ).toBe(2);
+    for (const call of actCalls) {
+      expect(call.targetFilePath, 'each targets Iface.cls, not an implementation').toContain(
+        'Iface.cls',
+      );
+    }
+  });
+
+  it('resolves a CASE-VARIED cross-file static field via a type-name receiver (CONSTS.FLOOR) (REQ-010/§7(3))', () => {
+    // The §7(3) static-field arm's folded-key completion: the exact-case form is fallback-
+    // channel already-green; the case-varied receiver resolves only via the bindings channel.
+    expect(
+      getRelationships(result, 'ACCESSES').find(
+        (e) => e.target === 'FLOOR' && e.targetFilePath.includes('Consts'),
+      ),
+    ).toBeDefined();
+  });
+
+  it('resolves a CASE-VARIED enum-constant receiver (COLOR.BLUE) via the folded key (REQ-010/§2 enum arm)', () => {
+    // The weakest arm's case dimension: folded workspace key ∘ the enum-constant
+    // member-lookup fallback (§2 arm-specific disposition).
+    expect(
+      getRelationships(result, 'ACCESSES').find(
+        (e) => e.target === 'BLUE' && e.targetFilePath.includes('Color'),
+      ),
+    ).toBeDefined();
+  });
+
+  it('resolves a cross-file enum constant via a type-name receiver (Color.RED) via ACCESSES (REQ-010)', () => {
+    expect(
+      getRelationships(result, 'ACCESSES').find(
+        (e) => e.target === 'RED' && e.targetFilePath.includes('Color'),
+      ),
+    ).toBeDefined();
+  });
+
+  // REQ-006 — no false unresolved record on ANY resolving cross-file reference
+  it('records no unresolved/suppressed outcome for the resolving cross-file references (REQ-006)', () => {
+    // Scoped to the names this fixture resolves (BareInner's bare-Inner miss is a
+    // legitimate plain miss and plain misses emit no record — so a global empty-set
+    // assertion is equivalent today, but the scoped set is the SDD-003 §8 obligation).
+    const resolvingNames = new Set([
+      'start', 'stop', 'label', 'leaf', 'value', 'greet', 'inherited', 'Base',
+      'Engine', 'assist', 'reveal', 'MAX_SIZE', 'FLOOR', 'RED', 'Iface',
+      // §8 (SDD.md:1997-2001): the negative also covers nested-qualified and enum-constant
+      // resolved refs — the nested Inner ctor + i.ping(), the nested-enum Mood constants
+      // (UP/DOWN), the interface method (act), and the case-varied Color constant (BLUE).
+      'Inner', 'ping', 'UP', 'DOWN', 'act', 'BLUE',
+    ]);
+    expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
+  });
+
+  it('leaves a cross-file reference to a non-existent type unresolved, no throw (REQ-015/NFR-001)', () => {
+    // NoTarget references `Missing`, declared nowhere. [conservative-negative; see
+    // WI-3-red-gate.md] — value is no-throw + no phantom binding; anchored red by the
+    // resolving its in this describe.
+    expect(result).toBeDefined();
+    const calls = getRelationships(result, 'CALLS');
+    expect(calls.filter((e) => e.target === 'poke' && e.sourceFilePath.includes('NoTarget'))).toEqual([]);
+    expect(calls.filter((e) => e.target === 'Missing')).toEqual([]);
+  });
+
+  it('emits no synthetic IMPORTS edge for Apex cross-file resolution (REQ-010 Seam-B observable)', () => {
+    // The §2 postcondition "no import statement and no synthetic IMPORTS edge": Apex has no
+    // imports, so cross-file resolution must add zero import machinery to the graph.
+    // [conservative-negative; see WI-3-red-gate.md] — anchored red by the resolving its above.
+    expect(getRelationships(result, 'IMPORTS')).toEqual([]);
+  });
+
+  it('leaves no dangling resolution edges', () => {
+    expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
+  });
+});
+
+// ── REQ-008 ∘ REQ-010 — cross-file overloads (the dominant real-world case) ──
+describe.skipIf(!apexAvailable)('Apex cross-file overload resolution (REQ-008 ∘ REQ-010)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'apex-cross-file-overload'),
+      () => {},
+    );
+  }, 120000);
+
+  const resolvesExactly = (name: string, mustInclude: string, mustExclude: string) => {
+    const calls = getRelationships(result, 'CALLS').filter((e) => e.target === name);
+    expect(
+      calls.find((e) => e.rel.targetId.includes(mustInclude)),
+      `${name}(${mustInclude}) resolved`,
+    ).toBeDefined();
+    expect(
+      calls.find(
+        (e) => e.rel.targetId.includes(mustExclude) && !e.rel.targetId.includes(mustInclude),
+      ),
+      `must not bind ${name}(${mustExclude})`,
+    ).toBeUndefined();
+  };
+
+  it('narrows a cross-file overload by a LOCAL-variable argument (t.fLocal(x:Integer)) (REQ-008)', () => {
+    resolvesExactly('fLocal', 'Integer', 'String');
+  });
+
+  it('narrows a cross-file overload by a LITERAL argument (new Target().fLit(42)) (REQ-008)', () => {
+    resolvesExactly('fLit', 'Integer', 'String');
+  });
+
+  it('narrows a cross-file overload by a CONSTRUCTOR-expression argument (t.fCtor(new Widget())) (REQ-008)', () => {
+    resolvesExactly('fCtor', 'Widget', 'Gadget');
+  });
+
+  it('narrows a cross-file overload by a FIELD-typed argument (t.fField(this.w:Widget)) (REQ-008)', () => {
+    resolvesExactly('fField', 'Widget', 'Gadget');
+  });
+
+  it('resolves a STATIC type-name-receiver cross-file overload (Target.sf(7)) (REQ-008/§2 static-receiver)', () => {
+    // The shared static-type-name-receiver reliance (§2/§4/§7(3)) — the same shape as
+    // the trigger static call; carries its one committed fallback if red at Step 3b.
+    resolvesExactly('sf', 'Integer', 'String');
+  });
+
+  it('resolves a cross-file CONSTRUCTOR overload (new CtorTarget(7)) to the Integer Constructor node (REQ-005 ∘ REQ-008)', () => {
+    // Target-node identity with the in-unit form: the edge must refine to the declared
+    // Constructor node, not stop at the Class node (§7(1) arm, fixture-validated).
+    const ctor = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'CtorTarget' && e.sourceFilePath.includes('CtorCaller'),
+    );
+    expect(ctor, 'new CtorTarget(7) resolves').toBeDefined();
+    expect(ctor!.rel.targetId, 'targets the Integer Constructor node').toContain('Integer');
+  });
+
+  it('leaves an undisambiguable cross-file CONSTRUCTOR overload unresolved AND records it (REQ-015)', () => {
+    // CtorAmb passes an Other: matches neither ctor exactly at equal arity -> ambiguous.
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'CtorTarget' && e.sourceFilePath.includes('CtorAmb'),
+      ),
+      'obligation 1: no binding edge',
+    ).toEqual([]);
+    expect(
+      suppressed(result).some((o) => o.name.toLowerCase() === 'ctortarget'),
+      'obligation 2: recorded unresolved',
+    ).toBe(true);
+  });
+
+  it('leaves an undisambiguable cross-file overload unresolved AND records it (REQ-015 ∘ REQ-010)', () => {
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'amb').length,
+      'obligation 1: no binding edge',
+    ).toBe(0);
+    expect(
+      suppressed(result).some((o) => o.name === 'amb'),
+      'obligation 2: the undisambiguable t.amb(o) call is recorded unresolved',
+    ).toBe(true);
+  });
+
+  it('records no false unresolved/suppressed outcome for the resolving overload cases (REQ-006)', () => {
+    const resolvingNames = new Set(['fLocal', 'fLit', 'fCtor', 'fField', 'sf']);
+    expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
+  });
+});
+
+// ── REQ-009/§4 — cross-file mutual/cyclic chain terminates ───────────────────
+describe.skipIf(!apexAvailable)('Apex cross-file cyclic chain (REQ-009/§4)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-cross-file-cyclic'), () => {});
+  }, 120000);
+
+  it('terminates on a cross-file mutual type cycle and resolves the reachable segments (x.b.a.b)', () => {
+    // The 120s timeout enforces "no hang" on the host field-access fixpoint (§7(9));
+    // the reachable segments still resolve per-segment (REQ-009).
+    expect(result).toBeDefined();
+    const accesses = getRelationships(result, 'ACCESSES');
+    expect(accesses.find((e) => e.target === 'b'), 'x.b (CycA.b)').toBeDefined();
+    expect(accesses.find((e) => e.target === 'a'), '(x.b).a (CycB.a)').toBeDefined();
+  });
+});
+
+// ── REQ-015 — cross-file conservatism: collisions, shadowing, exclusions ─────
+describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 §3/§4)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'apex-cross-file-collision'),
+      () => {},
+    );
+  }, 120000);
+
+  it('resolves the unique-key sibling (s.ok()) — the fixture red anchor (REQ-010)', () => {
+    expect(getRelationships(result, 'CALLS').find((e) => e.target === 'ok')).toBeDefined();
+  });
+
+  it('injects NOTHING for a colliding folded key (Dupe/DUPE) — the typed-receiver member stays unresolved (REQ-015/§3)', () => {
+    // The §3 inject-none guard governs the bindings channel: `Dupe d` gets no declared-type
+    // binding, so d.hit() plain-misses (edge ABSENCE — no suppressed record, see header note).
+    // [conservative-negative; see WI-3-red-gate.md] — anchored red by s.ok() above.
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'hit'),
+      'no member edge to either duplicate',
+    ).toEqual([]);
+  });
+
+  it('binds a duplicate-name constructor only on its unique exact-case key (§3/v1.5 limitation, both Then-clauses)', () => {
+    // PINNED HOST BEHAVIOUR, not a WI-3 resolution claim: the exact-case single-match
+    // channel resolves `new Dupe()` to DupOne's Dupe despite the DUPE duplicate (unique
+    // exact-case key — the ratified v1.5 exception). The case-varied form `new dupe()`
+    // misses both exact-case keys and the folded key is guard-suppressed -> exactly ONE
+    // ctor edge to the pair (v1.5 scenario's second Then-clause).
+    // [already-green; see WI-3-red-gate.md]
+    const ctors = getRelationships(result, 'CALLS').filter(
+      (e) => (e.target === 'Dupe' || e.target === 'DUPE') && e.sourceFilePath.includes('DupCaller'),
+    );
+    expect(ctors.length, 'exactly the exact-case bind, nothing for the case-varied form').toBe(1);
+    expect(ctors[0]!.targetFilePath, 'exact-case target, not the case-variant').toContain('DupOne.cls');
+  });
+
+  it('pins the v1.5-family heritage and static arms binding the unique exact-case match (Addendum 15)', () => {
+    // Both probed per-pass: DupSub extends Dupe -> the exact-case Dupe (pre-hook pass);
+    // Dupe.stat() -> Dupe.stat (post-hook). [already-green pins; see WI-3-red-gate.md]
+    const ext = getRelationships(result, 'EXTENDS').find((e) => e.source === 'DupSub');
+    expect(ext, 'heritage arm binds').toBeDefined();
+    expect(ext!.targetFilePath).toContain('DupOne.cls');
+    const stat = getRelationships(result, 'CALLS').find((e) => e.target === 'stat');
+    expect(stat, 'static arm binds').toBeDefined();
+    expect(stat!.targetFilePath).toContain('DupOne.cls');
+  });
+
+  it('lets a same-unit declaration shadow a same-named global (local-over-global precedence) (§4)', () => {
+    // ShadowUser declares a NESTED Shadow; a top-level Shadow exists in another file.
+    // The nested (local) one must win — an edge into Shadow.cls from ShadowUser is a mis-bind.
+    // The positive half is WI-2 behaviour (in-unit nested resolution) and may pass pre-impl;
+    // the mis-bind guard is the WI-3 value once the global channel is populated.
+    // [no-red justification recorded in WI-3-red-gate.md]
+    const pings = getRelationships(result, 'CALLS').filter(
+      (e) => e.target === 'ping' && e.sourceFilePath.includes('ShadowUser'),
+    );
+    expect(pings.length, 's.ping() resolves').toBeGreaterThanOrEqual(1);
+    expect(
+      pings.filter((e) => e.targetFilePath.includes('ShadowUser.cls')).length,
+      'targets the nested (local) Shadow',
+    ).toBe(pings.length);
+  });
+
+  it('resolves a user-defined type over a same-named external/sObject (Account) (§4 precedence)', () => {
+    const save = getRelationships(result, 'CALLS').find((e) => e.target === 'save');
+    expect(save, 'a.save() resolves to the user-defined Account').toBeDefined();
+    expect(save!.targetFilePath, 'targets the user-defined node').toContain('Account.cls');
+  });
+
+  it('excludes a class misfiled in a .trigger file from injection — the typed-receiver member stays unresolved (§4/§A.13)', () => {
+    // The .trigger-extension discriminant governs the INJECTION channel: `Rogue r` gets no
+    // declared-type binding, so r.sneak() misses (invalid-source-only limitation,
+    // Architect-accepted). [conservative-negative; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'sneak'),
+    ).toEqual([]);
+  });
+
+  it('binds the misfiled class ctor via the host fallback channel (§4 documented limitation)', () => {
+    // PINNED HOST BEHAVIOUR: the exact-case fallback channel binds `new Rogue()` to the
+    // class def wherever it parses — including a .trigger file. The injection exclusion
+    // does not (and cannot) govern this channel. [already-green; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'Rogue' && e.targetFilePath.endsWith('.trigger'),
+      ),
+    ).toBeDefined();
+  });
+
+  it('resolves qualified nested access to the NESTED type despite a same-tail top-level decoy (§4/§7(5))', () => {
+    // TOuter.TInner referenced qualified; an unrelated top-level TInner exists. Post-impl
+    // the outer's global binding + member lookup targets the NESTED type (red pre-impl).
+    const call = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'tping' && e.sourceFilePath.includes('TailCaller'),
+    );
+    expect(call, 'TOuter.TInner resolves via the outer binding').toBeDefined();
+    expect(call!.targetFilePath, 'targets the nested type, not the decoy').toContain('TOuter.cls');
+  });
+
+  it('pins the NON-colliding re-parented fragment binding (Addendum-12 documented behaviour)', () => {
+    // FragLoneOuter is malformed; its uniquely-named nested Fraglet re-parents to Module
+    // scope and injects — the case-varied reference binds it (red pre-impl). Documented
+    // behaviour on invalid source (WI-1 re-parent precedent), not correct-Apex resolution.
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'wave' && e.sourceFilePath.includes('FragLoneCaller'),
+      ),
+    ).toBeDefined();
+  });
+
+  it('pins the fragment-collision limitation — the valid Frag stays unresolved (SRS v1.9)', () => {
+    // FragBroken's error-recovery re-parents nested Frag to Module scope (Addendum 12), so
+    // the injection sees two 'frag' defs and registers neither: the VALID top-level Frag's
+    // typed-receiver form stays unresolved — liveness-only, no mis-bind (the ratified v1.9
+    // exception). [conservative pin; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => (e.target === 'real' || e.target === 'fake') && e.sourceFilePath.includes('FragCaller'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('resolves the same-case twin heritage clause (TwinSub extends Twin) to the CLASS — BL-5 discharge (WI-4 reorder, SDD-004 §2)', () => {
+    // WI-4 FLIP (was: pinned unresolved, SRS v1.10(v)/BL-5). Post-reorder heritage resolves after
+    // populateNamespaceSiblings, so `extends Twin` folds to the injected workspace key — the trigger
+    // is §3-excluded from injection, so the class Twin is the UNIQUE workspace key and the EXTENDS
+    // edge binds it (never the trigger). The class-before-exact-case-QNI-tie-refuse ordering is a
+    // [Gate-3 reliance] (SDD-004 §2 BL-5). RED until the reorder ships.
+    const ext = getRelationships(result, 'EXTENDS').find(
+      (e) => e.source === 'TwinSub' && e.targetFilePath.includes('Twin.cls'),
+    );
+    expect(ext, 'TwinSub extends Twin -> the class Twin @ Twin.cls').toBeDefined();
+    expect(
+      getRelationships(result, 'EXTENDS').filter(
+        (e) => e.source === 'TwinSub' && e.targetFilePath.endsWith('Twin.trigger'),
+      ),
+      'never the trigger',
+    ).toEqual([]);
+  });
+
+  // BL-8 heritage-downstream super arms (SRS v1.10(v), SDD-003 §8): unlike the dotted nested
+  // shape (NestSub/BL-7), the same-case twin's SIMPLE-NAME superclass `Twin` folds to a single
+  // bindings-channel workspace hit (the twin trigger is §3-excluded), so the super arms RESOLVE
+  // to the parent even though the EXTENDS edge stays unresolved — the two channels have
+  // independent reach (like the case-varied CaseKid/BL-1). This is the v1.28-F3 pin that
+  // distinguishes BL-8 (resolves) from BL-7 (self-loops). Ratified pins (probed 2026-07-06).
+  it('RESOLVES TwinSub super.spin() to the PARENT Twin.spin, not its own override — BL-8 (SRS v1.10(v))', () => {
+    const spinCalls = getRelationships(result, 'CALLS').filter(
+      (e) => e.target === 'spin' && e.sourceFilePath.includes('TwinSub'),
+    );
+    const resolved = spinCalls.find((e) => e.targetFilePath.includes('Twin.cls'));
+    expect(resolved, 'super.spin() resolves across the twin boundary').toBeDefined();
+    expect(resolved!.rel.targetId, "the parent Twin's spin").toContain('Twin.spin');
+    expect(
+      spinCalls.filter((e) => e.targetFilePath.includes('TwinSub.cls')),
+      "never self-loops to TwinSub's own override",
+    ).toEqual([]);
+  });
+
+  it('RESOLVES TwinSub super() to the PARENT Twin ctor — BL-8 (SRS v1.10(v))', () => {
+    const superCtor = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'Twin' && e.sourceFilePath.includes('TwinSub'),
+    );
+    expect(superCtor, 'super() resolves to the parent ctor').toBeDefined();
+    expect(superCtor!.rel.targetId, 'Twin.Twin').toContain('Twin.Twin');
+  });
+
+  // BL-12 same-case arm (SRS v1.28-F1, SDD-003 §2/§4/§8): SameA.cls and SameB.cls both declare
+  // top-level `Samey` under the identical exact-case key -> the exact-case channel's single-match
+  // guard and the §3 inject-none guard both bind NOTHING. Unlike an overload-ambiguous suppression
+  // OR the distinct member-name case-collision (which DO emit a REQ-015 record), a same-case
+  // TYPE-name collision is discharged by EDGE-ABSENCE ALONE — no mis-bind, and NO resolution
+  // record. Ratified pin (probed 2026-07-06 — the sole suppressed record is the unrelated CaseColl
+  // member arm). [conservative pin; see WI-3-red-gate.md]
+  it('binds NOTHING and records NOTHING for a same-case duplicate TYPE name (Samey) — BL-12 (SRS v1.28)', () => {
+    // edge-absence: neither `new Samey()` nor `s.hitA()` resolves (both are CALLS forms —
+    // SameCaller has no field-access site, so the CALLS filter is the exhaustive edge check)
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.sourceFilePath.includes('SameCaller')),
+      'new Samey() + s.hitA() bind nothing',
+    ).toEqual([]);
+    // and NO record: the same-case type collision emits no suppressed resolutionOutcome
+    expect(
+      suppressed(result).filter((o) => o.name === 'Samey' || o.name === 'hitA'),
+      'no REQ-015 record for the same-case type-name collision (edge-absence discharges it)',
+    ).toEqual([]);
+  });
+
+  it('emits NO false member edge for t.decoy2() — the poisoned MRO is cleared — BL-6 discharge (WI-4 reorder, SDD-004 §2)', () => {
+    // WI-4 FLIP (was: pinned poisoned-MRO propagation, SRS v1.13/BL-6). Post-reorder + nested-aware
+    // base seam, TailSub's EXTENDS binds the REAL nested TOuter.TInner (BL-4), so buildMro no longer
+    // carries the decoy TInner into TailSub's MRO — t.decoy2() finds no such member and emits NO
+    // member edge into the decoy (decoy2 is declared ONLY on the top-level decoy TInner.cls, absent
+    // from the real nested TInner). Discharged as BL-4 fallout (SDD-004 §2 BL-6). [Gate-3 reliance]
+    // — RED until the reorder + seam ship.
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'decoy2' && e.sourceFilePath.includes('TailMro'),
+      ),
+      'no false member edge into the decoy TInner.decoy2',
+    ).toEqual([]);
+  });
+
+  it('pins the misfiled-trigger collision, BOTH halves (SRS v1.11(c))', () => {
+    // MisTrig.cls misfiles `trigger Victim`; VICTIM.cls is valid (case-variant sub-shape).
+    // Interior: the folded key collides -> inject-none -> z.live() stays unresolved.
+    // Boundary: the valid class's exact-case ctor still binds via the host channel — an
+    // over-broad implementation that drops the valid def entirely fails this half.
+    // [conservative + already-green pins; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'live' && e.sourceFilePath.includes('VictimCaller'),
+      ),
+      'interior: typed-receiver form unresolved',
+    ).toEqual([]);
+    const ctor = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'VICTIM' && e.sourceFilePath.includes('VictimCaller'),
+    );
+    expect(ctor, 'boundary: exact-case ctor still binds').toBeDefined();
+    expect(ctor!.targetFilePath).toContain('VICTIM.cls');
+  });
+
+  it('resolves nested-parent heritage (TailSub extends TOuter.TInner) to the real nested type, never the same-tail decoy — BL-4 discharge (WI-4 reorder + nested-aware base seam, SDD-004 §1(2)/§2)', () => {
+    // WI-4 FLIP (was: pinned mis-binding the decoy TInner.cls, SRS v1.10(iv)/BL-4). Post-reorder the
+    // nested-aware heritage-base seam (SDD-004 §1(2)) resolves OUTER `TOuter` via the workspace
+    // channel then the nested tail `TInner` among TOuter's owned nested type defs — BEFORE the shared
+    // QNI dotted-tail fallback that bound the decoy — so the EXTENDS edge targets the REAL nested
+    // TInner @ TOuter.cls, NEVER the top-level decoy TInner.cls. [Gate-3 reliance] — RED until the
+    // reorder + seam ship.
+    const ext = getRelationships(result, 'EXTENDS').find((e) => e.source === 'TailSub');
+    expect(ext, 'TailSub extends TOuter.TInner resolves').toBeDefined();
+    // Pin the NESTED target node: TOuter.cls also holds the top-level TOuter class, so a file-only
+    // check would green on a seam bug returning the OUTER binding instead of the nested tail.
+    expect(ext!.target, 'the nested TInner, never the top-level TOuter').toBe('TInner');
+    expect(ext!.targetFilePath, 'declared in TOuter.cls').toContain('TOuter.cls');
+    expect(
+      getRelationships(result, 'EXTENDS').filter(
+        (e) => e.source === 'TailSub' && e.targetFilePath.endsWith('TInner.cls'),
+      ),
+      'never the same-tail top-level decoy TInner.cls',
+    ).toEqual([]);
+  });
+
+  it('never tail-binds a dotted reference to the same-tail top-level decoy (§4 dotted-tail guard)', () => {
+    // Probed 2026-07-02 (Addendum 6): both defs index under the tail key -> the single-match
+    // guard binds nothing into the decoy for the ctor/member (TailCaller) kinds. (The HERITAGE
+    // kind — TailSub's EXTENDS — is asserted never-the-decoy by the BL-4 flip above; this test
+    // covers the TailCaller ctor/member source.)
+    // [conservative-negative; see WI-3-red-gate.md]
+    for (const type of ['CALLS', 'ACCESSES']) {
+      expect(
+        getRelationships(result, type).filter(
+          (e) => e.targetFilePath.endsWith('TInner.cls') && e.sourceFilePath.includes('TailCaller'),
+        ),
+        `no ${type} edge into the decoy`,
+      ).toEqual([]);
+    }
+  });
+
+  it('injects a class from a case-varied .CLS file — l.shout() resolves (§4 case-folded extension)', () => {
+    // The host classifies extensions case-insensitively; the §3 comparison must too, or a
+    // .CLS-filed class silently loses REQ-010. Red until the injection lands.
+    expect(getRelationships(result, 'CALLS').find((e) => e.target === 'shout')).toBeDefined();
+  });
+
+  it('excludes a trigger in a case-varied .TRIGGER file from injection (§4 case-folded extension)', () => {
+    // BOOM (case-varied) resolves only via the folded key, which must never contain the
+    // .TRIGGER-filed trigger. [conservative-negative; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'Boom' && e.sourceFilePath.includes('BoomCaller'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('resolves the CASE-VARIANT trigger/class twin to the CLASS, never the trigger (§4/§7(11) safety)', () => {
+    // Twist.trigger + class TWIST (valid Apex). Pre-impl the exact-case channel binds the
+    // TRIGGER (probed, Addendum 8); post-injection the folded key 'twist' holds the class
+    // alone and MUST win before the exact-case channel — the committed-to-fix shape.
+    const turn = getRelationships(result, 'CALLS').find((e) => e.target === 'turn');
+    expect(turn, 'w.turn() resolves to the class member').toBeDefined();
+    expect(turn!.targetFilePath).toContain('TWIST.cls');
+    // The class is declared `TWIST`, so the ctor edge target is the node name 'TWIST';
+    // the source wrote `new Twist()`. Apex is case-insensitive, so the predicate folds
+    // case (a `=== 'Twist'` check would falsely miss the class-cased node — Gate-3 defect).
+    const ctor = getRelationships(result, 'CALLS').find(
+      (e) => e.target.toLowerCase() === 'twist' && e.sourceFilePath.includes('TwistCaller'),
+    );
+    expect(ctor, 'new Twist() binds the class').toBeDefined();
+    expect(ctor!.targetFilePath, 'never the trigger').toContain('TWIST.cls');
+    // static-type-name-member form (probed binding NOTHING pre-hook, Addendum 15):
+    // class-wins via the folded receiver-bound path (§7(11) policy).
+    const buzz = getRelationships(result, 'CALLS').find((e) => e.target === 'buzz');
+    expect(buzz, 'Twist.buzz() resolves to the class static').toBeDefined();
+    expect(buzz!.targetFilePath).toContain('TWIST.cls');
+    // ctor/member forms only: the HERITAGE arm is the ratified v1.8(ii) limitation (below),
+    // so the no-edge-into-the-trigger sweep here is scoped to CALLS/ACCESSES.
+    for (const type of ['CALLS', 'ACCESSES']) {
+      expect(
+        getRelationships(result, type).filter((e) => e.targetFilePath.endsWith('Twist.trigger')),
+        `no ${type} edge into the trigger def`,
+      ).toEqual([]);
+    }
+  });
+
+  it('resolves the twin HERITAGE arm (TwistSub extends Twist) to the CLASS, never the trigger — BL-2 discharge (WI-4 reorder, SDD-004 §2)', () => {
+    // WI-4 FLIP (was: pinned binding the trigger, SRS v1.8(ii)/BL-2). Post-reorder `extends Twist`
+    // folds to the workspace key 'twist' — the trigger is §3-excluded, so the injected class TWIST is
+    // the unique key and the EXTENDS edge binds it before the exact-case QNI trigger bind (the
+    // class-before-exact-case-trigger ordering, a [Gate-3 reliance], SDD-004 §2 BL-2). RED until the
+    // reorder ships.
+    const ext = getRelationships(result, 'EXTENDS').find(
+      (e) => e.source === 'TwistSub' && e.targetFilePath.endsWith('TWIST.cls'),
+    );
+    expect(ext, 'TwistSub extends Twist -> the class TWIST @ TWIST.cls').toBeDefined();
+    expect(
+      getRelationships(result, 'EXTENDS').filter(
+        (e) => e.source === 'TwistSub' && e.targetFilePath.endsWith('Twist.trigger'),
+      ),
+      'never the trigger',
+    ).toEqual([]);
+  });
+
+  it('resolves a valid same-name trigger+class twin to the CLASS, never the trigger (§4/REQ-004)', () => {
+    // Twin.trigger + Twin.cls are VALID Apex. The §3 exclusion keeps the trigger out of the
+    // injection, so `Twin t = new Twin(); t.spin()` resolves to the class (genuinely red
+    // pre-impl — probed 2026-07-02: the fallback channel resolves neither twin form).
+    // Source-pinned to TwinCaller: the v1.28 TwinSub super.spin() BL-8 pin (same fixture dir)
+    // also resolves to Twin.cls:Twin.spin, so without the source pin this find could green off
+    // that super edge even if TwinCaller's t.spin() were broken.
+    const spin = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'spin' && e.sourceFilePath.includes('TwinCaller'),
+    );
+    expect(spin, 't.spin() resolves to the class member').toBeDefined();
+    expect(spin!.targetFilePath, 'declared in Twin.cls').toContain('Twin.cls');
+    // The ctor arm — asserted under the §7(11) callsite-folding reliance (same policy as
+    // the new ENGINE() fixture): an unambiguous valid-source REQ-005/REQ-010 SHALL.
+    const ctor = getRelationships(result, 'CALLS').find(
+      (e) => e.target === 'Twin' && e.sourceFilePath.includes('TwinCaller'),
+    );
+    expect(ctor, 'new Twin() binds the class (§7(11))').toBeDefined();
+    expect(ctor!.targetFilePath, 'the class, never the trigger').toContain('Twin.cls');
+    // static-type-name-member arm (§7(15)): a different receiver-bound shape from the
+    // case-variant twin — the exact-case key holds TWO defs here.
+    const stat2 = getRelationships(result, 'CALLS').find((e) => e.target === 'stat2');
+    expect(stat2, 'Twin.stat2() resolves to the class static').toBeDefined();
+    expect(stat2!.targetFilePath).toContain('Twin.cls');
+    // REQ-004 guard: no resolution edge ever targets the trigger def.
+    for (const type of ['CALLS', 'ACCESSES', 'EXTENDS', 'IMPLEMENTS']) {
+      expect(
+        getRelationships(result, type).filter((e) => e.targetFilePath.endsWith('Twin.trigger')),
+        `no ${type} edge into the trigger def`,
+      ).toEqual([]);
+    }
+  });
+
+  it('binds NOTHING for a SAME-case duplicate (class Samey ×2) — single-match guard + inject-none (§4/REQ-015)', () => {
+    // Probed 2026-07-02: the exact-case channel's single-match guard binds nothing on a true
+    // tie, and the §3 guard keeps the folded key out of the bindings channel. The v1.5
+    // exception does NOT fire here — the main REQ-015 scenario governs.
+    // [conservative-negative; see WI-3-red-gate.md] — anchored red by s.ok().
+    const calls = getRelationships(result, 'CALLS');
+    expect(
+      calls.filter((e) => e.target === 'Samey' && e.sourceFilePath.includes('SameCaller')),
+      'no constructor edge to either duplicate',
+    ).toEqual([]);
+    expect(calls.filter((e) => e.target === 'hitA' || e.target === 'hitB')).toEqual([]);
+  });
+
+  it('binds a LONE correctly-filed trigger referenced as a type — ctor AND extends arms (§4/REQ-004 v1.6)', () => {
+    // PINNED LIMITATION BEHAVIOUR (probed + re-ratified 2026-07-02): only Lone.trigger
+    // declares `Lone`. Both arms fixtured (different passes — the Addendum-15 policy).
+    // [already-green; see WI-3-red-gate.md]
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'Lone' && e.targetFilePath.endsWith('Lone.trigger'),
+      ),
+      'ctor arm binds the trigger',
+    ).toBeDefined();
+    expect(
+      getRelationships(result, 'EXTENDS').find(
+        (e) => e.source === 'LoneSub2' && e.targetFilePath.endsWith('Lone.trigger'),
+      ),
+      'extends arm binds the trigger (Addendum 5)',
+    ).toBeDefined();
+  });
+
+  it('keeps a misfiled-class twin non-poisoning — the valid Poison resolves (§3 filter-before-grouping)', () => {
+    // PoisonHolder.trigger misfiles a class Poison; Poison.cls is the valid twin. The
+    // extension filter removes the misfiled def BEFORE grouping, so the valid class injects
+    // alone: p.good() resolves (red pre-impl). A filter-after-grouping implementation would
+    // trip inject-none and fail this.
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'good' && e.targetFilePath.endsWith('Poison.cls'),
+      ),
+    ).toBeDefined();
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'bad'),
+    ).toEqual([]);
+  });
+
+  it('injects a trigger misfiled in a .cls file — a case-varied reference binds it (§4/§A.13 limitation)', () => {
+    // PINNED LIMITATION BEHAVIOUR (Architect-accepted 2026-07-02): the .cls extension is the
+    // only resolution-side discriminant, so the misfiled trigger def passes the §3 predicates
+    // and IS injected under its folded key — the case-varied `new PHANTOM()` resolves only via
+    // that injection (genuinely red pre-impl). Asserted as the documented limitation, not as
+    // correct resolution (REQ-004 non-referenceability breach, invalid-source-only).
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'Phantom' && e.sourceFilePath.includes('PhantomCaller'),
+      ),
+    ).toBeDefined();
+  });
+
+  it('binds a case-varied `extends <.cls-misfiled trigger>` (PhantomSub extends PHANTOM) post-reorder — BL-10 heritage arm (WI-4, SDD-004 §4/§8)', () => {
+    // WI-4 NEW: the reorder's ONLY BL-10 effect is the heritage arm. Post-reorder `extends PHANTOM`
+    // folds to the injected misfiled-trigger key (Phantom.cls passes the §3 .cls discriminant, so it
+    // IS injected), so the EXTENDS edge binds it — the ratified §1.2-(b) "globally referenceable"
+    // over-bind, dispositioned by the committed primary SRS BL-10 amendment (authored on Gate-3
+    // verification). Pre-reorder heritage resolves BEFORE injection -> unresolved. [Gate-3 reliance]
+    // — RED until the reorder ships.
+    const ext = getRelationships(result, 'EXTENDS').find((e) => e.source === 'PhantomSub');
+    expect(ext, 'PhantomSub extends PHANTOM binds the injected misfiled trigger').toBeDefined();
+    expect(ext!.targetFilePath, 'the misfiled trigger def in Phantom.cls').toContain('Phantom.cls');
+    // MRO-downstream disposition (SDD-004 §4, the BL-6/BL-7-analogue check): PhantomSub.run() makes
+    // an implicit-this `ghost()` call, so post-reorder the MRO walk over [PhantomSub, Phantom-trigger]
+    // actually runs. The trigger declares no members, so `ghost` binds nothing and NO false
+    // inherited-member edge rides the trigger-parent MRO — neither into Phantom.cls nor any `ghost`
+    // edge at all. (A memberless trigger parent makes member-poisoning structurally impossible, unlike
+    // BL-6's decoy which owned decoy2() — the ratified §1.2-(b) over-bind is the EXTENDS edge alone.)
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.sourceFilePath.includes('PhantomSub') && e.targetFilePath.includes('Phantom.cls'),
+      ),
+      'no false inherited-member edge rides the trigger-parent MRO',
+    ).toEqual([]);
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.target === 'ghost' && e.sourceFilePath.includes('PhantomSub'),
+      ),
+      'the implicit-this ghost() binds nothing through the trigger-parent MRO',
+    ).toEqual([]);
+    // the non-heritage case-varied bind (PhantomCaller `new PHANTOM()`) stays unchanged (already green).
+    expect(
+      getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'Phantom' && e.sourceFilePath.includes('PhantomCaller'),
+      ),
+      'the non-heritage case-varied bind stays live',
+    ).toBeDefined();
+  });
+
+  it('leaves a cross-file member case-collision unresolved AND records it (REQ-015 two obligations)', () => {
+    // CaseColl declares act/ACT; the cross-file c.Act() matches both case-insensitively —
+    // the ambiguity REACHES the resolver (assertable positive record per SRS v1.7), unlike
+    // the guard-miss shapes. Red until the cross-file receiver binding lands.
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => (e.target === 'act' || e.target === 'ACT') && e.sourceFilePath.includes('CaseCollCaller'),
+      ),
+      'obligation 1: no binding edge',
+    ).toEqual([]);
+    expect(
+      suppressed(result).some((o) => o.name.toLowerCase() === 'act'),
+      'obligation 2: the c.Act() reference is recorded unresolved',
+    ).toBe(true);
+  });
+
+  it('records no false unresolved/suppressed outcome for the flipped BL-2/BL-4/BL-5/BL-6 discharges (REQ-006, SDD-004 §8)', () => {
+    // SDD-004 §8: each newly-resolved BL discharge also asserts the REQ-006 negative. Scoped to the
+    // collision-block heritage/member names WI-4 newly resolves — Twist (BL-2 -> TWIST), TInner
+    // (BL-4 nested), Twin (BL-5 -> class), decoy2 (BL-6 cleared) — so a discharge that emits both the
+    // correct edge AND a spurious suppressed record is caught. (The unrelated CaseColl `act` member
+    // collision legitimately records; it is excluded from this scope.)
+    const dischargedNames = new Set(['Twist', 'TInner', 'Twin', 'decoy2']);
+    expect(
+      suppressed(result).filter((o) => dischargedNames.has(o.name)),
+      'no false unresolved record for the flipped BL discharges',
+    ).toEqual([]);
+  });
+
+  it('leaves no dangling resolution edges', () => {
+    expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
+  });
+});
+
+// ── REQ-011 — trigger-body resolution, each edge FROM the trigger container ──
+describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 §8)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-cross-file-trigger'), () => {});
+  }, 120000);
+
+  // Every REQ-011 edge must originate from the trigger CONTAINER node T (the
+  // [structural obligation] "from the trigger", REQ-011 v1.4) — asserted as
+  // source name T + source in the .trigger file.
+  const fromTrigger = (e: { source: string; sourceFilePath: string }) =>
+    e.source === 'T' && e.sourceFilePath.endsWith('.trigger');
+
+  it('resolves a trigger-body static handler call (AccountHandler.handle()) via CALLS from the trigger (REQ-011)', () => {
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'handle');
+    expect(call, 'the canonical REQ-011 form resolves').toBeDefined();
+    expect(fromTrigger(call!), 'edge originates from the trigger container node').toBe(true);
+  });
+
+  it('resolves a trigger-body constructor (new AccountHandler()) via CALLS from the trigger (REQ-011)', () => {
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'AccountHandler');
+    expect(call).toBeDefined();
+    expect(fromTrigger(call!)).toBe(true);
+  });
+
+  it('resolves a trigger-scope instance-receiver method call (h.process()) from the trigger (REQ-011/§2)', () => {
+    // The trigger-body local-variable receiver reliance (§7(3b)) — trigger-scope
+    // instance typing is NOT free fallout of WI-2 (which excluded triggers).
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'process');
+    expect(call).toBeDefined();
+    expect(fromTrigger(call!)).toBe(true);
+  });
+
+  it('resolves a member via a DECLARATION-ONLY typed trigger variable (AccountHandler d; d.size) (REQ-011 v1.4)', () => {
+    // Isolates trigger-scope DECLARED-type binding (interpretApexTypeBinding) from
+    // constructor-type inference — d has no initializer (§8 discriminating acceptance).
+    const access = getRelationships(result, 'ACCESSES').find((e) => e.target === 'size');
+    expect(access).toBeDefined();
+    expect(fromTrigger(access!)).toBe(true);
+  });
+
+  it('resolves a trigger-body instance field access (h.name) via ACCESSES from the trigger (REQ-011)', () => {
+    const access = getRelationships(result, 'ACCESSES').find((e) => e.target === 'name');
+    expect(access).toBeDefined();
+    expect(fromTrigger(access!)).toBe(true);
+  });
+
+  it('resolves a trigger-body static field access (AccountHandler.MAX_SIZE) via ACCESSES from the trigger (REQ-011)', () => {
+    // The static-receiver FIELD arm (§2) — same reliance + fallback as the static call.
+    const access = getRelationships(result, 'ACCESSES').find((e) => e.target === 'MAX_SIZE');
+    expect(access).toBeDefined();
+    expect(fromTrigger(access!)).toBe(true);
+  });
+
+  it('resolves a trigger-body DECLARATION-ONLY interface-typed variable (Alarm a2; a2.ring()) (REQ-011 ∘ §3 Interface arm)', () => {
+    // Trigger-scope typing ∘ the Predicate-1 Interface arm, composed.
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'ring');
+    expect(call).toBeDefined();
+    expect(fromTrigger(call!)).toBe(true);
+    expect(call!.targetFilePath, 'targets the interface member').toContain('Alarm.cls');
+  });
+
+  it('resolves a trigger-body CASE-VARIED constructor (new BASEHANDLER()) to a distinct class (REQ-011 ∘ §7(11))', () => {
+    // A trigger is a single container node T, so two ctors to the SAME class collapse to one
+    // edge (the I2 (caller,target) invariant) — a case-varied site sharing the exact-case
+    // ctor's target is unobservable by count. Mirroring the peer idiom (cpp
+    // `callsFrom('call_defaulted_constructor', 'Gadget')` → toHaveLength(1)), the case-varied
+    // ctor targets a DISTINCT class (new BASEHANDLER() → BaseHandler), so its folded-path
+    // resolution in trigger scope is independently observable as exactly one edge.
+    const ctors = getRelationships(result, 'CALLS').filter(
+      (e) => e.target === 'BaseHandler' && fromTrigger(e),
+    );
+    expect(ctors, 'the case-varied trigger ctor resolves via the folded key').toHaveLength(1);
+    expect(ctors[0]!.targetFilePath, 'the class, resolved from the trigger').toContain('BaseHandler.cls');
+  });
+
+  it('resolves trigger-body nested-qualified access (Kit.Part p; p.snap()) from the trigger (REQ-011 ∘ §7(5)/(13))', () => {
+    // The trigger-scope ∘ qualified-resolution composition — not assumed free.
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'snap');
+    expect(call).toBeDefined();
+    expect(fromTrigger(call!)).toBe(true);
+  });
+
+  it('resolves a trigger-body cross-file chain (h.next.name) per segment from the trigger (REQ-011 ∘ REQ-009)', () => {
+    // The field-access fixpoint operating from trigger scope (§7(3b) — not free fallout of
+    // WI-2). `next` is AccountHandler's self-typed field; both segments must resolve.
+    const accesses = getRelationships(result, 'ACCESSES');
+    const next = accesses.find((e) => e.target === 'next');
+    expect(next, 'h.next resolves').toBeDefined();
+    expect(fromTrigger(next!), 'chain root originates from the trigger container').toBe(true);
+    // second segment: (h.next).name — at least one ACCESSES 'name' beyond the direct h.name
+    expect(
+      accesses.filter((e) => e.target === 'name' && fromTrigger(e)).length,
+      'both name accesses (h.name and h.next.name) resolve from the trigger',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('resolves a trigger-body enum-constant access (Level.HIGH) via ACCESSES from the trigger (REQ-011)', () => {
+    const access = getRelationships(result, 'ACCESSES').find((e) => e.target === 'HIGH');
+    expect(access).toBeDefined();
+    expect(fromTrigger(access!)).toBe(true);
+  });
+
+  it('resolves a CASE-VARIED trigger-body enum-constant read (LEVEL.LOW) from the trigger (REQ-011 ∘ §2 enum arm)', () => {
+    // Trigger scope ∘ folded key ∘ the enum-constant member-lookup arm — composed.
+    const access = getRelationships(result, 'ACCESSES').find((e) => e.target === 'LOW');
+    expect(access).toBeDefined();
+    expect(fromTrigger(access!)).toBe(true);
+  });
+
+  it('resolves a CASE-VARIED trigger-body static call (ACCOUNTHANDLER.notify()) from the trigger (REQ-011/§7(3))', () => {
+    // The §7(3) static-call arm's folded-key completion: exact-case handle() is fallback-
+    // channel already-green; the case-varied receiver resolves only via the bindings channel.
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'notify');
+    expect(call).toBeDefined();
+    expect(fromTrigger(call!), 'edge originates from the trigger container node').toBe(true);
+  });
+
+  it('narrows a trigger-body overloaded static call (AccountHandler.log(7)) to log(Integer) (REQ-011 ∘ REQ-008)', () => {
+    // The §4 trigger-body overload composition: REQ-008 narrowing over a cross-file overload
+    // set, with the disambiguating argument typed in TRIGGER scope (§7(3b) — not free fallout
+    // of WI-2, which excluded triggers).
+    const logCalls = getRelationships(result, 'CALLS').filter((e) => e.target === 'log');
+    const exact = logCalls.find((e) => e.rel.targetId.includes('Integer'));
+    expect(exact, 'log(Integer) resolved from the trigger').toBeDefined();
+    expect(fromTrigger(exact!), 'edge originates from the trigger container node').toBe(true);
+    expect(
+      logCalls.find(
+        (e) => e.rel.targetId.includes('String') && !e.rel.targetId.includes('Integer'),
+      ),
+      'must not bind log(String)',
+    ).toBeUndefined();
+  });
+
+  it('narrows a trigger-body INSTANCE-receiver overload (h.ilog(9)) to ilog(Integer) (REQ-011 ∘ REQ-008)', () => {
+    // §7(3b) receiver typing ∘ argument typing, composed from trigger scope.
+    const calls = getRelationships(result, 'CALLS').filter((e) => e.target === 'ilog');
+    const exact = calls.find((e) => e.rel.targetId.includes('Integer'));
+    expect(exact, 'ilog(Integer) resolved').toBeDefined();
+    expect(fromTrigger(exact!)).toBe(true);
+    expect(
+      calls.find((e) => e.rel.targetId.includes('String') && !e.rel.targetId.includes('Integer')),
+      'must not bind ilog(String)',
+    ).toBeUndefined();
+  });
+
+  it('resolves a CASE-VARIED trigger-scope declared type (ACCOUNTHANDLER cv; cv.wake()) (REQ-011 ∘ §7(3b))', () => {
+    // Trigger-scope typing ∘ the folded workspace key — composed, not assumed free.
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'wake');
+    expect(call).toBeDefined();
+    expect(fromTrigger(call!)).toBe(true);
+  });
+
+  it('resolves a trigger-body inherited member (h.tag()) to the cross-file parent (REQ-011 ∘ §7(10))', () => {
+    // The MRO walk from trigger scope — composed, not assumed free.
+    const call = getRelationships(result, 'CALLS').find((e) => e.target === 'tag');
+    expect(call).toBeDefined();
+    expect(fromTrigger(call!)).toBe(true);
+    expect(call!.targetFilePath, 'declared on the cross-file parent').toContain('BaseHandler');
+  });
+
+  it('leaves an undisambiguable trigger-body overload unresolved AND records it (REQ-011 ∘ REQ-015)', () => {
+    // pick(AccountHandler)/pick(Level) called with a String literal: equal arity, no exact
+    // match -> ambiguous. REQ-015's two obligations, from trigger scope.
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'pick').length,
+      'obligation 1: no binding edge',
+    ).toBe(0);
+    expect(
+      suppressed(result).some((o) => o.name === 'pick'),
+      'obligation 2: the undisambiguable pick call is recorded unresolved',
+    ).toBe(true);
+  });
+
+  it('binds a bare declared-type usage in a trigger body with NO standalone edge (REQ-011 v1.4)', () => {
+    // `AccountHandler h` / `Level v` bind (proven by h.process()/h.name/Level.HIGH
+    // resolving above); the binding itself emits no USES edge (REQ-005 v1.3 parity).
+    expect(getRelationships(result, 'USES')).toEqual([]);
+  });
+
+  it('leaves trigger-body external references (System.debug, Trigger.new) unresolved, no throw (§2 invariant/NFR-001)', () => {
+    // [conservative-negative; see WI-3-red-gate.md] — value is no-throw + no Apex defect.
+    expect(result).toBeDefined();
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'debug'),
+    ).toEqual([]);
+    // Trigger.new: the external context-variable member access emits no edge.
+    expect(
+      getRelationships(result, 'ACCESSES').filter((e) => e.target === 'new'),
+    ).toEqual([]);
+  });
+
+  it('records no unresolved/suppressed outcome for the resolving trigger references (REQ-006)', () => {
+    // `pick` is excluded: its undisambiguable call is a REQ-015 reference the host records.
+    const resolvingNames = new Set([
+      'handle', 'process', 'name', 'MAX_SIZE', 'HIGH', 'AccountHandler', 'log', 'notify', 'ilog', 'tag', 'wake',
+      // §8 (SDD.md:1997-2001): also the trigger-scope nested-qualified/enum/chain/interface
+      // resolved refs — the interface method (ring), nested Kit.Part (snap), chain segment
+      // (next), case-varied enum constant (LOW), declared-type member (size).
+      'ring', 'snap', 'next', 'LOW', 'size',
+    ]);
+    expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
+  });
+
+  it('leaves no dangling resolution edges', () => {
+    expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
+  });
+});
+
+// ── NFR-002 — cross-language folded-key share: REGRESSION PIN (the former §7(8)
+// reliance is retired — workspaceFqnBindings is a per-language-run instance,
+// Addendum 12; this guards the structurally foreclosed surface, it validates no reliance) ──
+describe.skipIf(!apexAvailable)('Apex cross-language registry partitioning (NFR-002 regression pin)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-cross-file-mixed'), () => {});
+  }, 120000);
+
+  it('resolves the Apex reference only to the Apex def despite a peer symbol on the same folded key (NFR-002 registry partitioning)', () => {
+    // Motor folds to 'motor'; mod.py declares class motor. The Apex m.rev() must bind
+    // the Apex member (red until the injection lands; a bind into mod.py is a §7(8) FAIL).
+    const rev = getRelationships(result, 'CALLS').find((e) => e.target === 'rev');
+    expect(rev, 'm.rev() resolves').toBeDefined();
+    expect(rev!.targetFilePath, 'targets the Apex def').toContain('Motor.cls');
+  });
+
+  it('partitions the peer-ENTRY direction: C# and Apex each bind only their own def (NFR-002 registry partitioning)', () => {
+    // motor.cs is a GLOBAL-namespace C# type: its hook WRITES workspaceFqnBindings, so a
+    // peer entry genuinely occupies the folded key 'motor'. The C# m.Whir() must bind the
+    // C# member, and no Apex-sourced edge may land on the .cs def (nor C#-sourced on .cls).
+    const whir = getRelationships(result, 'CALLS').find((e) => e.target === 'Whir');
+    expect(whir, 'C# m.Whir() resolves').toBeDefined();
+    expect(whir!.targetFilePath, 'targets the C# def').toContain('motor.cs');
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.sourceFilePath.endsWith('.cls') && e.targetFilePath.endsWith('.cs'),
+      ),
+      'no Apex-sourced edge into the C# def',
+    ).toEqual([]);
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.sourceFilePath.endsWith('.cs') && e.targetFilePath.endsWith('.cls'),
+      ),
+      'no C#-sourced edge into the Apex def',
+    ).toEqual([]);
+  });
+
+  it('leaves the peer-language resolution unchanged (Python binds only the Python def) (NFR-002)', () => {
+    // The Python use.py -> mod.motor().spin() path must be untouched by Apex keys.
+    // [already-green regression pin; see WI-3-red-gate.md]
+    const spin = getRelationships(result, 'CALLS').find((e) => e.target === 'spin');
+    expect(spin, 'python m.spin() resolves').toBeDefined();
+    expect(spin!.targetFilePath, 'targets the Python def').toContain('mod.py');
+    // and no Python-sourced edge ever lands on the Apex def
+    expect(
+      getRelationships(result, 'CALLS').filter(
+        (e) => e.sourceFilePath.endsWith('.py') && e.targetFilePath.endsWith('.cls'),
+      ),
+    ).toEqual([]);
+  });
+});
+
+// ── NFR-001 (cross-file slice) — no crash on garbage / partial trees ─────────
+describe.skipIf(!apexAvailable)('Apex cross-file crash-safety (NFR-001 slice)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'apex-cross-file-malformed'),
+      () => {},
+    );
+  }, 120000);
+
+  it('completes the run and resolves the valid cross-file reference despite a garbage sibling', () => {
+    expect(result).toBeDefined();
+    // anchor (genuinely red until the enabler is wired): s.fine() resolves across files.
+    expect(getRelationships(result, 'CALLS').find((e) => e.target === 'fine')).toBeDefined();
+  });
+
+  it('leaves a reference into the skipped/garbage sibling unresolved, with no dangling edges', () => {
+    // Wreck.cls is unparseable garbage -> no def, no injection -> w.crash() misses.
+    // [conservative-negative; see WI-3-red-gate.md] — anchored red by s.fine().
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'crash'),
+    ).toEqual([]);
+    expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
+  });
+
+  it('completes on a trigger with a partial / error-recovery body, no throw (NFR-001)', () => {
+    // Bad.trigger's unterminated `s2.` region is conservatively skipped.
+    // [conservative-negative; no-crash is the value — see WI-3-red-gate.md]
+    expect(result).toBeDefined();
+  });
+});

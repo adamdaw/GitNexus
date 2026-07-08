@@ -1,0 +1,11 @@
+{
+  "name": "tree-sitter-apex",
+  "version": "0.0.0-abi14",
+  "description": "ABI-14 regeneration of aheber/tree-sitter-sfapex (apex grammar), vendored for tree-sitter@0.21.1.",
+  "main": "bindings/node/index.js",
+  "license": "MIT",
+  "dependencies": {
+    "node-addon-api": "^8.0.0",
+    "node-gyp-build": "^4.8.0"
+  }
+}

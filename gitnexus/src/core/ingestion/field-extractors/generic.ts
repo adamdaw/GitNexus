@@ -59,6 +59,9 @@ export interface FieldExtractionConfig {
   isStatic: (node: SyntaxNode) => boolean;
   /** Check if a field is readonly/final/const */
   isReadonly: (node: SyntaxNode) => boolean;
+  /** Optional: extract normalised member annotations (`@Name`) from a field
+   *  declaration node. Mirrors `MethodExtractionConfig.extractAnnotations`. */
+  extractAnnotations?: (node: SyntaxNode) => string[];
   /** Extract fields from primary constructor parameters on the owner node itself
    *  (e.g. C# record positional parameters, C# 12 class primary constructors). */
   extractPrimaryFields?: (ownerNode: SyntaxNode, context: FieldExtractorContext) => FieldInfo[];
@@ -183,6 +186,7 @@ export function createFieldExtractor(config: FieldExtractionConfig): FieldExtrac
         if (resolved) type = resolved;
       }
 
+      const annotations = config.extractAnnotations?.(node);
       return {
         name,
         type,
@@ -191,6 +195,7 @@ export function createFieldExtractor(config: FieldExtractionConfig): FieldExtrac
         isReadonly: config.isReadonly(node),
         sourceFile: context.filePath,
         line: node.startPosition.row + 1,
+        ...(annotations && annotations.length > 0 ? { annotations } : {}),
       };
     }
   }

@@ -76,6 +76,11 @@ let C: TreeSitterLanguage | null = null;
 try {
   C = requireVendoredGrammar('tree-sitter-c') as TreeSitterLanguage;
 } catch {}
+
+let Apex: TreeSitterLanguage | null = null;
+try {
+  Apex = requireVendoredGrammar('tree-sitter-apex') as TreeSitterLanguage;
+} catch {}
 import { getLanguageFromFilename } from 'gitnexus-shared';
 import {
   buildConcreteTypedefDefinitionRanges,
@@ -484,6 +489,7 @@ const languageMap: Record<string, TreeSitterLanguage> = {
   [SupportedLanguages.Vue]: TypeScript.typescript,
   ...(Dart ? { [SupportedLanguages.Dart]: Dart } : {}),
   ...(Swift ? { [SupportedLanguages.Swift]: Swift } : {}),
+  ...(Apex ? { [SupportedLanguages.Apex]: Apex } : {}),
 };
 
 /**
@@ -1885,6 +1891,10 @@ const processFileGroup = (
 
       const nodeName =
         extractedClassSymbol?.name ?? defaultExportHocName ?? (nameNode ? nameNode.text : 'init');
+      // Conservative skip (generic, NFR-001): tree-sitter error recovery can yield
+      // a present-but-MISSING name node whose text is empty; never emit a degenerate
+      // empty-named node on any label.
+      if (nodeName.trim() === '') continue;
       // Dedup: variable captures (Const/Static/Variable) may overlap with higher-priority
       // captures (e.g. `const fn = () => {}` matches both @definition.function and @definition.const).
       // Multi-name declarations share the same definition node, so include the emitted name.
@@ -2252,6 +2262,9 @@ const processFileGroup = (
               methodProps.visibility = info.visibility;
               methodProps.isStatic = info.isStatic;
               methodProps.isReadonly = info.isReadonly;
+              if (info.annotations && info.annotations.length > 0) {
+                methodProps.annotations = info.annotations;
+              }
             }
           }
         }
@@ -2316,6 +2329,7 @@ const processFileGroup = (
           ...(description !== undefined ? { description } : {}),
           ...methodProps,
           ...(declaredType !== undefined ? { declaredType } : {}),
+          ...(extractedClassSymbol?.properties ?? {}),
         },
       });
 

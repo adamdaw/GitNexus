@@ -33,6 +33,8 @@ export const VENDORED_GRAMMAR_PACKAGES: ReadonlySet<string> = new Set([
   'tree-sitter-proto',
   'tree-sitter-swift',
   'tree-sitter-kotlin',
+  // Apex — vendored ABI-14 regeneration of aheber/tree-sitter-sfapex.
+  'tree-sitter-apex',
 ]);
 
 /** Absolute directory of a vendored grammar package under `vendor/`. */

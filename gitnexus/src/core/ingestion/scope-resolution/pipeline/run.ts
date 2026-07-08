@@ -570,75 +570,124 @@ export function runScopeResolution(
     },
   });
   logHeapProbe('sr-post-finalize', `lang=${provider.language}`);
-  const preEmittedInheritanceSites = preEmitInheritanceEdges(graph, finalized, nodeLookup);
-  // Call-based heritage hook (e.g., Ruby include/extend/prepend) — emits
-  // IMPLEMENTS edges that `preEmitInheritanceEdges` cannot produce because
-  // the heritage declarations are syntactic method calls, not grammar-level
-  // heritage clauses. Must run BEFORE `buildMro` so MRO construction sees
-  // the freshly-emitted IMPLEMENTS edges.
-  provider.emitHeritageEdges?.(graph, parsedFiles, nodeLookup, finalized);
-  // Implicit IMPORTS-edge hook — for languages whose files have compiler-
-  // implicit cross-file visibility (no syntactic import statement). The
-  // finalized-ImportEdge pipeline (`emitImportEdges`) cannot produce these
-  // because there is no `ImportEdge` to materialize. Idempotent.
-  provider.emitImplicitImportEdges?.(graph, parsedFiles, nodeLookup, resolutionConfig);
-  // Rebuild the node lookup after heritage-edge emission. Languages like
-  // Ruby create Property graph nodes inside `emitHeritageEdges`; those
-  // nodes must be visible to downstream passes (`emitReceiverBoundCalls`
-  // resolves write-access targets via `resolveDefGraphId` which consults
-  // `nodeLookup`). Without this rebuild, Property nodes added by the
-  // heritage hook are invisible and ACCESSES edges silently fail to emit.
-  const postHeritageNodeLookup =
-    provider.emitHeritageEdges !== undefined ? buildGraphNodeLookup(graph) : nodeLookup;
-  emitDetectedInterfaceImplementations(
-    graph,
-    parsedFiles,
-    postHeritageNodeLookup,
-    provider,
-    finalized,
-    readonlyModel,
-  );
-  const mroByClassDefId = provider.buildMro(graph, parsedFiles, postHeritageNodeLookup);
-  const extendsOnlyMroByClassDefId = provider.buildExtendsOnlyMro?.(
-    graph,
-    parsedFiles,
-    postHeritageNodeLookup,
-  );
 
-  // Replace the empty MethodDispatchIndex that finalizeScopeModel
-  // builds by design with the populated one derived from the
-  // language's MRO. Spread produces a fresh `ScopeResolutionIndexes`
-  // instead of mutating the finalized result through an `as` cast —
-  // downstream passes get an object whose readonly guarantees match
-  // the type system.
-  const indexes = {
-    ...finalized,
-    methodDispatch: buildPopulatedMethodDispatch(mroByClassDefId, extendsOnlyMroByClassDefId),
+  // Heritage-edge emission + MRO construction, as a single re-sequenceable
+  // unit (SDD-004 §1(1)). Default: runs BEFORE sibling registration
+  // (`scopesForHeritage` = `finalized`), preserving today's peer order.
+  // Apex (`resolveHeritageAfterSiblings`): runs AFTER it, with
+  // `scopesForHeritage` = the sibling-populated `indexes`, so a cross-file
+  // heritage base reaches the workspace channel `populateNamespaceSiblings`
+  // fills. On that re-sequenced run `preEmitInheritanceEdges` MUST receive
+  // `indexes` (not `finalized`) — only `indexes` carries `normalizeIdentifier`
+  // and the injected `workspaceFqnBindings` the case-fold discharge needs.
+  const runHeritageAndMro = (scopesForHeritage: typeof finalized) => {
+    const preEmittedInheritanceSites = preEmitInheritanceEdges(
+      graph,
+      scopesForHeritage,
+      nodeLookup,
+    );
+    // Call-based heritage hook (e.g., Ruby include/extend/prepend) — emits
+    // IMPLEMENTS edges `preEmitInheritanceEdges` cannot produce (syntactic
+    // method calls, not grammar-level heritage clauses). Before `buildMro`.
+    provider.emitHeritageEdges?.(graph, parsedFiles, nodeLookup, scopesForHeritage);
+    // Implicit IMPORTS-edge hook — compiler-implicit cross-file visibility
+    // (no syntactic import). Idempotent.
+    provider.emitImplicitImportEdges?.(graph, parsedFiles, nodeLookup, resolutionConfig);
+    // Rebuild the node lookup after heritage-edge emission — Ruby creates
+    // Property nodes inside `emitHeritageEdges` that downstream passes need.
+    const postHeritageNodeLookup =
+      provider.emitHeritageEdges !== undefined ? buildGraphNodeLookup(graph) : nodeLookup;
+    emitDetectedInterfaceImplementations(
+      graph,
+      parsedFiles,
+      postHeritageNodeLookup,
+      provider,
+      scopesForHeritage,
+      readonlyModel,
+    );
+    const mroByClassDefId = provider.buildMro(graph, parsedFiles, postHeritageNodeLookup);
+    const extendsOnlyMroByClassDefId = provider.buildExtendsOnlyMro?.(
+      graph,
+      parsedFiles,
+      postHeritageNodeLookup,
+    );
+    return {
+      preEmittedInheritanceSites,
+      postHeritageNodeLookup,
+      mroByClassDefId,
+      extendsOnlyMroByClassDefId,
+    };
   };
 
-  // Build the workspace resolution index ONCE — scope-valued lookups
-  // (`classScopeByDefId`, `moduleScopeByFile`) that `SemanticModel`
-  // cannot carry. Must run AFTER `populateOwners` (so owned defs are
-  // attributed correctly) and AFTER finalize (so module-scope
-  // bindings are available).
-  // Pass the scopeTree so the index's class/module Scope lookups are id-backed
-  // views that delegate to it (out-of-core scope index) — the index pins no Scope objects, so the
-  // disk seal can reclaim them. Byte-identical: the view returns the same Scope
-  // the resident tree holds (or a value-identical revived one in disk mode).
-  const workspaceIndex = buildWorkspaceResolutionIndex(parsedFiles, indexes.scopeTree);
-  logHeapProbe('sr-post-workspaceIndex', `lang=${provider.language}`);
+  // Build `ScopeResolutionIndexes` from `finalized` with a given method-
+  // dispatch index. Spread produces a fresh object instead of mutating the
+  // finalized result through an `as` cast — downstream passes get readonly
+  // guarantees matching the type system. `normalizeIdentifier` (§2.2 seam)
+  // threads the active language's identifier normalizer so the workspace
+  // lookup can reach a case-folded key (Apex); identity/absent for
+  // case-sensitive languages.
+  const buildIndexes = (methodDispatch: typeof finalized.methodDispatch) => ({
+    ...finalized,
+    methodDispatch,
+    normalizeIdentifier: provider.languageProvider.normalizeIdentifier,
+    // SDD-004 §1(2) seam: thread the language's dotted-heritage-base hook so
+    // `resolveInheritanceBaseInScope` (which only receives `scopes`) can consult
+    // it. Undefined for languages that register none — behaviour unchanged.
+    resolveDottedHeritageBase: provider.resolveDottedHeritageBase,
+  });
 
-  // Cross-file implicit-namespace visibility (C#). Must run before
-  // propagateImportedReturnTypes so the latter pass sees siblings'
-  // class bindings when chasing return-type chains across files.
-  // The hook writes to `bindingAugmentations` only; finalized
-  // `indexes.bindings` remains immutable post-finalize (I8).
-  if (provider.populateNamespaceSiblings !== undefined) {
-    provider.populateNamespaceSiblings(parsedFiles, indexes, {
-      fileContents: getFileContents(),
-      treeCache,
-      resolutionConfig,
-    });
+  // Cross-file sibling registration: the workspace resolution index (scope-
+  // valued lookups `SemanticModel` cannot carry; scopeTree-backed so the disk
+  // seal can reclaim Scopes) plus the optional `populateNamespaceSiblings`
+  // hook (C# implicit-namespace visibility; writes `bindingAugmentations`/
+  // `workspaceFqnBindings` in place, finalized `bindings` stay immutable, I8).
+  const runWorkspaceAndSiblings = (idx: ReturnType<typeof buildIndexes>) => {
+    const wsIndex = buildWorkspaceResolutionIndex(parsedFiles, idx.scopeTree);
+    logHeapProbe('sr-post-workspaceIndex', `lang=${provider.language}`);
+    if (provider.populateNamespaceSiblings !== undefined) {
+      provider.populateNamespaceSiblings(parsedFiles, idx, {
+        fileContents: getFileContents(),
+        treeCache,
+        resolutionConfig,
+      });
+    }
+    return wsIndex;
+  };
+
+  let indexes: ReturnType<typeof buildIndexes>;
+  let workspaceIndex: ReturnType<typeof buildWorkspaceResolutionIndex>;
+  let preEmittedInheritanceSites: Set<string>;
+  let postHeritageNodeLookup: ReturnType<typeof buildGraphNodeLookup>;
+  if (provider.resolveHeritageAfterSiblings === true) {
+    // Apex-gated re-sequence (SDD-004 §1(1)): siblings first, against the
+    // empty MethodDispatchIndex finalize supplies by design — both sibling
+    // passes are `methodDispatch`-independent (F2). THEN heritage+MRO,
+    // resolving through the now-populated workspace channel. THEN re-spread
+    // the populated `methodDispatch` for the `:653+` downstream tail — a
+    // fresh spread (never a post-construction mutation), carrying forward the
+    // in-place `workspaceFqnBindings`/`bindingAugmentations` writes.
+    indexes = buildIndexes(finalized.methodDispatch);
+    workspaceIndex = runWorkspaceAndSiblings(indexes);
+    const heritage = runHeritageAndMro(indexes);
+    preEmittedInheritanceSites = heritage.preEmittedInheritanceSites;
+    postHeritageNodeLookup = heritage.postHeritageNodeLookup;
+    indexes = {
+      ...indexes,
+      methodDispatch: buildPopulatedMethodDispatch(
+        heritage.mroByClassDefId,
+        heritage.extendsOnlyMroByClassDefId,
+      ),
+    };
+  } else {
+    // Peers — byte-identical order to today: heritage+MRO first, then build
+    // indexes with the populated dispatch, then sibling registration.
+    const heritage = runHeritageAndMro(finalized);
+    preEmittedInheritanceSites = heritage.preEmittedInheritanceSites;
+    postHeritageNodeLookup = heritage.postHeritageNodeLookup;
+    indexes = buildIndexes(
+      buildPopulatedMethodDispatch(heritage.mroByClassDefId, heritage.extendsOnlyMroByClassDefId),
+    );
+    workspaceIndex = runWorkspaceAndSiblings(indexes);
   }
 
   const tFinalize = PROF ? process.hrtime.bigint() : 0n;
@@ -768,6 +817,8 @@ export function runScopeResolution(
       conversionRankFn: provider.conversionRankFn,
       conversionOnlyArgTypePrefixes: provider.conversionOnlyArgTypePrefixes,
       constraintCompatibility: provider.constraintCompatibility,
+      conservativeOverloadResolution: provider.conservativeOverloadResolution === true,
+      resolveInheritedImplicitThisCall: provider.resolveInheritedImplicitThisCall === true,
       recordResolutionOutcome,
       calleeIdSink: calleeIdAccumulator,
     },

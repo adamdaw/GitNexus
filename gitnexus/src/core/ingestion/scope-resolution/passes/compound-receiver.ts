@@ -180,6 +180,19 @@ export function resolveCompoundReceiverClass(
     const fnExpr = text.slice(0, openIdx).trim();
     if (fnExpr.length === 0) return undefined;
 
+    // `new Type(...)` constructor expression — the constructed class IS the
+    // receiver type (`new Foo().bar()`). Strip the `new` keyword and resolve the
+    // type name (simple → scope-chain class binding; qualified/nested → recurse
+    // so the dotted head is split). A leading `new` with no whitespace is part of
+    // an ordinary identifier (`newThing()`) and is left to the call handling below.
+    const ctorType = /^new\s+(.+)$/.exec(fnExpr)?.[1]?.trim();
+    if (ctorType !== undefined && ctorType.length > 0) {
+      if (!ctorType.includes('.')) {
+        return findClassBindingInScope(inScope, ctorType, scopes);
+      }
+      return resolveCompoundReceiverClass(ctorType, inScope, scopes, index, options, depth + 1);
+    }
+
     const lastDot = fnExpr.lastIndexOf('.');
     if (lastDot === -1) {
       // Free call `name()`. Look up function in scope, then its

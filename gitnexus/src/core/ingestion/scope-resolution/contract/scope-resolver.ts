@@ -275,7 +275,10 @@ import type {
 import type { KnowledgeGraph } from '../../../graph/types.js';
 import type { GraphNodeLookup } from '../graph-bridge/node-lookup.js';
 import { LanguageProvider } from '../../language-provider.js';
-import { ScopeResolutionIndexes } from '../../model/scope-resolution-indexes.js';
+import {
+  DottedHeritageBaseResolution,
+  ScopeResolutionIndexes,
+} from '../../model/scope-resolution-indexes.js';
 import type { SemanticModel } from '../../model/semantic-model.js';
 import type { ConversionRankFn } from '../passes/overload-narrowing.js';
 
@@ -645,6 +648,42 @@ export interface ScopeResolver {
   readonly fieldFallbackOnMethodLookup?: boolean;
 
   /**
+   * Conservative overload resolution. Default `false` (the host best-guess:
+   * when exact-type narrowing leaves NO candidate, fall back to the first
+   * overload). Set `true` for languages whose semantics require leaving an
+   * undisambiguable overloaded call UNRESOLVED rather than guessing (Apex,
+   * REQ-015): when narrowing yields zero candidates, `pickOverload` returns
+   * `undefined` (no edge) instead of the first overload.
+   */
+  readonly conservativeOverloadResolution?: boolean;
+
+  /**
+   * Emit secondary `interface-dispatch` CALLS edges from an interface-typed
+   * receiver's method call to every implementing class's same-named method.
+   * Default `true` (undefined = on) — the existing cross-language behaviour.
+   *
+   * Set `false` for a language whose graph convention is that a
+   * declaration-only interface-typed call targets ONLY the interface's own
+   * member declaration, not its implementations (Apex, SDD-003 §3 — a
+   * declaration-only `Iface v; v.act()` resolves to `Iface.act`, and the
+   * concrete dispatch target is unknown without a runtime type).
+   */
+  readonly emitInterfaceDispatch?: boolean;
+
+  /**
+   * Resolve an unqualified implicit-`this` call through the enclosing class's
+   * MRO (inherited members), not just its own declared methods. Default
+   * `false` (undefined = off) — peer semantics require own-class-only: C++
+   * two-phase lookup forbids an unqualified name in a template body binding to
+   * a dependent base, so an unconditional MRO walk over-connects.
+   *
+   * Set `true` for a language whose dispatch resolves inherited implicit-`this`
+   * calls (Apex, REQ-005/007 — `inherited()` inside a subclass binds the
+   * cross-file parent's member via the linearization).
+   */
+  readonly resolveInheritedImplicitThisCall?: boolean;
+
+  /**
    * Unwrap a property-style collection accessor on a typed receiver
    * to its element type. Called by `resolveCompoundReceiverClass`
    * when walking dotted member-access chains of the form
@@ -875,6 +914,48 @@ export interface ScopeResolver {
    * suppression must remain unchanged.
    */
   readonly resolveThisViaEnclosingClass?: boolean;
+
+  /**
+   * Re-sequence the heritage/MRO block to run AFTER the cross-file
+   * sibling-registration passes (`buildWorkspaceResolutionIndex` +
+   * `populateNamespaceSiblings`) instead of before them. Default
+   * `false`/absent — the pipeline keeps today's order (heritage first),
+   * byte-identical for every peer.
+   *
+   * Set `true` only for a language whose heritage bases must resolve
+   * through the post-finalize workspace channel that
+   * `populateNamespaceSiblings` populates (Apex: a case-varied or nested
+   * cross-file `extends`/`implements` base is keyed in
+   * `workspaceFqnBindings`, which is empty until siblings run). When set,
+   * the shared pipeline runs `buildWorkspaceResolutionIndex` and
+   * `populateNamespaceSiblings` FIRST (against the empty method-dispatch
+   * index finalize supplies by design — both passes are dispatch-
+   * independent), then the heritage pre-pass + `buildMro`, then re-spreads
+   * the populated `methodDispatch` for the downstream tail. Names no
+   * language — the shared code reads this flag, the provider configures it.
+   */
+  readonly resolveHeritageAfterSiblings?: boolean;
+
+  /**
+   * Optional per-language dotted-heritage-base seam (SDD-004 §1(2)). When
+   * present it is threaded onto `ScopeResolutionIndexes.resolveDottedHeritageBase`
+   * and consulted at the TOP of `resolveInheritanceBaseInScope` for a DOTTED
+   * base — before the shared qualified/simple-tail fallbacks that would bind a
+   * same-tail top-level decoy.
+   *
+   * Apex uses it to resolve `Outer.Inner` outer-first (case-folded workspace
+   * binding for the outer, then a case-folded nested-TYPE lookup among the
+   * outer's owned defs) with the three-state contract: `resolved` (bind the
+   * nested type), `refuse` (a dotted base whose outer bound / is external /
+   * collided / namespace-qualified, or whose tail is absent/ambiguous — emit
+   * no edge, do NOT fall through to the decoy-prone tail), or `pass-through`
+   * (a non-dotted base — resume the unchanged channel). Names no language; a
+   * language that registers no hook keeps the resolver's current behaviour.
+   */
+  readonly resolveDottedHeritageBase?: (
+    baseName: string,
+    scopes: ScopeResolutionIndexes,
+  ) => DottedHeritageBaseResolution;
 
   /**
    * Optional post-finalize hook to inject cross-file bindings that

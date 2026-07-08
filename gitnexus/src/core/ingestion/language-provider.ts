@@ -595,6 +595,21 @@ interface LanguageProviderConfig {
     def: SymbolDefinition,
     callsite: Callsite,
   ) => 'compatible' | 'unknown' | 'incompatible';
+
+  /**
+   * Optional generic identifier-key normalizer (Constitution §2.2 v1.1.0 — a
+   * language-agnostic seam, names no language). When provided, the shared
+   * name-key boundaries (member registries on register AND lookup; scope- and
+   * type-binding lookups) apply it to the identifier component of the key
+   * **symmetrically** before keying — so a case-insensitive language (Apex) can
+   * resolve `acc.NAME` to a field declared `name`. The symmetry (same fold on
+   * insert and lookup) is the correctness invariant.
+   *
+   * Default: undefined ⇒ identity (no normalization) — every case-sensitive
+   * peer is byte-identical (NFR-002). Node ids are unaffected: lookup-key and
+   * display-id are already decoupled, so ids stay case-preserving.
+   */
+  readonly normalizeIdentifier?: (identifier: string) => string;
 }
 
 /** Runtime type — same as LanguageProviderConfig but with defaults guaranteed present. */

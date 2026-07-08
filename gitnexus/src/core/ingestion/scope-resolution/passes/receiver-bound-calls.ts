@@ -80,6 +80,8 @@ import type {
  *  refactors lighter — callers only need to populate what we read. */
 type ReceiverBoundProviderSubset = Pick<
   ScopeResolver,
+  | 'languageProvider'
+  | 'conservativeOverloadResolution'
   | 'isSuperReceiver'
   | 'isSuperReceiverInContext'
   | 'fieldFallbackOnMethodLookup'
@@ -93,6 +95,7 @@ type ReceiverBoundProviderSubset = Pick<
   | 'conversionOnlyArgTypePrefixes'
   | 'constraintCompatibility'
   | 'isStaticOnly'
+  | 'emitInterfaceDispatch'
 >;
 
 function normalizeTemplateArgToken(value: string): string {
@@ -257,7 +260,12 @@ export function emitReceiverBoundCalls(
       if (site.explicitReceiver === undefined) continue;
 
       const receiverName = site.explicitReceiver.name;
-      const memberName = site.name;
+      // §2.2 lookup-side fold (symmetric with the registration-table register fold):
+      // fold the member name via the language's normalizeIdentifier (Apex → toLowerCase)
+      // so `acc.NAME` keys onto the field registered `name`. Identity for case-sensitive
+      // peers. pickOverload/findOwnedMember inherit this folded name.
+      const memberName =
+        provider.languageProvider?.normalizeIdentifier?.(site.name) ?? site.name;
       const siteKey = `${parsed.filePath}:${site.atRange.startLine}:${site.atRange.startCol}`;
 
       // ── super branch ─────────────────────────────────────────────
@@ -907,6 +915,18 @@ export function emitReceiverBoundCalls(
             compoundOpts,
           );
         }
+        if (ownerDef === undefined && !typeRef.rawName.includes('(')) {
+          // A dotted type-binding that names a workspace-registered fully-qualified
+          // class — e.g. an Apex nested type `Outer.Inner` injected under its folded
+          // qualified key `outer.inner` — resolves directly to that class. The
+          // compound field/return-type walk above covers field/alias chains, not a
+          // nested-TYPE qualified name. Additive: fires ONLY after the walk misses;
+          // `findClassBindingInScope` folds the name and consults the workspace
+          // channel before its dotted-tail fallback, so a language that never injects
+          // a dotted workspace key (identity/absent normalizer, no FQN binding under
+          // this key) gets `undefined` here and is byte-for-byte unchanged.
+          ownerDef = findClassBindingInScope(typeRef.declaredAtScope, typeRef.rawName, scopes);
+        }
         if (ownerDef !== undefined) {
           const chain = [ownerDef.nodeId, ...scopes.methodDispatch.mroFor(ownerDef.nodeId)];
           let memberDef: SymbolDefinition | undefined;
@@ -1182,15 +1202,21 @@ export function emitReceiverBoundCalls(
             if (ok) emitted++;
             // Interface dispatch: when the primary owner is an
             // Interface, emit secondary CALLS edges to every
-            // implementing class's same-named method.
-            emitted += emitInterfaceDispatchFor(
-              ownerDef,
-              memberName,
-              memberDef,
-              site,
-              confidence,
-              calleeCapture,
-            );
+            // implementing class's same-named method. Gated per-language
+            // (default on): a language whose graph convention is that a
+            // declaration-only interface-typed call targets ONLY the
+            // interface's own member (Apex, SDD-003 §3) opts out via
+            // `emitInterfaceDispatch: false`.
+            if (provider.emitInterfaceDispatch !== false) {
+              emitted += emitInterfaceDispatchFor(
+                ownerDef,
+                memberName,
+                memberDef,
+                site,
+                confidence,
+                calleeCapture,
+              );
+            }
             // Always mark handled when the site was resolved, even
             // if the edge was deduplicated (collapse mode), so
             // `emitReferencesViaLookup` doesn't re-emit from the
@@ -1333,7 +1359,10 @@ function pickOverload(
   // suppress rather than picking arbitrarily — C++ would call this
   // ambiguous. Mirrors ADL merged-candidate suppression behavior.
   if (candidates.length > 1) return OVERLOAD_AMBIGUOUS;
-  return candidates[0] ?? overloads[0];
+  // Conservative languages (Apex, REQ-015) leave an undisambiguable overloaded
+  // call unresolved rather than guessing the first overload when narrowing
+  // yields no exact match. Peers keep the host best-guess fallback.
+  return candidates[0] ?? (provider.conservativeOverloadResolution ? undefined : overloads[0]);
 }
 
 /**
@@ -1436,7 +1465,10 @@ function pickFirstNonStaticOnly(
   // with no tie-breaker, suppress for the same reason.
   if (isOverloadAmbiguousAfterNormalization(candidates, site.arity)) return OVERLOAD_AMBIGUOUS;
   if (candidates.length > 1) return OVERLOAD_AMBIGUOUS;
-  return candidates[0] ?? overloads[0];
+  // Conservative languages (Apex, REQ-015) leave an undisambiguable overloaded
+  // call unresolved rather than guessing the first overload when narrowing
+  // yields no exact match. Peers keep the host best-guess fallback.
+  return candidates[0] ?? (provider.conservativeOverloadResolution ? undefined : overloads[0]);
 }
 
 function suppressDeletedCallTarget(

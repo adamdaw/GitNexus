@@ -73,10 +73,20 @@ describe('COMPATIBLE_ABI gate', () => {
 });
 
 describe('GRAMMARS registry', () => {
-  it('covers all five grammars (swift/kotlin npm, dart/proto github, c npm)', () => {
-    expect(Object.keys(mod.GRAMMARS).sort()).toEqual(['c', 'dart', 'kotlin', 'proto', 'swift']);
+  it('covers all six grammars (swift/kotlin npm, dart/proto/apex github, c npm)', () => {
+    expect(Object.keys(mod.GRAMMARS).sort()).toEqual([
+      'apex',
+      'c',
+      'dart',
+      'kotlin',
+      'proto',
+      'swift',
+    ]);
     expect(mod.GRAMMARS.swift.npm).toBe('tree-sitter-swift');
     expect(mod.GRAMMARS.dart.github).toContain('tree-sitter-dart');
+    // apex is an ABI-14 regeneration of sfapex (WI-1) — github upstream, held.
+    expect(mod.GRAMMARS.apex.github).toContain('tree-sitter-sfapex');
+    expect(mod.GRAMMARS.apex.hold).toBeTruthy();
   });
 
   it('marks c and kotlin report-only (holds); swift/dart/proto are auto-updatable', () => {

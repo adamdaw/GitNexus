@@ -84,6 +84,14 @@ export interface RegistrationTableDeps {
   readonly types: MutableTypeRegistry;
   readonly methods: MutableMethodRegistry;
   readonly fields: MutableFieldRegistry;
+  /**
+   * Generic §2.2 identifier-key normalizer resolver (per file → fold fn). When
+   * present, the registry KEY's name segment is folded before insert, so a
+   * case-insensitive language (Apex) registers `acc.NAME` and `acc.name` under
+   * one key. The lookup side folds symmetrically (receiver-bound-calls). Node
+   * ids/display names are unaffected (keys ≠ ids). Identity for peers (NFR-002).
+   */
+  readonly resolveNormalizer?: (filePath: string) => (s: string) => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -266,13 +274,19 @@ type DispatchLabel = {
 export const createRegistrationTable = (
   deps: RegistrationTableDeps,
 ): Map<NodeLabel, RegistrationHook> => {
-  const { types, methods, fields } = deps;
+  const { types, methods, fields, resolveNormalizer } = deps;
+
+  // Generic §2.2 identifier-key fold: fold the NAME segment of a registry key
+  // using the def's language normalizer (Apex → toLowerCase). Identity when no
+  // resolver is wired or the language is case-sensitive. Names no language.
+  const foldName = (def: SymbolDefinition, s: string): string =>
+    resolveNormalizer ? resolveNormalizer(def.filePath)(s) : s;
 
   // Hook 1: class-like — Class, Struct, Interface, Enum, Record, Trait.
   // Shared reference — six table entries point at this one closure.
   const classLikeHook: RegistrationHook = (name, def) => {
-    const qualifiedKey = def.qualifiedName ?? name;
-    types.registerClass(name, qualifiedKey, def);
+    const qualifiedKey = foldName(def, def.qualifiedName ?? name);
+    types.registerClass(foldName(def, name), qualifiedKey, def);
   };
 
   // Hook 2: method-like — Method, Constructor. Silently skipped if the
@@ -280,7 +294,7 @@ export const createRegistrationTable = (
   // treated the same way).
   const methodHook: RegistrationHook = (name, def) => {
     if (def.ownerId) {
-      methods.register(def.ownerId, name, def);
+      methods.register(def.ownerId, foldName(def, name), def);
     }
   };
 
@@ -290,7 +304,7 @@ export const createRegistrationTable = (
   // `id` / `name` / `type` never pollute the callable index.
   const propertyHook: RegistrationHook = (name, def) => {
     if (def.ownerId) {
-      fields.register(def.ownerId, name, def);
+      fields.register(def.ownerId, foldName(def, name), def);
     }
   };
 
