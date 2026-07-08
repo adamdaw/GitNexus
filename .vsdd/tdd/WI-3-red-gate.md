@@ -340,4 +340,11 @@ Architect-dispositioned route **(a) — record a planned manual-acceptance entry
   *Named escalation (§7(14)):* **if no internal record fires**, the disposition is a named
   escalation to re-ratify the SRS v1.7 interpretation as "no record exists for plain misses" —
   never a silent discharge. Recorded here so the inspection is tracked, not assumed.
-  *Status:* `planned` (to be executed and recorded at Step-3b validation).
+  *Status:* **`executed` (2026-07-08, Phase-7 convergence roll-up).** *Result:* the hardened build
+  (HEAD `58b9f189`) run over the `apex-cross-file-collision` fixture emits **NO internal
+  unresolved/suppressed record** for the plain typed-receiver misses `d.hit()` / `r.sneak()`
+  (probe: 1 suppressed outcome total across the fixture — the ambiguity case — none named `hit`
+  or `sneak`; and no CALLS edge for either). *Disposition:* the §7(14) named escalation fires as a
+  **confirmation** — the SRS v1.7 observable ("a plain typed-receiver miss is edge-absence, with no
+  internal record") holds against the hardened build; re-ratified by the Architect at convergence,
+  no spec change. NON-BLOCKING as stated (the black-box contract was already automated as edge-absence).
