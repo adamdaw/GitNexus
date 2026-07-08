@@ -263,14 +263,15 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     // edge kind by target type, run.ts:189); Architect-ruled 2026-07-07 to be within BL-1's
     // heritage-family class (REQ-007 covers interface-implementation), so BL-1's implements arm is
     // made explicit here (SDD-004 §2/§8). [Gate-3 reliance] — RED until the reorder ships.
-    const ext = getRelationships(result, 'EXTENDS').find(
-      (e) => e.source === 'CaseKid' && e.targetFilePath.includes('Base'),
-    );
-    expect(ext, 'CaseKid extends BASE -> Base (case-varied, folded)').toBeDefined();
-    const impl = getRelationships(result, 'IMPLEMENTS').find(
-      (e) => e.source === 'CaseKid' && e.targetFilePath.includes('Iface'),
-    );
-    expect(impl, 'CaseKid implements IFACE -> Iface (case-varied, folded)').toBeDefined();
+    const ext = getRelationships(result, 'EXTENDS').find((e) => e.source === 'CaseKid');
+    expect(ext, 'CaseKid extends BASE resolves').toBeDefined();
+    // Pin the target node, not a file substring: `Base` folded from `BASE` (case-varied).
+    expect(ext!.target, 'the parent class Base').toBe('Base');
+    const impl = getRelationships(result, 'IMPLEMENTS').find((e) => e.source === 'CaseKid');
+    expect(impl, 'CaseKid implements IFACE resolves').toBeDefined();
+    // Pin the interface node: `targetFilePath.includes('Iface')` would also match IfaceUser.cls and
+    // SubIface.cls, greening on a mis-bind to the wrong interface. The real interface is Iface.
+    expect(impl!.target, 'the real interface Iface, never SubIface').toBe('Iface');
   });
 
   // nested-type qualified access (REQ-010 SHALL) ─────────────────────────────
