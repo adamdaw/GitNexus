@@ -20,6 +20,8 @@ This project uses the [PolyForm Noncommercial License 1.0.0](https://polyformpro
 3. **Web UI (if needed):** `cd gitnexus-web && npm install`
 4. Run tests as described in [TESTING.md](TESTING.md).
 
+> **Note:** `gitnexus`'s install (`prepare`/`build`) compiles the sibling `gitnexus-shared` package using `tsc` from `gitnexus/node_modules`, so no separate install in `gitnexus-shared/` is required. If you build `gitnexus-shared` on its own, run `cd gitnexus-shared && npm install` first.
+
 ### Containerized development (optional)
 
 If you prefer an isolated environment with Claude Code, OpenAI Codex CLI, and Cursor CLI pre-installed, open the repo in VS Code with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) and run **Dev Containers: Reopen in Container**. See [`.devcontainer/README.md`](.devcontainer/README.md) for first-time auth flows and Windows WSL2 setup.

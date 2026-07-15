@@ -52,11 +52,14 @@ if (!fs.existsSync(SHARED_ROOT)) {
 }
 
 // ── 1. Build gitnexus-shared ───────────────────────────────────────
+// Anchor tsc to gitnexus/node_modules (ROOT) rather than a bare
+// relative path: gitnexus-shared has no node_modules of its own, so a
+// relative 'node_modules/.bin/tsc' run with cwd=SHARED_ROOT resolves to
+// a non-existent binary and fails with status 127. Quote for paths with
+// spaces.
 console.log('[build] compiling gitnexus-shared…');
-const tscCmd =
-  process.platform === 'win32'
-    ? path.join('node_modules', '.bin', 'tsc.cmd')
-    : path.join('node_modules', '.bin', 'tsc');
+const tscBin = process.platform === 'win32' ? 'tsc.cmd' : 'tsc';
+const tscCmd = JSON.stringify(path.join(ROOT, 'node_modules', '.bin', tscBin));
 execSync(tscCmd, { cwd: SHARED_ROOT, stdio: 'inherit', timeout: BUILD_TIMEOUT_MS });
 
 // ── 2. Build gitnexus ──────────────────────────────────────────────
