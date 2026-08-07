@@ -9,6 +9,7 @@
     "gitnexus": "1.6.9"
   },
   "overrides": {
-    "adm-zip": "0.6.0"
+    "adm-zip": "0.6.0",
+    "brace-expansion": "5.0.9"
   }
 }
