@@ -87,7 +87,10 @@ GitNexus.sln
 gitnexus/vendor/**/build/
 gitnexus/vendor/**/node_modules/
 
-/github/scripts/triage/__pycache__/
+# Was `/github/scripts/triage/__pycache__/` — anchored at the repo root and
+# missing the leading dot, so it matched nothing and every python __pycache__
+# under .github/scripts/ stayed trackable. Unanchored, so it covers all of them.
+__pycache__/
 
 .claude-flow/
 
