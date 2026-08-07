@@ -167,11 +167,29 @@ describe.skipIf(!apexAvailable)('Apex external-reference handling (REQ-013, SDD-
   it('records NO unresolved *defect* for the external references (REQ-013 observable acceptance)', () => {
     // REQ-013's observable acceptance is "no Apex-specific defect": a miss is not a defect, so no
     // suppressed resolutionOutcome names these external references.
+    //
+    // `receiver-unresolved` (#2744) is excluded from the defect class deliberately. It is not a
+    // resolver defect but a completeness signal: the site was dropped, so consumers must read
+    // `impact()`/`context()` counts as a lower bound. `ExtNs.Svc.ping()` IS such a dropped site,
+    // and saying so is correct. The arm below pins that record positively so the exclusion cannot
+    // quietly swallow a genuine regression.
     const externalNames = new Set(['debug', 'ping', 'Account', 'Name', 'System', 'ExtNs', 'Svc']);
     expect(
-      suppressed(result).filter((o) => externalNames.has(o.name)),
+      suppressed(result).filter(
+        (o) => externalNames.has(o.name) && o.reason !== 'receiver-unresolved',
+      ),
       'no unresolved defect for external references',
     ).toEqual([]);
+  });
+
+  it('reports the managed-package call as a dropped site, not a defect (#2744 completeness signal)', () => {
+    const receiverUnresolved = suppressed(result).filter(
+      (o) => o.reason === 'receiver-unresolved',
+    );
+    expect(
+      receiverUnresolved.map((o) => ({ name: o.name, filePath: o.filePath })),
+      'exactly the ExtNs.Svc.ping() site is reported as dropped',
+    ).toEqual([{ name: 'ping', filePath: 'ExtUser.cls' }]);
   });
 
   it('completes the run despite the external references, with no dangling edges (NFR-001)', () => {

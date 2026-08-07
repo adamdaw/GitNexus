@@ -33,6 +33,7 @@ import {
   persistParsedFileChunk,
   getDurableParsedFileDir,
   loadDurableParsedFileIndex,
+  prepareDurableParsedFileChunk,
   restoreDurableParsedFileShard,
 } from '../../../storage/parsedfile-store.js';
 import type { ParseWorkerResult } from '../workers/parse-worker.js';
@@ -70,6 +71,7 @@ import type { WorkerPool } from '../workers/worker-pool.js';
 import type {
   ExtractedDecoratorRoute,
   ExtractedFetchCall,
+  ExtractedModuleConstants,
   ExtractedORMQuery,
   ExtractedRoute,
   ExtractedToolDef,
@@ -83,13 +85,19 @@ import type {
 } from '../route-extractors/fastapi-router-bindings.js';
 import { normalizeExtractedRoutePath } from '../route-extractors/route-path.js';
 import {
+  resolveOperands,
+  type ModuleConstants,
+} from '../route-extractors/python-const-resolver.js';
+import {
   resolveInheritedSpringRoutes,
   type SharedSpringType,
 } from '../route-extractors/spring-shared.js';
 import type { KnowledgeGraph } from '../../graph/types.js';
 import type { PipelineOptions } from '../pipeline.js';
 import fs from 'node:fs';
+import { effectiveRamBytes, memoryAutopilotDisabled } from '../utils/effective-ram.js';
 import path from 'node:path';
+import v8 from 'node:v8';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { isDev } from '../utils/env.js';
@@ -104,6 +112,81 @@ import { isDebugHeapEnabled, logHeapProbe } from '../utils/heap-probe.js';
 
 import { logger } from '../../logger.js';
 // ── Constants ──────────────────────────────────────────────────────────────
+
+/**
+ * Heap-scale guardrail constants (#2649). Measured on a Linux-kernel analyze:
+ * ~75 graph nodes per PARSEABLE file (~5M nodes / ~65k parseable files;
+ * validated against heap probes at chunks 25/50/75 of 113 — the first
+ * calibration divided by total scanned files and under-projected by ~30%),
+ * main-thread heap per node. C-heavy corpus; other language mixes vary — these
+ * feed a WARNING and an emergency abort, never a hard admission gate, so
+ * estimate error only shifts when the operator hears about the problem, not
+ * whether analyze runs.
+ *
+ * RECALIBRATED for streamed structural emit (#2680), which is on by default for
+ * full rebuilds and holds relationships out of the JS heap. The original 2250
+ * was measured against the object-based graph; an A/B at 400k nodes / 1.08M
+ * edges put streaming at 1.40x smaller (819 MB -> 584 MB), so the corpus-
+ * calibrated figure is divided by that ratio: 2250 / 1.40 ~= 1600. Scaling the
+ * measured constant rather than substituting a synthetic one keeps #2649's
+ * kernel calibration intact and changes only the one thing that actually moved.
+ *
+ * If streaming is disabled (GITNEXUS_STREAM_GRAPH_EMIT=0, or any non-force run)
+ * this UNDER-projects by ~40%, so the preflight warning may stay quiet on a repo
+ * that then struggles. That is the safe direction to be wrong in: the abort
+ * below reads LIVE heap use, not this projection, so it still catches the real
+ * condition — only the early warning is affected.
+ */
+const PROJECTED_NODES_PER_FILE = 75;
+const PROJECTED_HEAP_BYTES_PER_NODE = 1600;
+/** Warn at scan end when the projection crosses this share of the heap limit. */
+const PREFLIGHT_WARN_FRACTION = 0.85;
+/**
+ * Abort the chunk loop when live heap use crosses this share of the limit.
+ * Above ~0.95 V8 enters the ineffective-mark-compact death spiral (2s+ GC
+ * pauses that also falsely idle-timeout healthy workers, #2649); 0.92 leaves
+ * one chunk's worth of headroom to fail with an actionable message instead.
+ * `GITNEXUS_MEMORY=off` declines the abort (proceed-at-own-risk).
+ */
+const HEAP_ABORT_FRACTION = 0.92;
+
+/** Projected main-thread heap need for the parse phase (#2649). */
+export function projectParseHeapNeedBytes(parseableFileCount: number): number {
+  return parseableFileCount * PROJECTED_NODES_PER_FILE * PROJECTED_HEAP_BYTES_PER_NODE;
+}
+
+/** True when the mid-loop heap guard should abort the parse (#2649). */
+export function shouldAbortForHeapPressure(heapUsedBytes: number, heapLimitBytes: number): boolean {
+  if (memoryAutopilotDisabled()) return false;
+  return heapUsedBytes > heapLimitBytes * HEAP_ABORT_FRACTION;
+}
+
+/**
+ * The ONE action a user should take when this repository doesn't fit the
+ * current heap (#2649). Users hitting memory limits are already frustrated —
+ * a menu of env knobs at that moment is noise. Branch on whether the machine
+ * itself has more memory to give: if this process's limit sits well below
+ * what the RAM-aware auto-sizer would grant (an inherited NODE_OPTIONS pin or
+ * explicit flag), the fix is to drop the pin — gitnexus sizes itself.
+ * Otherwise the machine is the ceiling and only scope or hardware helps.
+ * Escape hatches (GITNEXUS_MEMORY etc.) stay in the README env table.
+ */
+export function heapPressureRemedy(heapLimitBytes: number): string {
+  // Effective RAM honors a real cgroup limit — raw os.totalmem() told users
+  // inside an 8GB-limited container on a 64GB host that "this machine has
+  // more memory available", an advice loop with no exit (#2649 review).
+  const autoCapBytes = effectiveRamBytes() * 0.75;
+  if (heapLimitBytes < autoCapBytes * 0.9) {
+    return (
+      `This machine has more memory available: re-run without the --max-old-space-size ` +
+      `pin (NODE_OPTIONS or node flag) — gitnexus sizes its heap to the machine automatically.`
+    );
+  }
+  return (
+    `This machine is at its memory ceiling: exclude generated or vendored directories ` +
+    `via .gitnexusignore, or analyze on a machine with more memory.`
+  );
+}
 
 /** Max bytes of source content to load per parse chunk.
  *
@@ -416,7 +499,8 @@ export async function runChunkedParseAndResolve(
   const skippedByLang = new Map<string, number>();
   for (const f of scannedFiles) {
     const lang = getLanguageFromFilename(f.path);
-    if (lang && !isLanguageAvailable(lang)) {
+    const provider = lang === null ? undefined : getProvider(lang);
+    if (lang && provider?.parseStrategy !== 'standalone' && !isLanguageAvailable(lang)) {
       skippedByLang.set(lang, (skippedByLang.get(lang) || 0) + 1);
     }
   }
@@ -517,6 +601,22 @@ export async function runChunkedParseAndResolve(
           MIN_SUB_BATCH_BYTES,
           Math.ceil(chunkByteBudget / (effectivePoolSize * TARGET_JOBS_PER_WORKER)),
         );
+  // Heap-scale guardrails (#2649), measured on a Linux-kernel analyze
+  // (94,773 files): ~55 graph nodes per parseable file and ~2.2KB of
+  // main-thread heap per node, linear across 113 chunks (see
+  // docs/plans/2026-07-23-gitnexus-plan-large-repo-analyze-oom.md §2).
+  // Estimates, not contracts — used only to warn early (preflight) and to
+  // convert a certain multi-minute GC death spiral into an immediate
+  // actionable error (mid-loop guard).
+  const projectedHeapNeedBytes = projectParseHeapNeedBytes(parseableScanned.length);
+  const heapLimitBytes = v8.getHeapStatistics().heap_size_limit;
+  if (projectedHeapNeedBytes > heapLimitBytes * PREFLIGHT_WARN_FRACTION) {
+    logger.warn(
+      `Large repository: analyzing ${parseableScanned.length} files needs roughly ${Math.round(projectedHeapNeedBytes / 1024 / 1024 / 1024)}GB of memory, ` +
+        `but Node is limited to ${Math.round(heapLimitBytes / 1024 / 1024 / 1024)}GB — analyze may stop early. ${heapPressureRemedy(heapLimitBytes)}`,
+    );
+  }
+
   const chunks: string[][] = [];
   let currentChunk: string[] = [];
   let currentBytes = 0;
@@ -635,6 +735,9 @@ export async function runChunkedParseAndResolve(
   const allRouterImports: ExtractedRouterImport[] = [];
   const allRouterConstructorPrefixes: ExtractedRouterConstructorPrefix[] = [];
   const allRouterModuleAliases: ExtractedRouterModuleAlias[] = [];
+  // Per-file Python module constants (#2391); resolved into decorator route paths
+  // below, after cross-file aggregation, alongside the include_router prefix pass.
+  const allModuleConstants: ExtractedModuleConstants[] = [];
   const allSpringTypes: SharedSpringType[] = [];
   const allToolDefs: ExtractedToolDef[] = [];
   const allORMQueries: ExtractedORMQuery[] = [];
@@ -798,6 +901,9 @@ export async function runChunkedParseAndResolve(
         if (chunkWorkerData.routerModuleAliases?.length) {
           for (const item of chunkWorkerData.routerModuleAliases) allRouterModuleAliases.push(item);
         }
+        if (chunkWorkerData.moduleConstants?.length) {
+          for (const item of chunkWorkerData.moduleConstants) allModuleConstants.push(item);
+        }
         if (chunkWorkerData.springTypes?.length) {
           for (const item of chunkWorkerData.springTypes) allSpringTypes.push(item);
         }
@@ -862,6 +968,18 @@ export async function runChunkedParseAndResolve(
         logHeapProbe(
           `parse-chunk-${chunkIdx}`,
           `nodes=${graph.nodeCount} parsedFiles=${allParsedFiles.length}`,
+        );
+      }
+      // #2649 mid-loop heap guard: fail actionably BEFORE V8 enters the
+      // ineffective-mark-compact death spiral (which also falsely times out
+      // healthy workers). The pool is torn down by this function's finally.
+      const heapUsedNow = process.memoryUsage().heapUsed;
+      const heapLimitNow = v8.getHeapStatistics().heap_size_limit;
+      if (shouldAbortForHeapPressure(heapUsedNow, heapLimitNow)) {
+        throw new Error(
+          `Analyze stopped before running out of memory: ${Math.round(heapUsedNow / 1024 / 1024)}MB of the ` +
+            `${Math.round(heapLimitNow / 1024 / 1024)}MB Node heap in use at parse chunk ${chunkIdx + 1}/${numChunks} (#2649). ` +
+            heapPressureRemedy(heapLimitNow),
         );
       }
       const chunkPaths = chunks[chunkIdx];
@@ -981,6 +1099,19 @@ export async function runChunkedParseAndResolve(
         // Cache miss: dispatch to workers, capture the raw results, store
         // them under the chunk hash for the next run.
         chunkCacheMisses++;
+        if (durableParsedFileDir !== undefined && chunkHash !== null) {
+          try {
+            await prepareDurableParsedFileChunk(durableParsedFileDir, chunkHash);
+          } catch (err) {
+            // The durable store is an optimization — degrade like the restore
+            // path does instead of failing the analyze. Workers recreate the
+            // directory on write, so at worst the old generation lingers.
+            logger.warn(
+              { err, chunkHash: chunkHash.slice(0, 8) },
+              'parsedfile-cache: could not reset durable chunk generation; continuing',
+            );
+          }
+        }
         const progressForChunk = (current: number, _total: number, filePath: string) => {
           const globalCurrent = filesParsedSoFar + current;
           // Parse phase covers 20-70 (M2). Deferred extraction handles 70-95.
@@ -1158,6 +1289,40 @@ export async function runChunkedParseAndResolve(
 
   // FastAPI router-prefix resolution (cross-file).
   //
+  // #2391: resolve non-literal FastAPI decorator route paths (imported/composed
+  // string constants) BEFORE the include_router/APIRouter prefix pass below, so a
+  // resolved path is then prefix-joined like any literal path. Each such route
+  // carries `routePathExpr`/`routePathOperands` and an empty `routePath`; we fold
+  // the operands against the repo-wide, file-path-keyed constant map. On failure
+  // we DROP the route (KTD5 skip floor) rather than emit a phantom `POST /`.
+  if (allDecoratorRoutes.some((dr) => dr.routePathExpr !== undefined)) {
+    const repoConstants = new Map<string, ModuleConstants>();
+    for (const { filePath, constants } of allModuleConstants) {
+      repoConstants.set(filePath, constants);
+    }
+    const resolvedRoutes: ExtractedDecoratorRoute[] = [];
+    let skipped = 0;
+    for (const dr of allDecoratorRoutes) {
+      if (dr.routePathExpr === undefined) {
+        resolvedRoutes.push(dr);
+        continue;
+      }
+      const value = dr.routePathOperands
+        ? resolveOperands(dr.filePath, dr.routePathOperands, repoConstants)
+        : null;
+      if (value === null) {
+        skipped++;
+        continue;
+      }
+      resolvedRoutes.push({ ...dr, routePath: value });
+    }
+    allDecoratorRoutes.length = 0;
+    for (const dr of resolvedRoutes) allDecoratorRoutes.push(dr);
+    if (isDev && skipped > 0) {
+      logger.info(`  🧩 Resolved composed route constants; ${skipped} unresolved route(s) skipped`);
+    }
+  }
+
   // Workers emit two kinds of records per Python file:
   //   • `routerIncludes` — every `app.include_router(<routerExpr>, prefix='/x')`
   //     site, where `routerExpr` is either `<module>.router` (Shape A) or a

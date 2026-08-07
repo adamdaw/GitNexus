@@ -11,7 +11,13 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
+import type { GraphRelationship } from 'gitnexus-shared';
 import { withTestLbugDB } from '../helpers/test-indexed-db.js';
+import { skipUnlessFtsAvailable } from '../helpers/fts-availability.js';
+import {
+  SPRING_AUTO_CONFIGURATION_SYNTHETIC_DESCRIPTION,
+  SPRING_AUTO_CONFIGURATION_SYNTHETIC_ID_PREFIX,
+} from '../../src/core/ingestion/frameworks/spring/auto-configuration.js';
 
 /**
  * LadybugDB 0.16.0 has a known Windows-only regression: `Database.close()`
@@ -23,40 +29,13 @@ import { withTestLbugDB } from '../helpers/test-indexed-db.js';
  */
 const itLbugReopen = process.platform === 'win32' ? it.skip : it;
 
-/**
- * The FTS extension is optional and defaults to a `load-only` install policy
- * (PR #1161 — offline-first), so on a machine where it was never pre-installed
- * it cannot load. The tests below exercise the FTS *primitives* directly and
- * have nothing to assert without the extension — skip them rather than fail.
- * Graceful degradation when FTS is unavailable is covered at the analyze /
- * query layer (see run-analyze.ts and the BM25 fallback tests).
- */
-const FTS_UNAVAILABLE_NOTE =
-  'FTS extension unavailable (load-only policy; not pre-installed on this machine)';
-
-/**
- * Dynamically skip an FTS-primitive test when the extension cannot load.
- * `ctx.skip()` aborts the test, so callers should `await` this first thing.
- *
- * Honors GITNEXUS_REQUIRE_FTS=1 the same way `withTestLbugDB` does (see
- * test/helpers/test-indexed-db.ts): when CI sets it, an unavailable extension is
- * a HARD FAILURE, never a silent skip — otherwise these FTS-primitive tests
- * (this file is in LBUG_NATIVE, so it runs on the ubuntu/macOS/windows jobs that
- * all set GITNEXUS_REQUIRE_FTS=1) could vanish from a green run. Offline/local
- * runs (no env var) still skip gracefully (#2299).
- */
-const skipUnlessFtsAvailable = async (ctx: { skip: (note?: string) => void }): Promise<void> => {
-  const { loadFTSExtension } = await import('../../src/core/lbug/lbug-adapter.js');
-  if (await loadFTSExtension()) return;
-  if (process.env.GITNEXUS_REQUIRE_FTS === '1') {
-    throw new Error(
-      'FTS extension is required (GITNEXUS_REQUIRE_FTS=1) but could not be loaded or installed. ' +
-        'FTS-dependent tests must not be silently skipped in CI — install/repair the LadybugDB ' +
-        'FTS extension (see `gitnexus doctor`) or unset GITNEXUS_REQUIRE_FTS for offline/local runs.',
-    );
-  }
-  ctx.skip(FTS_UNAVAILABLE_NOTE);
-};
+// The FTS extension is optional and defaults to a `load-only` install policy
+// (PR #1161 — offline-first), so on a machine where it was never pre-installed
+// it cannot load. The tests below exercise the FTS *primitives* directly and
+// have nothing to assert without the extension — skip them rather than fail.
+// Graceful degradation when FTS is unavailable is covered at the analyze /
+// query layer (see run-analyze.ts and the BM25 fallback tests).
+// See test/helpers/fts-availability.ts for skipUnlessFtsAvailable's contract.
 
 // ─── Core LadybugDB Adapter ─────────────────────────────────────────────
 
@@ -152,6 +131,171 @@ withTestLbugDB(
           `MATCH ()-[r:CodeRelation]->() WHERE r.type = 'TAINT_PATH' RETURN count(r) AS cnt`,
         );
         expect(Number((left[0] as { cnt: number }).cnt)).toBe(0);
+      });
+
+      it('deleteAllInjects: removes only INJECTS edges and is benign when none exist (#2200)', async () => {
+        // Mirrors the deleteAllInterprocTaintPaths test above (same contract:
+        // COUNT-then-DELETE, missing-table carve-out, re-throw otherwise).
+        // The re-throw path is not simulated here — doing so would require
+        // breaking the shared singleton connection mid-suite. Its benign-vs-
+        // rethrow classification is pinned as a pure function instead:
+        // `classifyDeleteAllError` (lbug-config.ts), exhaustively covered in
+        // test/unit/lbug-delete-all-error.test.ts.
+        const { executeQuery: coreExecuteQuery, deleteAllInjects } =
+          await import('../../src/core/lbug/lbug-adapter.js');
+
+        // Benign: no INJECTS rows yet → returns 0, does NOT throw.
+        await expect(deleteAllInjects()).resolves.toEqual({ edgesDeleted: 0 });
+
+        // Seed one INJECTS edge plus one edge of ANOTHER type between the two
+        // seeded Function nodes, then delete-all and confirm exactly the
+        // INJECTS row is removed while the other-typed row survives.
+        const fns = (await coreExecuteQuery('MATCH (n:Function) RETURN n.id AS id')) as {
+          id: string;
+        }[];
+        expect(fns.length).toBe(2);
+        await coreExecuteQuery(
+          `MATCH (a:Function {id: '${fns[0].id}'}), (b:Function {id: '${fns[1].id}'}) ` +
+            `CREATE (a)-[:CodeRelation {type: 'INJECTS', confidence: 0.8, reason: 'di', step: 0}]->(b)`,
+        );
+        await coreExecuteQuery(
+          `MATCH (a:Function {id: '${fns[0].id}'}), (b:Function {id: '${fns[1].id}'}) ` +
+            `CREATE (a)-[:CodeRelation {type: 'QUERIES', confidence: 0.8, reason: 'orm', step: 0}]->(b)`,
+        );
+        const r2 = await deleteAllInjects();
+        expect(r2.edgesDeleted).toBe(1);
+        const injectsLeft = await coreExecuteQuery(
+          `MATCH ()-[r:CodeRelation]->() WHERE r.type = 'INJECTS' RETURN count(r) AS cnt`,
+        );
+        expect(Number((injectsLeft[0] as { cnt: number }).cnt)).toBe(0);
+        const queriesLeft = await coreExecuteQuery(
+          `MATCH ()-[r:CodeRelation]->() WHERE r.type = 'QUERIES' RETURN count(r) AS cnt`,
+        );
+        expect(Number((queriesLeft[0] as { cnt: number }).cnt)).toBe(1);
+      });
+
+      it('deleteAllAdvisedBy: removes only ADVISED_BY edges and is benign when none exist (#2416)', async () => {
+        const { executeQuery: coreExecuteQuery, deleteAllAdvisedBy } =
+          await import('../../src/core/lbug/lbug-adapter.js');
+
+        await expect(deleteAllAdvisedBy()).resolves.toEqual({ edgesDeleted: 0 });
+        const fns = (await coreExecuteQuery('MATCH (n:Function) RETURN n.id AS id')) as Array<{
+          id: string;
+        }>;
+        expect(fns.length).toBe(2);
+        await coreExecuteQuery(
+          `MATCH (a:Function {id: '${fns[0].id}'}), (b:Function {id: '${fns[1].id}'}) ` +
+            `CREATE (a)-[:CodeRelation {type: 'ADVISED_BY', confidence: 0.95, reason: 'spring-aop:v1:{}', step: 0}]->(b)`,
+        );
+
+        await expect(deleteAllAdvisedBy()).resolves.toEqual({ edgesDeleted: 1 });
+        const advisedLeft = await coreExecuteQuery(
+          `MATCH ()-[r:CodeRelation]->() WHERE r.type = 'ADVISED_BY' RETURN count(r) AS cnt`,
+        );
+        expect(Number((advisedLeft[0] as { cnt: number }).cnt)).toBe(0);
+      });
+
+      it('deleteSpringAopEvidenceNodes: keys deletion to the owned ID namespace (#2416)', async () => {
+        const { executeQuery: coreExecuteQuery, deleteSpringAopEvidenceNodes } =
+          await import('../../src/core/lbug/lbug-adapter.js');
+
+        await expect(deleteSpringAopEvidenceNodes()).resolves.toEqual({ nodesDeleted: 0 });
+        await coreExecuteQuery(
+          `CREATE (:CodeElement {id: 'CodeElement:spring-aop:test-evidence', name: 'Aop', filePath: 'A.java', startLine: 1, endLine: 1, isExported: false, content: '', description: 'ordinary text'})`,
+        );
+        await coreExecuteQuery(
+          `CREATE (:CodeElement {id: 'CodeElement:ordinary-lookalike', name: 'Other', filePath: 'B.java', startLine: 1, endLine: 1, isExported: false, content: '', description: 'Spring AOP: lookalike'})`,
+        );
+
+        await expect(deleteSpringAopEvidenceNodes()).resolves.toEqual({ nodesDeleted: 1 });
+        const rows = await coreExecuteQuery(
+          `MATCH (n:CodeElement) WHERE n.id IN ['CodeElement:spring-aop:test-evidence', 'CodeElement:ordinary-lookalike'] RETURN n.id AS id`,
+        );
+        expect(rows).toEqual([{ id: 'CodeElement:ordinary-lookalike' }]);
+        await coreExecuteQuery(
+          `MATCH (n:CodeElement {id: 'CodeElement:ordinary-lookalike'}) DETACH DELETE n`,
+        );
+      });
+
+      it('persists the Interface Spring AOP evidence relation pair (#2416)', async () => {
+        const { executeQuery: coreExecuteQuery } =
+          await import('../../src/core/lbug/lbug-adapter.js');
+        await coreExecuteQuery(
+          `CREATE (:Interface {id: 'Interface:aop-test', name: 'AdvisedInterface', filePath: 'I.java', startLine: 1, endLine: 2, isExported: true, content: '', description: ''})`,
+        );
+        await coreExecuteQuery(
+          `CREATE (:CodeElement {id: 'CodeElement:aop-interface-evidence', name: 'Transactional', filePath: 'I.java', startLine: 1, endLine: 1, isExported: false, content: '', description: 'Spring AOP evidence'})`,
+        );
+        await coreExecuteQuery(
+          `MATCH (source:Interface {id: 'Interface:aop-test'}), (target:CodeElement {id: 'CodeElement:aop-interface-evidence'}) CREATE (source)-[:CodeRelation {type: 'ADVISED_BY', confidence: 1.0, reason: 'spring-aop:v1:{}', step: 0}]->(target)`,
+        );
+        const rows = await coreExecuteQuery(
+          `MATCH (source)-[r:CodeRelation]->() WHERE source.id = 'Interface:aop-test' AND r.type = 'ADVISED_BY' RETURN source.id AS id`,
+        );
+        expect(rows).toEqual([{ id: 'Interface:aop-test' }]);
+        await coreExecuteQuery(
+          `MATCH (n) WHERE n.id IN ['Interface:aop-test', 'CodeElement:aop-interface-evidence'] DETACH DELETE n`,
+        );
+      });
+
+      it('deleteSpringAutoConfigurationDeclarations: removes only Spring DECLARES edges (#2415)', async () => {
+        const { executeQuery: coreExecuteQuery, deleteSpringAutoConfigurationDeclarations } =
+          await import('../../src/core/lbug/lbug-adapter.js');
+
+        await expect(deleteSpringAutoConfigurationDeclarations()).resolves.toEqual({
+          edgesDeleted: 0,
+        });
+        const fns = (await coreExecuteQuery('MATCH (n:Function) RETURN n.id AS id')) as Array<{
+          id: string;
+        }>;
+        expect(fns.length).toBe(2);
+        await coreExecuteQuery(
+          `MATCH (a:Function {id: '${fns[0].id}'}), (b:Function {id: '${fns[1].id}'}) ` +
+            `CREATE (a)-[:CodeRelation {type: 'DECLARES', confidence: 1.0, reason: 'spring-auto-configuration-import', step: 0}]->(b)`,
+        );
+        await coreExecuteQuery(
+          `MATCH (a:Function {id: '${fns[0].id}'}), (b:Function {id: '${fns[1].id}'}) ` +
+            `CREATE (a)-[:CodeRelation {type: 'DECLARES', confidence: 1.0, reason: 'spring-auto-configuration-factory', step: 0}]->(b)`,
+        );
+        await coreExecuteQuery(
+          `MATCH (a:Function {id: '${fns[0].id}'}), (b:Function {id: '${fns[1].id}'}) ` +
+            `CREATE (a)-[:CodeRelation {type: 'DECLARES', confidence: 1.0, reason: 'other-metadata-system', step: 0}]->(b)`,
+        );
+
+        await expect(deleteSpringAutoConfigurationDeclarations()).resolves.toEqual({
+          edgesDeleted: 2,
+        });
+        const left = await coreExecuteQuery(
+          `MATCH ()-[r:CodeRelation]->() WHERE r.type = 'DECLARES' RETURN count(r) AS cnt`,
+        );
+        expect(Number((left[0] as { cnt: number }).cnt)).toBe(1);
+      });
+
+      it('deleteSpringAutoConfigurationSyntheticClasses: removes only metadata placeholders (#2415)', async () => {
+        const { executeQuery: coreExecuteQuery, deleteSpringAutoConfigurationSyntheticClasses } =
+          await import('../../src/core/lbug/lbug-adapter.js');
+
+        await coreExecuteQuery(
+          `CREATE (:Class {id: '${SPRING_AUTO_CONFIGURATION_SYNTHETIC_ID_PREFIX}com.example.ExternalAutoConfiguration', ` +
+            `name: 'ExternalAutoConfiguration', ` +
+            `filePath: 'META-INF/spring.factories', ` +
+            `description: '${SPRING_AUTO_CONFIGURATION_SYNTHETIC_DESCRIPTION}'})`,
+        );
+        await coreExecuteQuery(
+          `CREATE (:Class {id: 'Class:src/Real.java:Real', name: 'Real', ` +
+            `filePath: 'src/Real.java', ` +
+            `description: '${SPRING_AUTO_CONFIGURATION_SYNTHETIC_DESCRIPTION}'})`,
+        );
+        await expect(deleteSpringAutoConfigurationSyntheticClasses()).resolves.toEqual({
+          nodesDeleted: 1,
+        });
+        const syntheticLeft = await coreExecuteQuery(
+          `MATCH (n:Class) WHERE n.id STARTS WITH '${SPRING_AUTO_CONFIGURATION_SYNTHETIC_ID_PREFIX}' ` +
+            'RETURN count(n) AS cnt',
+        );
+        expect(Number((syntheticLeft[0] as { cnt: number }).cnt)).toBe(0);
+        const realClasses = await coreExecuteQuery('MATCH (n:Class) RETURN count(n) AS cnt');
+        expect(Number((realClasses[0] as { cnt: number }).cnt)).toBe(2);
       });
 
       describe('unhappy path', () => {
@@ -253,6 +397,191 @@ withTestLbugDB(
           );
         },
       );
+
+      // ── Cypher escaping sweep (#2409, tri-review 4669518496 P2-2) ─────
+      // Quoted-value round-trips through the three string-built statement
+      // builders that used SQL-style `''` doubling — which LadybugDB rejects
+      // as a parse error, so every quoted value silently failed wherever the
+      // call site swallowed per-row errors. Declared LAST on purpose: these
+      // tests APPEND rows to the shared singleton DB, and the count-based
+      // assertions above (getLbugStats, the loadGraphToLbug round-trip) run
+      // first in declaration order.
+      describe('string-built Cypher escaping (quoted values)', () => {
+        it('insertNodeToLbug: quoted filePath/name/content round-trip by exact match', async () => {
+          const { insertNodeToLbug, executeQuery } =
+            await import('../../src/core/lbug/lbug-adapter.js');
+          const { escapeCypherString } = await import('../../src/core/lbug/cypher-escape.js');
+
+          const filePath = "src/es'cape-probe.ts";
+          const inserted = await insertNodeToLbug('File', {
+            id: `File:${filePath}`,
+            name: "es'cape-probe.ts",
+            filePath,
+            content: "const s = 'quoted';",
+          });
+          expect(inserted).toBe(true);
+
+          const rows = await executeQuery(
+            `MATCH (n:File) WHERE n.filePath = '${escapeCypherString(filePath)}' ` +
+              `RETURN n.id AS id, n.name AS name, n.content AS content`,
+          );
+          expect(rows).toEqual([
+            { id: `File:${filePath}`, name: "es'cape-probe.ts", content: "const s = 'quoted';" },
+          ]);
+        });
+
+        it('fallbackRelationshipInserts: quoted endpoint ids create the edge; quoted reason round-trips', async () => {
+          const { fallbackRelationshipInserts, insertNodeToLbug, executeQuery } =
+            await import('../../src/core/lbug/lbug-adapter.js');
+          const { getNodeLabel } = await import('../../src/core/lbug/rel-pair-routing.js');
+          const { REL_CSV_HEADER, buildRelRow } =
+            await import('../../src/core/lbug/csv-generator.js');
+          const { NODE_TABLES, REL_TABLE_NAME } = await import('../../src/core/lbug/schema.js');
+          const { escapeCypherString } = await import('../../src/core/lbug/cypher-escape.js');
+
+          const quotedFile = "src/we'ird.ts";
+          const fnId = `Function:${quotedFile}:fn:1`;
+          const fileId = `File:${quotedFile}`;
+          expect(
+            await insertNodeToLbug('Function', {
+              id: fnId,
+              name: 'fn',
+              filePath: quotedFile,
+              startLine: 1,
+              endLine: 3,
+              isExported: true,
+              content: 'function fn() {}',
+            }),
+          ).toBe(true);
+          expect(
+            await insertNodeToLbug('File', {
+              id: fileId,
+              name: "we'ird.ts",
+              filePath: quotedFile,
+              content: '',
+            }),
+          ).toBe(true);
+
+          // Real buildRelRow bytes + the real rel-pair-routing getNodeLabel —
+          // exactly the shapes the production COPY-failure fallback receives.
+          // Direction is File→Function because that is a pair the CodeRelation
+          // rel table declares (schema.ts); Function→File is NOT declared, so
+          // the reverse edge would exercise schema validation, not escaping.
+          // NOTE (pre-existing narrowing, distinct from the `''` escaping bug
+          // and NOT fixed here): the fallback's row regex matches fields with
+          // `[^"]*`, so an id containing a double quote never matches and its
+          // edge is skipped — see the fallbackRelationshipInserts TSDoc.
+          const rel: GraphRelationship = {
+            id: 'rel-escaping-sweep-1',
+            sourceId: fileId,
+            targetId: fnId,
+            type: 'CALLS',
+            confidence: 1,
+            reason: "it's quoted",
+            step: 0,
+          };
+          await fallbackRelationshipInserts(
+            [REL_CSV_HEADER, buildRelRow(rel)],
+            new Set<string>(NODE_TABLES),
+            getNodeLabel,
+          );
+
+          const edges = await executeQuery(
+            `MATCH (a)-[r:${REL_TABLE_NAME}]->(b) ` +
+              `WHERE r.reason = '${escapeCypherString("it's quoted")}' ` +
+              `RETURN a.id AS fromId, b.id AS toId, r.type AS type, r.reason AS reason`,
+          );
+          expect(edges).toEqual([
+            { fromId: fileId, toId: fnId, type: 'CALLS', reason: "it's quoted" },
+          ]);
+        });
+
+        itLbugReopen(
+          'batchInsertNodesToLbug: quoted values MERGE cleanly over its own connection',
+          async () => {
+            // batchInsertNodesToLbug opens its OWN connection on dbPath, which
+            // cannot coexist with the singleton's exclusive file lock — close
+            // the singleton around the call and reopen after. win32-skipped
+            // for the same close→reopen native lock regression as the FTS
+            // reopen probe above. Labels are File + Class (NOT Function): the
+            // earlier tests in this suite put FTS indexes on Function, and a
+            // write to an FTS-indexed table fails on a connection that has not
+            // loaded the FTS extension (probed on 0.18.0) — an orthogonal
+            // engine behavior this escaping test must not trip over. Class
+            // exercises the same TABLES_WITH_EXPORTED + description branch.
+            const adapter = await import('../../src/core/lbug/lbug-adapter.js');
+            const { escapeCypherString } = await import('../../src/core/lbug/cypher-escape.js');
+
+            const filePath = "src/ba'tch.ts";
+            await adapter.closeLbug();
+            let result: { inserted: number; failed: number };
+            try {
+              result = await adapter.batchInsertNodesToLbug(
+                [
+                  {
+                    label: 'File',
+                    properties: {
+                      id: `File:${filePath}`,
+                      name: "ba'tch.ts",
+                      filePath,
+                      content: "let q = 'x';",
+                    },
+                  },
+                  {
+                    label: 'Class',
+                    properties: {
+                      id: `Class:${filePath}:K:1`,
+                      name: 'K',
+                      filePath,
+                      startLine: 1,
+                      endLine: 2,
+                      isExported: false,
+                      content: '',
+                      description: "batch'd",
+                    },
+                  },
+                ],
+                handle.dbPath,
+              );
+            } finally {
+              await adapter.initLbug(handle.dbPath);
+            }
+            expect(result).toEqual({ inserted: 2, failed: 0 });
+
+            const rows = await adapter.executeQuery(
+              `MATCH (n:Class) WHERE n.filePath = '${escapeCypherString(filePath)}' ` +
+                `RETURN n.name AS name, n.description AS description`,
+            );
+            expect(rows).toEqual([{ name: 'K', description: "batch'd" }]);
+          },
+        );
+
+        it('backslash and raw-LF/CR values round-trip byte-identical', async () => {
+          // The old escapeValue closures rewrote literal \n / \r into
+          // two-character escape sequences; raw LF/CR are legal inside
+          // LadybugDB single-quoted literals (live-probed on 0.18.0), so the
+          // replaces are gone and content bytes must survive unchanged.
+          const { insertNodeToLbug, executeQuery } =
+            await import('../../src/core/lbug/lbug-adapter.js');
+          const { escapeCypherString } = await import('../../src/core/lbug/cypher-escape.js');
+
+          const id = 'File:src/bytes-probe.ts';
+          const content = "line1\nC:\\temp\\it's ok\r\nline3";
+          expect(
+            await insertNodeToLbug('File', {
+              id,
+              name: 'bytes-probe.ts',
+              filePath: 'src/bytes-probe.ts',
+              content,
+            }),
+          ).toBe(true);
+
+          const rows = await executeQuery(
+            `MATCH (n:File) WHERE n.id = '${escapeCypherString(id)}' RETURN n.content AS content`,
+          );
+          expect(rows).toEqual([{ content }]);
+        });
+      });
     });
   },
   {

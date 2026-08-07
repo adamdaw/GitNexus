@@ -15,14 +15,22 @@ import {
   branchSlug,
   resolveBranchPlacement,
   saveMeta,
+  loadMeta,
+  reconcileMetadataFiles,
+  AnalysisNotFinalizedError,
+  INDEX_METADATA_FILE,
   ensureGitNexusIgnored,
   readRegistry,
   loadCLIConfig,
   registerRepo,
+  unregisterRepo,
   removeBranchIndex,
+  adoptFlatBranchLabel,
   listRegisteredRepos,
   resolveRegistryEntry,
   canonicalizePath,
+  registryPathEquals,
+  cloneDirBelongsToEntry,
   assertSafeStoragePath,
   RegistryNameCollisionError,
   RegistryNotFoundError,
@@ -31,6 +39,7 @@ import {
   type RegistryEntry,
   type RepoMeta,
 } from '../../src/storage/repo-manager.js';
+import { acquireIndexLock } from '../../src/storage/index-lock.js';
 import { parseRepoNameFromUrl, getInferredRepoName } from '../../src/storage/git.js';
 import { execSync } from 'child_process';
 import { createTempDir } from '../helpers/test-db.js';
@@ -58,7 +67,7 @@ describe('getStoragePaths', () => {
     const paths = getStoragePaths('/home/user/project');
     expect(paths.storagePath).toContain('.gitnexus');
     expect(paths.lbugPath).toContain('lbug');
-    expect(paths.metaPath).toContain('meta.json');
+    expect(paths.metaPath).toContain('gitnexus.json');
   });
 
   it('all paths are under storagePath', () => {
@@ -88,7 +97,7 @@ describe('getStoragePaths', () => {
     expect(path.dirname(branched.lbugPath)).toBe(expectedDir);
     expect(path.dirname(branched.metaPath)).toBe(expectedDir);
     expect(path.basename(branched.lbugPath)).toBe('lbug');
-    expect(path.basename(branched.metaPath)).toBe('meta.json');
+    expect(path.basename(branched.metaPath)).toBe('gitnexus.json');
   });
 });
 
@@ -129,6 +138,9 @@ describe('branchSlug (#2106)', () => {
 });
 
 // ─── resolveBranchPlacement (#2106 KTD2) ─────────────────────────────
+// Since #2354 only explicit `--branch` runs consult this (a plain analyze
+// always targets the flat workspace slot); these cases pin the explicit-run
+// contract.
 
 describe('resolveBranchPlacement (#2106)', () => {
   let tmpRepo: Awaited<ReturnType<typeof createTempDir>>;
@@ -168,7 +180,7 @@ describe('resolveBranchPlacement (#2106)', () => {
     expect(await resolveBranchPlacement(tmpRepo.dbPath, 'main')).toEqual({});
   });
 
-  it('non-primary checked-out branch → its own sub-directory', async () => {
+  it('explicit label differing from the recorded flat branch → its own sub-directory', async () => {
     const { storagePath } = getStoragePaths(tmpRepo.dbPath);
     await saveMeta(storagePath, baseMeta('main'));
     expect(await resolveBranchPlacement(tmpRepo.dbPath, 'feature')).toEqual({ branch: 'feature' });
@@ -185,6 +197,303 @@ describe('resolveBranchPlacement (#2106)', () => {
     // Simulate a hand-edited/corrupt meta where branch is a number.
     await saveMeta(storagePath, { ...baseMeta(), branch: 42 as unknown as string });
     expect(await resolveBranchPlacement(tmpRepo.dbPath, 'feature')).toEqual({});
+  });
+});
+
+// ─── saveMeta: dual-write + collision-safe tmp (review fix, F2/F8) ──────
+
+describe('saveMeta dual-write', () => {
+  let tmpRepo: Awaited<ReturnType<typeof createTempDir>>;
+
+  beforeEach(async () => {
+    tmpRepo = await createTempDir('gitnexus-savemeta-dualwrite-');
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await tmpRepo.cleanup();
+  });
+
+  const meta: RepoMeta = {
+    repoPath: '/some/repo',
+    lastCommit: 'abc123',
+    indexedAt: new Date(0).toISOString(),
+  };
+
+  it('writes identical content to gitnexus.json and legacy meta.json', async () => {
+    const { storagePath } = getStoragePaths(tmpRepo.dbPath);
+    await saveMeta(storagePath, meta);
+
+    const primary = await fs.readFile(path.join(storagePath, 'gitnexus.json'), 'utf-8');
+    const legacy = await fs.readFile(path.join(storagePath, 'meta.json'), 'utf-8');
+    expect(JSON.parse(primary)).toEqual(meta);
+    expect(JSON.parse(legacy)).toEqual(meta);
+  });
+
+  it('leaves no stray tmp files behind after a successful write', async () => {
+    const { storagePath } = getStoragePaths(tmpRepo.dbPath);
+    await saveMeta(storagePath, meta);
+
+    const entries = await fs.readdir(storagePath);
+    expect(entries.filter((f) => f.includes('.tmp.'))).toEqual([]);
+  });
+
+  it('two concurrent saveMeta calls on the same directory both succeed (no tmp-name collision)', async () => {
+    const { storagePath } = getStoragePaths(tmpRepo.dbPath);
+
+    const results = await Promise.allSettled([
+      saveMeta(storagePath, { ...meta, lastCommit: 'writerA' }),
+      saveMeta(storagePath, { ...meta, lastCommit: 'writerB' }),
+    ]);
+
+    expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+  });
+
+  it('a legacy meta.json write failure is logged and does not fail the caller', async () => {
+    const { storagePath } = getStoragePaths(tmpRepo.dbPath);
+    const realOpen = fs.open;
+    // Fail only the write whose tmp path is for the legacy file.
+    vi.spyOn(fs, 'open').mockImplementation(
+      async (filePath: Parameters<typeof fs.open>[0], ...rest) => {
+        if (String(filePath).includes(`${path.sep}meta.json.tmp.`)) {
+          const err = new Error('simulated legacy-write failure') as NodeJS.ErrnoException;
+          err.code = 'EACCES';
+          throw err;
+        }
+        return realOpen(filePath, ...rest);
+      },
+    );
+
+    const cap = _captureLogger();
+    try {
+      await expect(saveMeta(storagePath, meta)).resolves.not.toThrow();
+
+      const primary = await fs.readFile(path.join(storagePath, 'gitnexus.json'), 'utf-8');
+      expect(JSON.parse(primary)).toEqual(meta);
+      await expect(fs.readFile(path.join(storagePath, 'meta.json'), 'utf-8')).rejects.toThrow();
+
+      expect(
+        cap
+          .records()
+          .some((r) => r.level === 40 && String(r.msg ?? '').includes('legacy meta.json mirror')),
+      ).toBe(true);
+    } finally {
+      cap.restore();
+    }
+  });
+});
+
+// ─── AnalysisNotFinalizedError message names the checked file (F10) ─────
+
+describe('AnalysisNotFinalizedError diagnostic', () => {
+  it("the 'meta' variant names the file assertAnalysisFinalized actually checks", () => {
+    const err = new AnalysisNotFinalizedError(
+      '/repo',
+      '/repo/.gitnexus',
+      'meta',
+      '/home/user/.gitnexus/registry.json',
+    );
+    // Built from INDEX_METADATA_FILE so a future rename can't silently desync
+    // the diagnostic from the check again (#1169 misdirection regression).
+    expect(err.message).toContain(INDEX_METADATA_FILE);
+    expect(err.message).toContain(path.join('/repo/.gitnexus', INDEX_METADATA_FILE));
+  });
+});
+
+// ─── loadMeta: strict legacy fallback (review fix, F4) ──────────────────
+
+describe('loadMeta strict fallback', () => {
+  let tmpRepo: Awaited<ReturnType<typeof createTempDir>>;
+  let storagePath: string;
+
+  beforeEach(async () => {
+    tmpRepo = await createTempDir('gitnexus-loadmeta-fallback-');
+    storagePath = getStoragePaths(tmpRepo.dbPath).storagePath;
+    await fs.mkdir(storagePath, { recursive: true });
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await tmpRepo.cleanup();
+  });
+
+  const meta: RepoMeta = {
+    repoPath: '/some/repo',
+    lastCommit: 'abc123',
+    indexedAt: new Date(0).toISOString(),
+  };
+
+  it('reads gitnexus.json directly when present', async () => {
+    await fs.writeFile(path.join(storagePath, 'gitnexus.json'), JSON.stringify(meta));
+    await expect(loadMeta(storagePath)).resolves.toEqual(meta);
+  });
+
+  it('falls back to legacy meta.json when gitnexus.json is absent (ENOENT)', async () => {
+    await fs.writeFile(path.join(storagePath, 'meta.json'), JSON.stringify(meta));
+    await expect(loadMeta(storagePath)).resolves.toEqual(meta);
+  });
+
+  it('returns null (NOT legacy content) when gitnexus.json is corrupt', async () => {
+    // Pre-fix behavior silently resurrected the stale legacy baseline here,
+    // masking the corruption; post-fix a corrupt primary forces the same safe
+    // full-rebuild path a missing index would.
+    await fs.writeFile(path.join(storagePath, 'gitnexus.json'), '{ not valid json');
+    await fs.writeFile(path.join(storagePath, 'meta.json'), JSON.stringify(meta));
+    await expect(loadMeta(storagePath)).resolves.toBeNull();
+  });
+
+  it('returns null (NOT legacy content) when gitnexus.json read fails with EACCES', async () => {
+    await fs.writeFile(path.join(storagePath, 'gitnexus.json'), JSON.stringify(meta));
+    await fs.writeFile(path.join(storagePath, 'meta.json'), JSON.stringify(meta));
+
+    const realReadFile = fs.readFile;
+    vi.spyOn(fs, 'readFile').mockImplementation(async (...args: Parameters<typeof fs.readFile>) => {
+      if (String(args[0]).endsWith('gitnexus.json')) {
+        const err = new Error('permission denied') as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }
+      return realReadFile(...args);
+    });
+
+    await expect(loadMeta(storagePath)).resolves.toBeNull();
+  });
+
+  it('returns null when neither file exists', async () => {
+    await expect(loadMeta(storagePath)).resolves.toBeNull();
+  });
+});
+
+// ─── reconcileMetadataFiles: stale-shadow regression (review fix, F3) ───
+
+describe('reconcileMetadataFiles stale-shadow regression', () => {
+  let tmpRepo: Awaited<ReturnType<typeof createTempDir>>;
+  let storagePath: string;
+
+  beforeEach(async () => {
+    tmpRepo = await createTempDir('gitnexus-reconcile-shadow-');
+    storagePath = getStoragePaths(tmpRepo.dbPath).storagePath;
+    await fs.mkdir(storagePath, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await tmpRepo.cleanup();
+  });
+
+  const metaAt = (indexedAt: string, lastCommit: string): RepoMeta => ({
+    repoPath: '/some/repo',
+    lastCommit,
+    indexedAt,
+  });
+
+  it('a FRESHER legacy meta.json wins over a stale gitnexus.json (both rewritten)', async () => {
+    // The reproduced PR #2363 bug: an older binary re-analyzes and writes only
+    // meta.json AFTER gitnexus.json exists; the one-shot existence gate then
+    // ignored the fresher state forever (stale lastCommit won, dirty flag lost).
+    await fs.writeFile(
+      path.join(storagePath, 'gitnexus.json'),
+      JSON.stringify(metaAt('2026-01-01T00:00:00.000Z', 'stale-commit')),
+    );
+    await fs.writeFile(
+      path.join(storagePath, 'meta.json'),
+      JSON.stringify(metaAt('2026-06-01T00:00:00.000Z', 'fresh-commit')),
+    );
+
+    await expect(reconcileMetadataFiles(tmpRepo.dbPath)).resolves.toBe(true);
+
+    const primary = JSON.parse(
+      await fs.readFile(path.join(storagePath, 'gitnexus.json'), 'utf-8'),
+    ) as RepoMeta;
+    const legacy = JSON.parse(
+      await fs.readFile(path.join(storagePath, 'meta.json'), 'utf-8'),
+    ) as RepoMeta;
+    expect(primary.lastCommit).toBe('fresh-commit');
+    expect(legacy.lastCommit).toBe('fresh-commit');
+  });
+
+  it('bootstraps gitnexus.json from a legacy-only directory (pre-rename repo)', async () => {
+    await fs.writeFile(
+      path.join(storagePath, 'meta.json'),
+      JSON.stringify(metaAt('2026-06-01T00:00:00.000Z', 'legacy-commit')),
+    );
+
+    await expect(reconcileMetadataFiles(tmpRepo.dbPath)).resolves.toBe(true);
+
+    const primary = JSON.parse(
+      await fs.readFile(path.join(storagePath, 'gitnexus.json'), 'utf-8'),
+    ) as RepoMeta;
+    expect(primary.lastCommit).toBe('legacy-commit');
+    // Legacy file is NOT deleted — it stays as the in-sync mirror.
+    await expect(fs.access(path.join(storagePath, 'meta.json'))).resolves.toBeUndefined();
+  });
+
+  it('is idempotent — a second run with no intervening writes is a no-op', async () => {
+    await fs.writeFile(
+      path.join(storagePath, 'meta.json'),
+      JSON.stringify(metaAt('2026-06-01T00:00:00.000Z', 'legacy-commit')),
+    );
+
+    await expect(reconcileMetadataFiles(tmpRepo.dbPath)).resolves.toBe(true);
+    await expect(reconcileMetadataFiles(tmpRepo.dbPath)).resolves.toBe(false);
+  });
+
+  it('one bad branch dir does not abort reconciliation for sibling branches (F9)', async () => {
+    const branchesDir = path.join(storagePath, 'branches');
+    const goodA = path.join(branchesDir, 'feat-a');
+    const goodB = path.join(branchesDir, 'feat-b');
+    await fs.mkdir(goodA, { recursive: true });
+    await fs.mkdir(goodB, { recursive: true });
+    await fs.writeFile(
+      path.join(goodA, 'meta.json'),
+      JSON.stringify(metaAt('2026-06-01T00:00:00.000Z', 'branch-a')),
+    );
+    await fs.writeFile(
+      path.join(goodB, 'meta.json'),
+      JSON.stringify(metaAt('2026-06-01T00:00:00.000Z', 'branch-b')),
+    );
+    // A dangling symlink sorts between the two healthy dirs ('feat-a' <
+    // 'feat-ax' < 'feat-b'), so pre-fix it would starve feat-b every run.
+    await fs.symlink(
+      path.join(tmpRepo.dbPath, 'does-not-exist'),
+      path.join(branchesDir, 'feat-ax'),
+    );
+
+    const cap = _captureLogger();
+    try {
+      await expect(reconcileMetadataFiles(tmpRepo.dbPath)).resolves.toBe(true);
+    } finally {
+      cap.restore();
+    }
+
+    // Both healthy branches were bootstrapped despite the bad sibling…
+    await expect(fs.access(path.join(goodA, 'gitnexus.json'))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(goodB, 'gitnexus.json'))).resolves.toBeUndefined();
+    // …and the skip is observable, naming the offending branch dir.
+    expect(
+      cap
+        .records()
+        .some(
+          (r) =>
+            r.level === 40 &&
+            r.branchDir === 'feat-ax' &&
+            String(r.msg ?? '').includes('Skipping branch directory'),
+        ),
+    ).toBe(true);
+  });
+
+  it('stays silent when branches/ does not exist (not a multi-branch repo)', async () => {
+    await fs.writeFile(
+      path.join(storagePath, 'meta.json'),
+      JSON.stringify(metaAt('2026-06-01T00:00:00.000Z', 'flat-only')),
+    );
+
+    const cap = _captureLogger();
+    try {
+      await reconcileMetadataFiles(tmpRepo.dbPath);
+    } finally {
+      cap.restore();
+    }
+    expect(cap.records().filter((r) => r.level === 40)).toEqual([]);
   });
 });
 
@@ -404,6 +713,48 @@ describe('case-insensitive path comparison', () => {
   });
 });
 
+// ─── Windows \\?\ extended-length prefix (#2667) ──────────────────────
+//
+// `canonicalizePath` is the single comparison key for the registry, MCP repo
+// resolution and the server repo routes, and `registryPathEquals` compares its
+// output as a plain string. A caller-supplied `\\?\` prefix therefore matched
+// nothing: `path.resolve` preserves the prefix, and the `catch` fallback returns
+// that resolved path untouched.
+//
+// These run only on windows-latest (the file is registered in
+// scripts/cross-platform-tests.ts): `\\?\` is a Win32 concept, and on POSIX the
+// same string is just an oddly-named relative file.
+describe('canonicalizePath vs the \\\\?\\ long-path prefix (#2667)', () => {
+  const isWindows = process.platform === 'win32';
+
+  // Realpath branch. libuv's fs__realpath_handle strips the prefix itself, so
+  // this documents the branch that was already safe.
+  it.skipIf(!isWindows)('drops the prefix for a path that exists on disk', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gn-longpath-'));
+    try {
+      const prefixed = canonicalizePath(`\\\\?\\${dir}`);
+
+      expect(prefixed.startsWith('\\\\?\\')).toBe(false);
+      expect(registryPathEquals(prefixed, canonicalizePath(dir))).toBe(true);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Catch fallback — the branch that actually leaked. `realpathSync.native`
+  // throws for a path that is not on disk (a registry entry rm'd externally, a
+  // `remove`/`clean` alias, an MCP `repo` argument for an unindexed path), so
+  // the resolved string is returned as-is and carried the prefix straight into
+  // the string compare.
+  it.skipIf(!isWindows)('drops the prefix for a path that does not exist', () => {
+    const missing = path.join(os.tmpdir(), 'gn-longpath-absent-2667', 'repo');
+    const prefixed = canonicalizePath(`\\\\?\\${missing}`);
+
+    expect(prefixed.startsWith('\\\\?\\')).toBe(false);
+    expect(registryPathEquals(prefixed, canonicalizePath(missing))).toBe(true);
+  });
+});
+
 // ─── API key file permissions (hardening #29) ────────────────────────
 
 describe('API key file permissions', () => {
@@ -552,6 +903,74 @@ describe('registerRepo name override + collision guard (#829)', () => {
       await parentB.cleanup();
     }
   });
+  it('preserves all entries when distinct registrations overlap', async () => {
+    const repos = await Promise.all(
+      Array.from({ length: 6 }, (_, index) => createTempDir(`gitnexus-concurrent-repo-${index}-`)),
+    );
+    try {
+      await Promise.all(
+        repos.map((repo, index) =>
+          registerRepo(repo.dbPath, meta, { name: `concurrent-${index}` }),
+        ),
+      );
+
+      const entries = await listRegisteredRepos();
+      expect(entries).toHaveLength(repos.length);
+      expect(new Set(entries.map((entry) => entry.name))).toEqual(
+        new Set(repos.map((_, index) => `concurrent-${index}`)),
+      );
+    } finally {
+      await Promise.all(repos.map((repo) => repo.cleanup()));
+    }
+  });
+
+  it('keeps an overlapping unregisterRepo and registerRepo from clobbering each other', async () => {
+    await registerRepo(tmpRepoA.dbPath, meta, { name: 'stays' });
+    await registerRepo(tmpRepoB.dbPath, meta, { name: 'goes' });
+    const added = await createTempDir('gitnexus-concurrent-added-');
+
+    try {
+      await Promise.all([
+        unregisterRepo(tmpRepoB.dbPath),
+        registerRepo(added.dbPath, meta, { name: 'added' }),
+      ]);
+
+      const entries = await listRegisteredRepos();
+      expect(new Set(entries.map((entry) => entry.name))).toEqual(new Set(['stays', 'added']));
+    } finally {
+      await added.cleanup();
+    }
+  });
+
+  it('registers while an index lock is held on the global directory (#2716)', async () => {
+    // A repo rooted at the user's home directory makes the per-repo analyze
+    // lock target `~/.gitnexus` — the very directory the registry lock would
+    // take if it shared that namespace. `runFullAnalysis` holds the per-repo
+    // lock across its call to `registerRepo` and `acquireIndexLock` is not
+    // reentrant, so a shared namespace self-deadlocks until the wait ceiling
+    // and then degrades. The registry lock lives in its own sub-directory, so
+    // the registration must contend with nothing: no wait announcement, no
+    // degraded-write warning. Asserted on the log rather than elapsed time —
+    // the outcome is what matters, and it stays deterministic on a slow runner.
+    const capture = _captureLogger();
+    const held = await acquireIndexLock(tmpHome.dbPath);
+    try {
+      await registerRepo(tmpRepoA.dbPath, meta, { name: 'home-rooted' });
+    } finally {
+      held.release();
+      capture.restore();
+    }
+
+    const logged = capture.records().map((record) => record.msg);
+    expect(logged).not.toContain(
+      'Waiting for another GitNexus process to finish a registry update…',
+    );
+    expect(logged).not.toContain(
+      'Timed out waiting for the global registry lock; proceeding without it. A concurrent registry write may be lost.',
+    );
+    const entries = await listRegisteredRepos();
+    expect(entries.map((entry) => entry.name)).toEqual(['home-rooted']);
+  });
 });
 
 // ─── registerRepo branch nesting (#2106) ─────────────────────────────
@@ -664,6 +1083,68 @@ describe('registerRepo branch nesting (#2106)', () => {
     await removeBranchIndex(tmpRepo.dbPath, 'feature/x');
     const [entry] = await listRegisteredRepos();
     expect(entry.branches?.map((b) => b.branch)).toEqual(['feature/y']);
+  });
+
+  it('overlapping removeBranchIndex calls drop both summaries (#2716)', async () => {
+    await registerRepo(tmpRepo.dbPath, metaFor('main', 'aaa1111'));
+    await registerRepo(tmpRepo.dbPath, metaFor('feature/x', 'bbb2222'), { branch: 'feature/x' });
+    await registerRepo(tmpRepo.dbPath, metaFor('feature/y', 'ccc3333'), { branch: 'feature/y' });
+
+    // Unserialized, both writers read the same two-branch snapshot and the
+    // last rename wins — one summary survives as a lost update.
+    const removed = await Promise.all([
+      removeBranchIndex(tmpRepo.dbPath, 'feature/x'),
+      removeBranchIndex(tmpRepo.dbPath, 'feature/y'),
+    ]);
+
+    expect(removed).toEqual([true, true]);
+    const [entry] = await listRegisteredRepos();
+    expect(entry.branch).toBe('main'); // primary intact
+    expect(entry.branches).toBeUndefined();
+  });
+
+  // ─── adoptFlatBranchLabel (#2354) ───────────────────────────────────
+
+  it('adoptFlatBranchLabel relabels the entry and removes a shadowed sub-index', async () => {
+    await registerRepo(tmpRepo.dbPath, metaFor('main', 'aaa1111'));
+    await registerRepo(tmpRepo.dbPath, metaFor('feature/x', 'bbb2222'), { branch: 'feature/x' });
+    // Materialize the pinned sub-index on disk so the shadow cleanup has a
+    // real directory to remove.
+    const { metaPath } = getStoragePaths(tmpRepo.dbPath, 'feature/x');
+    await saveMeta(path.dirname(metaPath), metaFor('feature/x', 'bbb2222'));
+
+    await adoptFlatBranchLabel(tmpRepo.dbPath, 'feature/x');
+
+    const [entry] = await listRegisteredRepos();
+    expect(entry.branch).toBe('feature/x');
+    expect(entry.branches).toBeUndefined(); // shadowed summary dropped
+    await expect(fs.access(path.dirname(metaPath))).rejects.toThrow(); // dir deleted
+  });
+
+  it('adoptFlatBranchLabel keeps other pinned branch summaries', async () => {
+    await registerRepo(tmpRepo.dbPath, metaFor('main', 'aaa1111'));
+    await registerRepo(tmpRepo.dbPath, metaFor('feature/x', 'bbb2222'), { branch: 'feature/x' });
+    await registerRepo(tmpRepo.dbPath, metaFor('feature/y', 'ccc3333'), { branch: 'feature/y' });
+
+    await adoptFlatBranchLabel(tmpRepo.dbPath, 'feature/x');
+
+    const [entry] = await listRegisteredRepos();
+    expect(entry.branch).toBe('feature/x');
+    expect(entry.branches?.map((b) => b.branch)).toEqual(['feature/y']);
+  });
+
+  it('adoptFlatBranchLabel never self-heals an unregistered repo', async () => {
+    // No registerRepo call — the registry has no entry for this path (#2264/#1169).
+    // The no-op must cover the disk too: a materialized pinned sub-index
+    // survives, because the shadow rm only runs for registered repos
+    // (#2364 review F2 — the rm used to fire before the registry check).
+    const { metaPath } = getStoragePaths(tmpRepo.dbPath, 'feature/x');
+    await saveMeta(path.dirname(metaPath), metaFor('feature/x', 'bbb2222'));
+
+    await adoptFlatBranchLabel(tmpRepo.dbPath, 'feature/x');
+
+    expect(await listRegisteredRepos()).toHaveLength(0);
+    await expect(fs.access(path.dirname(metaPath))).resolves.toBeUndefined(); // dir survives
   });
 
   // ─── re-read-before-write merge (#2106 R9) ──────────────────────────
@@ -1056,6 +1537,33 @@ describe('canonicalizePath (#1003)', () => {
     const rel = './does-not-exist-zzz-' + Date.now();
     const got = canonicalizePath(rel);
     expect(path.isAbsolute(got)).toBe(true);
+  });
+});
+
+describe('cloneDirBelongsToEntry', () => {
+  it('returns true when the clone dir and entry.path canonicalize to the same dir', () => {
+    // Non-canonical spelling of a REAL path (same trick as the
+    // resolveRegistryEntry backward-compat test): raw concat keeps the
+    // strings unequal until canonicalizePath runs.
+    const realDir = process.cwd();
+    const nonCanonical = realDir + path.sep + '.';
+    expect(nonCanonical).not.toBe(realDir);
+    expect(cloneDirBelongsToEntry(nonCanonical, realDir)).toBe(true);
+  });
+
+  it('returns false when the entry.path lives elsewhere than the clone dir', () => {
+    // The delete-handler scenario: entry B is a local repo whose name
+    // collides with clone A's — its path must not claim A's clone dir.
+    const cloneDir = path.join(os.tmpdir(), 'gitnexus-clones', 'reels');
+    const entryPath = path.join(os.tmpdir(), 'local', 'reels');
+    expect(cloneDirBelongsToEntry(cloneDir, entryPath)).toBe(false);
+  });
+
+  it('compares nonexistent paths without throwing (realpath falls back to path.resolve)', () => {
+    // Neither side exists on disk — canonicalizePath must fall back to
+    // path.resolve on both, so equal strings still compare equal.
+    const ghost = path.join(os.tmpdir(), 'gnx-never-exists-____', 'clone-dir');
+    expect(cloneDirBelongsToEntry(ghost, ghost)).toBe(true);
   });
 });
 

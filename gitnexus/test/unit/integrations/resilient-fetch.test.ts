@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   CircuitBreaker,
   CircuitOpenError,
+  isTerminalNetworkError,
   parseRetryAfter,
   resilientFetch,
   ResilientFetchExhaustedError,
@@ -27,6 +28,40 @@ describe('parseRetryAfter', () => {
   it('returns 0 (not negative) on past HTTP-date', () => {
     const now = () => Date.parse('Wed, 21 Oct 2025 08:00:00 GMT');
     expect(parseRetryAfter('Wed, 21 Oct 2025 07:28:00 GMT', now)).toBe(0);
+  });
+});
+
+describe('isTerminalNetworkError', () => {
+  // Exported so call sites hooking into the retry loop (the embedding client's
+  // `fetchImpl`, which re-wraps its own `.json()` rejections) test the same
+  // predicate the loop tests instead of hand-copying the condition.
+  it('accepts both abort DOMExceptions', () => {
+    expect(isTerminalNetworkError(new DOMException('timed out', 'TimeoutError'))).toBe(true);
+    expect(isTerminalNetworkError(new DOMException('cancelled', 'AbortError'))).toBe(true);
+  });
+  it('rejects a non-DOMException wearing an abort name', () => {
+    // The narrow `instanceof` test is load-bearing: a name-only check would
+    // call these terminal while `classifyOutcome` still retries them.
+    expect(isTerminalNetworkError(Object.assign(new Error('nope'), { name: 'AbortError' }))).toBe(
+      false,
+    );
+    expect(isTerminalNetworkError(new TypeError('fetch failed'))).toBe(false);
+    expect(isTerminalNetworkError(new DOMException('boom', 'DataError'))).toBe(false);
+    expect(isTerminalNetworkError('AbortError')).toBe(false);
+    expect(isTerminalNetworkError(undefined)).toBe(false);
+  });
+  it('agrees with classifyOutcome on every error it is asked about', () => {
+    const now = () => 1_700_000_000_000;
+    const errors: unknown[] = [
+      new DOMException('timed out', 'TimeoutError'),
+      new DOMException('cancelled', 'AbortError'),
+      new DOMException('boom', 'DataError'),
+      Object.assign(new Error('nope'), { name: 'AbortError' }),
+      new TypeError('fetch failed'),
+    ];
+    expect(
+      errors.map((err) => classifyOutcome({ kind: 'error', err }, now).kind === 'terminal-network'),
+    ).toEqual(errors.map((err) => isTerminalNetworkError(err)));
   });
 });
 
@@ -183,6 +218,22 @@ describe('resilientFetch', () => {
     });
     // attempt 0: full-jitter upper = min(1000, 100*1) = 100; floor(0.5*100) = 50
     expect(sleep).toHaveBeenCalledWith(50);
+  });
+
+  it('lets a caller set a stricter Retry-After cap', async () => {
+    let n = 0;
+    const fetchImpl = vi.fn(async () => {
+      n += 1;
+      return n === 1 ? jsonResp(429, { 'Retry-After': '60' }) : jsonResp(204);
+    });
+    const sleep = vi.fn(async () => {});
+    const { breaker } = makeBreaker();
+    await resilientFetch(URL_STR, undefined, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      breaker,
+      retry: { sleep, capDelayMs: 2500, retryAfterCapMs: 2500 },
+    });
+    expect(sleep).toHaveBeenCalledWith(2500);
   });
 
   it('401 returned as Response, no retry, breaker not incremented', async () => {

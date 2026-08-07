@@ -13,12 +13,17 @@ This project uses the [PolyForm Noncommercial License 1.0.0](https://polyformpro
 
 ## Development setup
 
-**Prerequisites:** Node.js — `gitnexus/` requires `>=22.0.0` and `gitnexus-web/` requires `^20.19.0 || >=22.12.0` (enforced via the `engines` field in each package). Use `nvm install` to match the local version.
+**Prerequisites:** Node.js — `gitnexus/` requires `^22.18.0 || >=24.11.0` and `gitnexus-web/` requires `^20.19.0 || >=22.12.0` (enforced via the `engines` field in each package). Use `nvm install` to match the local version.
 
 1. Clone the repository.
-2. **CLI / MCP package:** `cd gitnexus && npm install && npm run build`
-3. **Web UI (if needed):** `cd gitnexus-web && npm install`
-4. Run tests as described in [TESTING.md](TESTING.md).
+2. **Shared package:** `cd gitnexus-shared && npm install && npm run build`
+3. **CLI / MCP package:** `cd ../gitnexus && npm install && npm run build`
+4. **Web UI (if needed):** `cd ../gitnexus-web && npm install`
+5. Run tests as described in [TESTING.md](TESTING.md).
+
+The CLI build imports `gitnexus-shared`, so a fresh clone must install and build
+the shared package before running `npm install` in `gitnexus/`. This is the same
+order used by the repository's `setup-gitnexus` CI action.
 
 > **Note:** `gitnexus`'s install (`prepare`/`build`) compiles the sibling `gitnexus-shared` package using `tsc` from `gitnexus/node_modules`, so no separate install in `gitnexus-shared/` is required. If you build `gitnexus-shared` on its own, run `cd gitnexus-shared && npm install` first.
 
@@ -70,6 +75,7 @@ Commits within a PR may use any style — only the **merged PR title** shows up 
 - [ ] Typecheck passes: `npx tsc --noEmit` in `gitnexus/` and `npx tsc -b --noEmit` in `gitnexus-web/`.
 - [ ] No secrets, tokens, or machine-specific paths committed.
 - [ ] Documentation updated if behavior or public CLI/MCP contract changes.
+- [ ] Every new `GITNEXUS_*` environment variable has a row in the **Environment variables** table in [README.md](README.md) — variable, default, effect, and when to tune it.
 - [ ] Pre-commit hook runs clean (`.husky/pre-commit` — formatting via lint-staged + typecheck for staged packages; tests run in CI only).
 
 ## Code review
@@ -171,7 +177,9 @@ routes between two modes based on the triggering event:
   not enforce branch reachability. No Docker build (RC-only). Before cutting a
   stable release, keep `gitnexus/package.json`,
   `gitnexus-claude-plugin/.claude-plugin/plugin.json`,
-  `.claude-plugin/marketplace.json`, and the matching `CHANGELOG.md` entry in
+  `.claude-plugin/marketplace.json`,
+  `gitnexus-claude-plugin/.codex-plugin/plugin.json`,
+  `.agents/plugins/marketplace.json`, and the matching `CHANGELOG.md` entry in
   lockstep — the always-on `gitnexus` unit suite now fails if those manifest
   versions drift.
 - **Release-candidate mode** — runs on every push to `main` (typically a

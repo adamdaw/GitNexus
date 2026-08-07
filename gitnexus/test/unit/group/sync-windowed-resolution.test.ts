@@ -92,8 +92,9 @@ describe('partitionManifestWindows (issue #2189 windowed resolution)', () => {
 
 // ── Surface 2: real-pool residency bound through syncGroup ───────────────────
 
-const { loadFTSExtensionMock, openCounter } = vi.hoisted(() => ({
+const { loadFTSExtensionMock, loadVectorExtensionMock, openCounter } = vi.hoisted(() => ({
   loadFTSExtensionMock: vi.fn(),
+  loadVectorExtensionMock: vi.fn().mockResolvedValue(false),
   openCounter: { live: 0, peak: 0 },
 }));
 
@@ -122,6 +123,7 @@ vi.mock('@ladybugdb/core', () => ({
 vi.mock('../../../src/core/lbug/lbug-adapter.js', () => ({
   isReadOnlyDbError: vi.fn(() => false),
   loadFTSExtension: loadFTSExtensionMock,
+  loadVectorExtension: loadVectorExtensionMock,
 }));
 
 vi.mock('../../../src/core/lbug/lbug-config.js', () => ({
@@ -143,6 +145,7 @@ vi.mock('../../../src/core/lbug/lbug-config.js', () => ({
 
 vi.mock('../../../src/core/lbug/sidecar-recovery.js', () => ({
   preflightLbugSidecars: vi.fn().mockResolvedValue(undefined),
+  guardWalQuarantine: vi.fn().mockResolvedValue(undefined),
   isMissingFsError: vi.fn(() => false),
   isMissingShadowSidecarError: vi.fn(() => false),
   isReadOnlyShadowReplayError: vi.fn(() => false),

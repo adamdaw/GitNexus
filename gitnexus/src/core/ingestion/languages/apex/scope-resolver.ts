@@ -83,6 +83,11 @@ const apexScopeResolver: ScopeResolver = {
   // unknown without a runtime type, so the generic implementer-fanout would
   // over-connect. Opt out of the secondary interface-dispatch edges.
   emitInterfaceDispatch: false,
+  // Measured per the #2708 opt-in discipline: without this, the cross-file
+  // `new Target().fLit(42)` receiver (REQ-008) drops to unresolved. Unlike Java,
+  // Apex does not reach the shape through the #2564 object_creation_expression
+  // capture rewrite, so the construction rule has to resolve `new` here.
+  constructionSyntax: { keyword: 'new' },
 };
 
 export { apexScopeResolver };

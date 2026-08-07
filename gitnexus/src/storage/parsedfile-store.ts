@@ -52,12 +52,23 @@ import { promises as fs, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import v8 from 'node:v8';
 import vm from 'node:vm';
-import type { ParsedFile, SymbolDefinition } from 'gitnexus-shared';
+import type {
+  CallableFlowSite,
+  ParsedFile,
+  ReferenceSite,
+  SymbolDefinition,
+} from 'gitnexus-shared';
+import { isValidReceiverChain } from '../core/ingestion/utils/receiver-chain-codec.js';
+import { logger } from '../core/logger.js';
 import { mapReplacer, mapReviver } from './parse-cache.js';
 
 const STORE_DIRNAME = 'parsedfile-store';
 const DURABLE_DIRNAME = 'parsedfile-cache';
 const DURABLE_INDEX_FILENAME = 'index.json';
+const MAX_CALLABLE_FLOW_SITES_PER_FILE = 100_000;
+const MAX_CALLABLE_FLOW_INDIRECTION = 16;
+const MAX_CALLABLE_FLOW_NAME_LENGTH = 4_096;
+const MAX_CALLABLE_FLOW_PARAMETERS = 1_024;
 
 /**
  * Build a JSON.parse reviver that (a) interns every string against a shared
@@ -240,6 +251,10 @@ export const loadParsedFilesForPaths = async (
   // (one `int` / one repeated filePath for the whole language), which is where
   // most of the saving comes from. Dropped when this function returns.
   const pool = new Map<string, string>();
+  let droppedSites = 0;
+  let filesWithDroppedSites = 0;
+  let droppedChains = 0;
+  let rejectedFiles = 0;
   for (let i = 0; i < shards.length; i++) {
     // Per-shard def pool: a SymbolDefinition's three serialized copies live within
     // a single shard (one ParsedFile), so the dedup is shard-local. A cross-shard
@@ -256,8 +271,29 @@ export const loadParsedFilesForPaths = async (
     }
     if (!Array.isArray(parsed)) continue;
     for (const pf of parsed) {
-      if (pf && typeof pf.filePath === 'string' && wantPaths.has(pf.filePath)) {
+      if (!pf || typeof pf.filePath !== 'string' || !wantPaths.has(pf.filePath)) continue;
+      const flow = sanitizeCallableFlowSites(pf.callableFlowSites);
+      if (flow === undefined) {
+        // non-array garbage → distrust the file, re-extract
+        rejectedFiles++;
+        continue;
+      }
+      const chains = sanitizeReceiverChains(pf.referenceSites);
+      if (chains === undefined) {
+        rejectedFiles++;
+        continue;
+      }
+      if (flow.dropped === 0 && chains.dropped === 0) {
         out.set(pf.filePath, pf);
+      } else {
+        droppedSites += flow.dropped;
+        droppedChains += chains.dropped;
+        filesWithDroppedSites++;
+        out.set(pf.filePath, {
+          ...pf,
+          ...(flow.dropped === 0 ? {} : { callableFlowSites: flow.sites }),
+          ...(chains.dropped === 0 ? {} : { referenceSites: chains.sites }),
+        });
       }
     }
     // Every few shards, reclaim the transient pre-intern parse churn before it
@@ -268,8 +304,232 @@ export const loadParsedFilesForPaths = async (
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
   }
+  if (droppedSites > 0 || droppedChains > 0) {
+    // Facts for the dropped sites are omitted this run (the file itself is
+    // retained, so no re-extract happens) — surface it so a recurring drop
+    // on every warm load is observable rather than silent (#2522 review).
+    logger.warn(
+      { droppedSites, droppedChains, files: filesWithDroppedSites },
+      'parsedfile-store: dropped malformed/over-bound sites at load; files retained without those facts',
+    );
+  }
+  if (rejectedFiles > 0) {
+    // The other half of the same defect. A rejected file silently falls back to
+    // a fresh extract EVERY load, so a writer that keeps minting what this
+    // reader keeps refusing is a permanent warm-cache miss that costs real time
+    // and says nothing about why.
+    logger.warn(
+      { rejectedFiles },
+      'parsedfile-store: rejected shard entries at load (untrusted shape); those files re-extract every run',
+    );
+  }
   return out;
 };
+
+/**
+ * Treat the durable ParsedFile store as an untrusted serialization boundary.
+ * Sanitation is per-SITE, not per-file: one malformed or over-bound fact drops
+ * only itself (counted, logged by the caller), so a legitimately pathological
+ * source file cannot push its whole ParsedFile into a permanent, silent
+ * warm-cache-miss reparse loop (#2522 review). Only a non-array field —
+ * i.e. garbage that says the serialization itself is untrustworthy — rejects
+ * the file, and `undefined` (never emitted / no facts) passes through.
+ * Returns `undefined` for the reject-file case.
+ */
+function sanitizeCallableFlowSites(
+  value: unknown,
+): { sites: readonly CallableFlowSite[] | undefined; dropped: number } | undefined {
+  if (value === undefined) return { sites: undefined, dropped: 0 };
+  if (!Array.isArray(value)) return undefined;
+  const bounded =
+    value.length > MAX_CALLABLE_FLOW_SITES_PER_FILE
+      ? value.slice(0, MAX_CALLABLE_FLOW_SITES_PER_FILE)
+      : value;
+  const sites = bounded.filter(isValidCallableFlowSite);
+  return { sites, dropped: value.length - sites.length };
+}
+
+/**
+ * Untrusted-boundary handling for the compact `receiverChain` on a reference site.
+ *
+ * NARROWER than its sibling `sanitizeCallableFlowSites`, deliberately and worth
+ * stating plainly: that function validates every element with a full type
+ * predicate, whereas this one inspects only the `receiverChain` sub-field and, in
+ * the common case where nothing was stripped, returns the original array typed as
+ * `ReferenceSite[]` without structurally validating `name` / `kind` / `atRange`.
+ * That is still a strict improvement — `referenceSites` had NO sanitation at all
+ * before this — but it is not parity, and a future change that needs per-site
+ * structural validation must add it rather than assume it is already here.
+ *
+ * Sanitation is per-FIELD, not per-site: a chain that does not decode is
+ * stripped and the site is kept, because the site is still perfectly usable
+ * through the text cascade — dropping the whole reference would turn a
+ * degraded receiver into a missing edge. Only a non-array `referenceSites`
+ * rejects the file, and `undefined` (a store written before this field
+ * existed) passes through untouched, which is what makes an old shard load
+ * without error.
+ *
+ * Returns the ORIGINAL array when nothing was stripped, so the overwhelmingly
+ * common case allocates nothing on a hot warm-load path.
+ */
+function sanitizeReceiverChains(
+  value: unknown,
+): { sites: readonly ReferenceSite[] | undefined; dropped: number } | undefined {
+  if (value === undefined) return { sites: undefined, dropped: 0 };
+  if (!Array.isArray(value)) return undefined;
+
+  let dropped = 0;
+  for (const site of value) {
+    if (
+      isRecord(site) &&
+      site.receiverChain !== undefined &&
+      !isValidReceiverChain(site.receiverChain)
+    )
+      dropped++;
+  }
+  if (dropped === 0) return { sites: value as readonly ReferenceSite[], dropped: 0 };
+
+  const sites = value.map((site) => {
+    if (!isRecord(site) || site.receiverChain === undefined) return site;
+    if (isValidReceiverChain(site.receiverChain)) return site;
+    const { receiverChain: _dropped, ...rest } = site;
+    return rest;
+  }) as readonly ReferenceSite[];
+  return { sites, dropped };
+}
+
+function isValidCallableFlowSite(value: unknown): value is CallableFlowSite {
+  if (!isRecord(value) || typeof value.kind !== 'string') return false;
+  switch (value.kind) {
+    case 'seed':
+      return (
+        isValidOperand(value.destination) &&
+        isBoundedString(value.targetName) &&
+        isOptionalBoundedString(value.targetQualifiedName) &&
+        isValidRange(value.targetRange) &&
+        isValidExpectedSignature(value.expectedSignature)
+      );
+    case 'copy':
+    case 'alias':
+    case 'address':
+      return isValidOperand(value.source) && isValidOperand(value.destination);
+    case 'store':
+      return isValidOperand(value.source) && isValidOperand(value.pointer);
+    case 'load':
+      return isValidOperand(value.pointer) && isValidOperand(value.destination);
+    case 'formal':
+      return (
+        isBoundedString(value.ownerName) &&
+        isValidRange(value.ownerRange) &&
+        isSafeIndex(value.parameterIndex) &&
+        isValidOperand(value.binding) &&
+        (value.passingMode === 'value' ||
+          value.passingMode === 'reference' ||
+          value.passingMode === 'pointer') &&
+        isValidExpectedSignature(value.expectedSignature)
+      );
+    case 'argument':
+      return (
+        isValidRange(value.callSite) &&
+        isSafeIndex(value.parameterIndex) &&
+        isValidOperand(value.source) &&
+        isOptionalBoundedString(value.directCalleeName)
+      );
+    case 'invoke':
+      return (
+        isValidRange(value.callSite) &&
+        isBoundedString(value.inScope) &&
+        isValidOperand(value.callee) &&
+        (value.receiver === undefined || isValidOperand(value.receiver)) &&
+        (value.invocationKind === 'indirect' ||
+          value.invocationKind === 'member-pointer' ||
+          value.invocationKind === 'callable-object') &&
+        (value.arity === undefined || isSafeIndex(value.arity))
+      );
+    default:
+      return false;
+  }
+}
+
+function isValidOperand(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    isBoundedString(value.name) &&
+    isBoundedString(value.inScope) &&
+    isValidRange(value.atRange) &&
+    Number.isInteger(value.indirection) &&
+    (value.indirection as number) >= 0 &&
+    (value.indirection as number) <= MAX_CALLABLE_FLOW_INDIRECTION &&
+    typeof value.addressOf === 'boolean' &&
+    (value.expressionKind === undefined ||
+      value.expressionKind === 'binding' ||
+      value.expressionKind === 'callable-designator' ||
+      value.expressionKind === 'bound-member' ||
+      value.expressionKind === 'anonymous-callable') &&
+    isOptionalBoundedString(value.qualifiedName)
+  );
+}
+
+function isValidExpectedSignature(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  return (
+    (value.parameterCount === undefined || isSafeIndex(value.parameterCount)) &&
+    isValidBoundedStringArray(value.parameterTypes) &&
+    (value.parameterTypeClasses === undefined ||
+      (Array.isArray(value.parameterTypeClasses) &&
+        value.parameterTypeClasses.length <= MAX_CALLABLE_FLOW_PARAMETERS &&
+        value.parameterTypeClasses.every(isRecord))) &&
+    (value.isConst === undefined || typeof value.isConst === 'boolean')
+  );
+}
+
+function isValidBoundedStringArray(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length <= MAX_CALLABLE_FLOW_PARAMETERS &&
+      // '' is a legitimate entry meaning "unknown type" — the same convention
+      // as ReferenceSite.argumentTypes. C++ emits it for cv-qualifier-only or
+      // ERROR-recovered parameter types, so requiring non-empty here rejected
+      // real extractor output (#2522 review).
+      value.every(
+        (entry) => typeof entry === 'string' && entry.length <= MAX_CALLABLE_FLOW_NAME_LENGTH,
+      ))
+  );
+}
+
+function isValidRange(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    isNonNegativeInteger(value.startLine) &&
+    isNonNegativeInteger(value.startCol) &&
+    isNonNegativeInteger(value.endLine) &&
+    isNonNegativeInteger(value.endCol)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isBoundedString(value: unknown): value is string {
+  return (
+    typeof value === 'string' && value.length > 0 && value.length <= MAX_CALLABLE_FLOW_NAME_LENGTH
+  );
+}
+
+function isOptionalBoundedString(value: unknown): boolean {
+  return value === undefined || isBoundedString(value);
+}
+
+function isNonNegativeInteger(value: unknown): boolean {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function isSafeIndex(value: unknown): boolean {
+  return isNonNegativeInteger(value) && (value as number) <= MAX_CALLABLE_FLOW_PARAMETERS;
+}
 
 // ─── Durable, content-addressed sibling store (warm-cache coverage) ──────────
 //
@@ -291,6 +551,22 @@ export const getDurableParsedFileDir = (storagePath: string): string =>
 
 const durableChunkDir = (durableDir: string, chunkHash: string): string =>
   path.join(durableDir, chunkHash);
+
+/**
+ * Start a fresh durable generation for one content-addressed parse chunk.
+ * The main thread calls this once before dispatching a cache miss, before any
+ * worker can write that chunk. Recreating the directory immediately keeps the
+ * worker-side mkdir memoization valid while preventing old worker shard names
+ * from accumulating across analyses.
+ */
+export const prepareDurableParsedFileChunk = async (
+  durableDir: string,
+  chunkHash: string,
+): Promise<void> => {
+  const dir = durableChunkDir(durableDir, chunkHash);
+  await fs.rm(dir, { recursive: true, force: true });
+  await fs.mkdir(dir, { recursive: true });
+};
 
 // Per-process set of durable chunk subdirs already `mkdir`ed (mirrors
 // `createdStoreDirs`) so the worker doesn't `mkdirSync` on every shard.

@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import PerfSequencer from './test/helpers/perf-sequencer.js';
 
 export default defineConfig({
   test: {
@@ -8,6 +9,12 @@ export default defineConfig({
     pool: 'forks',
     globals: true,
     teardownTimeout: 3000,
+    // E2E harnesses pin a small NODE_OPTIONS heap so spawned CLI children
+    // stay light; without this opt-out the #2649 auto-heap override would
+    // respawn every such child with a RAM-sized cap. Children inherit it via
+    // the harnesses' `{ ...process.env }` spreads. Tests that exercise the
+    // respawn behavior itself delete GITNEXUS_MEMORY in their own setup.
+    env: { GITNEXUS_MEMORY: 'off' },
     // N-API destructors can crash worker forks on macOS during process exit.
     // This is independent of the QueryResult lifetime fix in @ladybugdb/core 0.15.2 —
     // it's a vitest forks + native addon interaction where destructors run in
@@ -34,6 +41,14 @@ export default defineConfig({
       },
     },
 
+    // Balance shards by estimated work rather than file count, so the
+    // spawn-heavy sequential suites spread evenly across shard runners instead
+    // of clustering onto one (see test/helpers/perf-sequencer.ts). Only shard()
+    // is overridden — groupOrder and sort order are left to the base sequencer.
+    sequence: {
+      sequencer: PerfSequencer,
+    },
+
     // LadybugDB's native mmap addon causes file-lock conflicts when vitest
     // runs lbug test files in parallel forks on Windows.  The 'lbug-db'
     // project forces sequential execution (fileParallelism: false).
@@ -55,9 +70,12 @@ export default defineConfig({
             'test/integration/lbug-pool-stability.test.ts',
             'test/integration/local-backend.test.ts',
             'test/integration/local-backend-calltool.test.ts',
+            'test/integration/spring-aop-mcp.test.ts',
             'test/integration/search-core.test.ts',
             'test/integration/search-pool.test.ts',
             'test/integration/fts-description-search.test.ts',
+            'test/integration/fts-fullfile-search.test.ts',
+            'test/integration/fts-cjk-segmentation-search.test.ts',
             'test/integration/augmentation.test.ts',
             'test/integration/staleness-and-stability.test.ts',
             'test/integration/lbug-lock-retry.test.ts',
@@ -72,6 +90,31 @@ export default defineConfig({
             'test/integration/analyze-wal-checkpoint-failure.test.ts',
             'test/integration/lbug-non-ascii-path.test.ts',
             'test/integration/lbug-conn-serialization.test.ts',
+            'test/integration/group/manifest-resolve-symbol-2325.test.ts',
+            'test/integration/group/manifest-synthetic-impact-lbug.test.ts',
+            'test/integration/group/http-route-resolve-symbol.test.ts',
+            'test/integration/fts-stemmer-sweep.test.ts',
+            'test/integration/lbug-multiwriter-deadlock.test.ts',
+            'test/integration/extension-binary-real.test.ts',
+            'test/integration/lbug-delete-nodes-for-files.test.ts',
+            'test/integration/lbug-query-importers-batch.test.ts',
+            'test/integration/impact-ambiguous-blast-radius.test.ts',
+            'test/unit/incremental-dirty-recovery.test.ts',
+            'test/unit/incremental-orchestration.test.ts',
+            // #2841. Native @ladybugdb/core: it runs real analyses, reopens the
+            // DB under different extension-install policies, and reads
+            // SHOW_INDEXES on the writable connection — exactly the mmap
+            // file-lock exposure this project exists to serialize (TESTING.md
+            // § Vitest projects). Registering it here does NOT narrow where it
+            // runs: vitest applies `--shard` once to the combined cross-project
+            // spec list (PerfSequencer/assignShards is a complete, disjoint
+            // partition), and run-cross-platform.ts hands vitest explicit file
+            // paths, which resolve against every project's include list. Its
+            // `incremental-vector-extension-ordering` /
+            // `incremental-fts-drop-ordering` siblings are equally native and
+            // still sit in `default` — pre-existing drift, deliberately left
+            // alone here.
+            'test/unit/incremental-index-extension-dml-gate.test.ts',
           ],
           fileParallelism: false,
           sequence: { groupOrder: 1 },
@@ -90,9 +133,12 @@ export default defineConfig({
             'test/integration/lbug-pool-stability.test.ts',
             'test/integration/local-backend.test.ts',
             'test/integration/local-backend-calltool.test.ts',
+            'test/integration/spring-aop-mcp.test.ts',
             'test/integration/search-core.test.ts',
             'test/integration/search-pool.test.ts',
             'test/integration/fts-description-search.test.ts',
+            'test/integration/fts-fullfile-search.test.ts',
+            'test/integration/fts-cjk-segmentation-search.test.ts',
             'test/integration/augmentation.test.ts',
             'test/integration/staleness-and-stability.test.ts',
             'test/integration/lbug-lock-retry.test.ts',
@@ -107,7 +153,22 @@ export default defineConfig({
             'test/integration/analyze-wal-checkpoint-failure.test.ts',
             'test/integration/lbug-non-ascii-path.test.ts',
             'test/integration/lbug-conn-serialization.test.ts',
+            'test/integration/group/manifest-resolve-symbol-2325.test.ts',
+            'test/integration/group/manifest-synthetic-impact-lbug.test.ts',
+            'test/integration/group/http-route-resolve-symbol.test.ts',
             'test/integration/skills-e2e.test.ts',
+            'test/integration/fts-extension-e2e.test.ts',
+            'test/integration/fts-stemmer-sweep.test.ts',
+            'test/integration/lbug-multiwriter-deadlock.test.ts',
+            'test/integration/extension-binary-real.test.ts',
+            'test/integration/lbug-delete-nodes-for-files.test.ts',
+            'test/integration/lbug-query-importers-batch.test.ts',
+            'test/integration/impact-ambiguous-blast-radius.test.ts',
+            'test/unit/incremental-dirty-recovery.test.ts',
+            'test/unit/incremental-orchestration.test.ts',
+            // Excluded here because it is included by `lbug-db` above; a file
+            // in two projects would be collected (and run) twice.
+            'test/unit/incremental-index-extension-dml-gate.test.ts',
           ],
         },
       },
@@ -115,7 +176,12 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'cli-e2e',
-          include: ['test/integration/skills-e2e.test.ts'],
+          include: [
+            'test/integration/skills-e2e.test.ts',
+            // Spawns the real CLI per test; runs sequentially (fileParallelism:
+            // false) so it doesn't aggravate the under-load timeout-flake class.
+            'test/integration/fts-extension-e2e.test.ts',
+          ],
           fileParallelism: false,
           sequence: { groupOrder: 2 },
         },

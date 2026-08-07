@@ -1,4 +1,8 @@
-import { makeScopeId, type Capture, type CaptureMatch } from 'gitnexus-shared';
+import { makeScopeId, type Capture, type CaptureMatch, type ScopeId } from 'gitnexus-shared';
+import {
+  materializeClassAnnotationFacts,
+  recordClassAnnotationCapture,
+} from '../../frameworks/spring/bean-candidates.js';
 import {
   nodeIfType,
   nodeToCapture,
@@ -14,8 +18,64 @@ import { normalizeKotlinType } from './interpret.js';
 import { synthesizeKotlinReceiverBinding } from './receiver-binding.js';
 import { getKotlinParser, getKotlinScopeQuery } from './query.js';
 import { markCompanionScope } from './companion-scopes.js';
+import {
+  setKotlinClassAnnotationFacts,
+  setKotlinSpringAopFacts,
+  setKotlinSpringConditionalFacts,
+  setKotlinSpringDiFacts,
+} from './capture-side-channel.js';
+import { captureKotlinPackageFact } from './package-facts.js';
+import { synthesizeCallableFlowCaptures } from '../../utils/callable-flow-captures.js';
+import { captureKotlinSpringDiClassFact, type KotlinSpringDiClassFact } from './spring-di.js';
+import { synthesizeReceiverChainCapture } from '../../utils/receiver-chain-captures.js';
+import { captureKotlinSpringAopFacts, type KotlinSpringAopFact } from './spring-aop.js';
+import {
+  captureKotlinSpringConditionalFacts,
+  type KotlinSpringConditionalFact,
+} from './spring-conditionals.js';
 
 const FUNCTION_DECL_TAGS = ['@declaration.function'] as const;
+
+const KOTLIN_CALLABLE_CAPTURE_OPTIONS = {
+  functionNodeTypes: new Set(['function_declaration', 'anonymous_function', 'lambda_literal']),
+  callNodeTypes: new Set(['call_expression']),
+  parameterListNodeTypes: new Set(['function_value_parameters', 'value_arguments']),
+  parameterNodeTypes: new Set(['parameter']),
+  bindingNodeTypes: new Set(['property_declaration']),
+  assignmentNodeTypes: new Set(['assignment']),
+  identifierNodeTypes: new Set(['simple_identifier', 'type_identifier']),
+  callableReferenceNodeTypes: new Set(['callable_reference']),
+  callableProtocolMethods: new Set(['invoke']),
+  functionName: (node: SyntaxNode) =>
+    node.namedChildren.find(
+      (child): child is SyntaxNode => child !== null && child.type === 'simple_identifier',
+    )?.text,
+  extractAssignment: (node: SyntaxNode) => {
+    // tree-sitter-kotlin's `assignment` node is FIELDLESS (positional
+    // `directly_assignable_expression` then the value), so the shared
+    // field-based fallback returned nothing and nested reassignments
+    // (`chosen = ::target` inside a block) never produced flow facts
+    // (#2522 review, shallow-coverage gap).
+    if (node.type === 'assignment') {
+      const named = node.namedChildren.filter((child): child is SyntaxNode => child !== null);
+      if (named.length < 2) return undefined;
+      return { destination: named[0]!, source: named[named.length - 1]! };
+    }
+    if (node.type !== 'property_declaration') return undefined;
+    if (!node.children.some((child) => child.text === '=')) return undefined;
+    const destination = node.namedChildren.find(
+      (child): child is SyntaxNode => child !== null && child.type === 'variable_declaration',
+    );
+    const source = [...node.namedChildren]
+      .reverse()
+      .find(
+        (child): child is SyntaxNode =>
+          child !== null && child.id !== destination?.id && child.type !== 'binding_pattern_kind',
+      );
+    return destination === undefined || source === undefined ? undefined : { destination, source };
+  },
+  normalizeQualifiedName: (raw: string) => raw.replaceAll('::', '.'),
+} as const;
 
 export function emitKotlinScopeCaptures(
   sourceText: string,
@@ -31,8 +91,15 @@ export function emitKotlinScopeCaptures(
   } else {
     recordKotlinCacheHit();
   }
+  captureKotlinPackageFact(filePath, tree.rootNode);
 
   const out: CaptureMatch[] = [];
+  const classAnnotations = new Map<ScopeId, Set<string>>();
+  const springAopFacts: KotlinSpringAopFact[] = [];
+  const springAopTypeNodeIds = new Set<number>();
+  const springConditionalFacts: KotlinSpringConditionalFact[] = [];
+  const springDiFacts: KotlinSpringDiClassFact[] = [];
+  const springDiClassNodeIds = new Set<number>();
   const returnTypes = collectKotlinReturnTypeTexts(tree.rootNode);
   out.push(...synthesizeKotlinLocalAssignmentBindings(tree.rootNode, returnTypes));
   out.push(...synthesizeKotlinLoopBindings(tree.rootNode, returnTypes));
@@ -55,6 +122,43 @@ export function emitKotlinScopeCaptures(
       groupedNodes[tag] = capture.node;
     }
     if (Object.keys(grouped).length === 0) continue;
+
+    // tree-sitter-kotlin represents both classes and interfaces with
+    // `class_declaration`; `object_declaration` is the separate object form.
+    const springAopTypeNode = [
+      nodeIfType(groupedNodes['@scope.class'], 'class_declaration'),
+      nodeIfType(groupedNodes['@scope.class'], 'object_declaration'),
+      nodeIfType(groupedNodes['@scope.class'], 'companion_object'),
+    ].find((node): node is SyntaxNode => node !== null);
+    if (springAopTypeNode !== undefined && !springAopTypeNodeIds.has(springAopTypeNode.id)) {
+      springAopTypeNodeIds.add(springAopTypeNode.id);
+      springAopFacts.push(...captureKotlinSpringAopFacts(springAopTypeNode, filePath));
+    }
+
+    const springDiClassNode = nodeIfType(groupedNodes['@scope.class'], 'class_declaration');
+    if (springDiClassNode !== null && !springDiClassNodeIds.has(springDiClassNode.id)) {
+      springDiClassNodeIds.add(springDiClassNode.id);
+      springConditionalFacts.push(
+        ...captureKotlinSpringConditionalFacts(springDiClassNode, filePath),
+      );
+      const fact = captureKotlinSpringDiClassFact(springDiClassNode, filePath);
+      if (fact !== null) springDiFacts.push(fact);
+    }
+
+    const annotatedClass = grouped['@class-annotation.class'];
+    const annotationName = grouped['@class-annotation.name'];
+    if (annotatedClass !== undefined && annotationName !== undefined) {
+      const classNode = nodeIfType(groupedNodes['@class-annotation.class'], 'class_declaration');
+      if (classNode !== null && isKotlinBeanCandidateClass(classNode)) {
+        recordClassAnnotationCapture(
+          classAnnotations,
+          filePath,
+          annotatedClass,
+          annotationName.text,
+        );
+      }
+      continue;
+    }
 
     // Companion-object marker (#1756 / U4). The `@scope.companion`
     // capture is a side-channel marker — it shares its range with the
@@ -159,6 +263,12 @@ export function emitKotlinScopeCaptures(
     }
 
     if (grouped['@scope.function'] !== undefined) {
+      // Structural receiver chain for a call whose receiver is itself an
+      // expression, so resolution can type it by folding over structure
+      // instead of re-parsing the receiver's source text. Self-gating: a
+      // non-call match, an absent receiver, or a chain with no nameable base
+      // all leave `grouped` untouched.
+      synthesizeReceiverChainCapture(grouped, groupedNodes['@reference.receiver']);
       out.push(grouped);
       const fnNode = nodeIfType(groupedNodes['@scope.function'], 'function_declaration');
       if (fnNode !== null) {
@@ -216,13 +326,34 @@ export function emitKotlinScopeCaptures(
       }
     }
 
+    // Structural receiver chain for a call whose receiver is itself an
+    // expression, so resolution can type it by folding over structure
+    // instead of re-parsing the receiver's source text. Self-gating: a
+    // non-call match, an absent receiver, or a chain with no nameable base
+    // all leave `grouped` untouched.
+    synthesizeReceiverChainCapture(grouped, groupedNodes['@reference.receiver']);
     out.push(grouped);
 
     const extensionFallback = extensionFreeCallFallback(grouped, groupedNodes);
     if (extensionFallback !== null) out.push(extensionFallback);
   }
 
+  setKotlinClassAnnotationFacts(filePath, materializeClassAnnotationFacts(classAnnotations));
+  setKotlinSpringAopFacts(filePath, springAopFacts);
+  setKotlinSpringConditionalFacts(filePath, springConditionalFacts);
+  setKotlinSpringDiFacts(filePath, springDiFacts);
+  out.push(...synthesizeCallableFlowCaptures(tree.rootNode, KOTLIN_CALLABLE_CAPTURE_OPTIONS));
   return out;
+}
+
+function isKotlinBeanCandidateClass(classNode: SyntaxNode): boolean {
+  if (classNode.children.some((child) => child.type === 'interface' || child.type === 'enum')) {
+    return false;
+  }
+  const modifiers = classNode.namedChildren.find((child) => child.type === 'modifiers');
+  return !modifiers?.namedChildren.some(
+    (child) => child.type === 'class_modifier' && child.text.trim() === 'annotation',
+  );
 }
 
 /**

@@ -55,7 +55,252 @@ import type { ParseWorkerResult } from '../core/ingestion/workers/parse-worker.j
 // the main thread (the #1983 OOM). Because the two stores share this version,
 // any future change to the `ParsedFile` serialization shape MUST bump
 // SCHEMA_BUMP so both invalidate in lockstep.
-const SCHEMA_BUMP = 9; // #2312: ParseWorkerResult gained `routerConstructorPrefixes` for FastAPI APIRouter(prefix=...) replay
+// v35: Java/Kotlin Spring @Bean factory and @Resource side-channel facts
+// (#2413). ParsedFile results are content-addressed and replayed verbatim, so
+// the feature/schema inventory alone cannot invalidate pre-#2413 captures.
+// (Cut as v32 on this branch; `main` took 32 for #2742 and 33/34 for #2747
+// first, so this series is renumbered at merge time — see the v21 note.)
+// v34: the receiver-chain capture is emitted by ALL 14 language emitters, not
+// just TypeScript. v33 landed with the TypeScript-only emission; the rollout to
+// the other 13 languages changed the capture set AGAIN, so a cache stamped 33 by
+// an intermediate build of that series is not equivalent to one stamped at this
+// commit — it would be treated as current while every non-TypeScript file
+// replayed pre-rollout captures, leaving the feature silently inert for 13 of 14
+// languages. Bumped there so the version tracks the FINAL capture set rather
+// than the first divergence.
+// v33: TypeScript call matches carry `@reference.receiver-chain`, a compact
+// encoding of a receiver that is itself an expression.
+// v32: Rust items are qualified by their enclosing `mod` chain (#2742). The
+// qualified name is computed in the parse worker, so a warm cache replays the
+// old unqualified ids verbatim and the collapse persists.
+// v31: Rust `mod_item` gained `@declaration.namespace` and scoped call sites
+// gained `@reference.qualified-name` (#2730). Both are PARSE-TIME captures, so a
+// warm cache replays the old capture set verbatim: `rawQualifiedName` comes back
+// undefined and no Namespace def exists to hang a module prefix on, which turns
+// the whole module-qualified resolution tier into a no-op on unchanged files.
+// Re-checked against origin/main at commit time per the v29 note below.
+// v29: closure-binding declaration rules for PHP/Rust/Kotlin/Ruby/Dart, a Rust
+// graph node for `let f = || …`, a Dart closure scope, and function-local VALUES
+// (Variable/Const/Property/Static) qualified by their enclosing callable plus
+// position (#2699 parts A1 + B). All parse-time, so a warm cache would replay
+// the old captures and the pre-qualification ids verbatim.
+//
+// This is 29 and not 28 because of the exact collision the v21 note below warns
+// about: this branch cut at 27 and bumped to 28, while #2415 bumped 27 -> 28 and
+// merged FIRST. Re-checking against origin/main at merge time — not at branch
+// time — is what caught it; leaving it at 28 would have shipped this change with
+// NO parse-cache invalidation, so every warm cache keeps serving the pre-fix
+// captures and ids.
+// v28: Java/Kotlin capture side-channels persist Spring condition facts and
+// annotation-source line numbers (#2415).
+// v26: the enclosing-callable walk stops at class bodies and anonymous-class
+// construction sites (#2699 follow-up); a v25 cache replays worker results carrying the
+// wrong Java anonymous-class ids. Cached results are replayed verbatim — including
+// across `--force` — so without this bump a warm cache keeps serving them.
+// v25: function-local callables are qualified by their enclosing-callable chain
+// plus their own position, and JS/TS gain block scopes (#2699). Both the node
+// ids AND the scope tree in a cached worker result are therefore stale. Cached
+// results are replayed verbatim — including across `--force` — so without this
+// bump a warm cache keeps serving the colliding ids and the block-less scopes.
+// v24: function scopes carry `Scope.ownsReceivers`, marking the JS/TS forms
+// that bind their own `this` (#2701). The flag lives on the cached `Scope`, so
+// without this bump a warm cache replays scopes that lack it and every `this`
+// inside an ordinary `function` keeps resolving to the enclosing class —
+// verified by probe: `--force` alone does NOT re-derive it.
+// v23: closure bindings emit callable nodes in Dart, Ruby, Java, C# and PHP
+// (plus JS/TS `var`), and Dart/PHP gain the scope declarations and flow
+// captures their forms were missing (#2693). Cached worker results are replayed
+// verbatim, so without this bump a warm cache keeps serving the old labels.
+// v22: `const X = <arrow | function-expression>` emits one `Function` node
+// instead of a `Function` plus an edgeless `Const` twin (#2687). Cached worker
+// results are replayed verbatim — including across `--force` — so without this
+// bump a warm cache keeps serving the old two-node set.
+// v21: TWO changes share this number — a collision, not a typo. #2632
+// (Java/Kotlin Spring DI facts: constructor, field/property and method
+// injection sites plus bean-name and @Primary provider metadata) bumped 20 -> 21
+// and merged first; #2653 (Java local class/enum/record/interface captures using
+// javac-compatible, source-type-relative JLS 13.1 identities and
+// declaration-to-block scopes, #2562) had branched at 20, bumped to 21 as well,
+// and merged second — so it shipped with NO invalidation of its own. An index
+// already stamped 21 by the first change was treated as current by the second
+// and kept serving stale local-class identities from the warm cache. Harmless
+// now (anything below the current value is rejected), and left as-is because
+// both genuinely shipped as 21 — renumbering would misstate history. Read this
+// as the reason to re-check SCHEMA_BUMP against origin/main immediately before
+// merging, not just when the branch is cut; the same collision hit
+// the DB schema version in #2653/#2654 (that constant is gone — the DB side is
+// a derived fingerprint now, see SCHEMA_FINGERPRINT; SCHEMA_BUMP below is still
+// hand-maintained because no declarative artifact describes a capture set).
+// v27: generator EXPRESSIONS bound to a name emit a callable definition capture,
+// and nested-callable caller attribution appends the localIdentity suffix the
+// definition phase already used. Both are parse-time, so a warm cache would
+// otherwise replay the old captures and ids verbatim.
+// v30/schema v22: CommonJS export capture emission (#2723) — new @definition/@declaration
+// captures for exports.X, aliased receivers, module-level `this`, re-export
+// forwarding and `module.exports = fn`, plus prototype/`this` Methods. A warm
+// cache would otherwise replay the pre-fix captures verbatim.
+// v20: Java/Kotlin capture side-channels persist package and class-annotation
+// facts for shared Spring Bean resolution.
+// v19: Java enum constant bodies emit E$N Class nodes; anonymous naming uses
+// JLS 13.1 immediate-host chains (#2555).
+// v18: Worker$N anonymous bodies. v17: callable-value-flow operand identity.
+// v16: direct callee identity.
+// v36: bound-callable graph `startLine` follows the initializer so multi-line
+// closure bindings join the scope channel (#2735). Warm cache would otherwise
+// keep serving wrapper-line startLines and drop the CALLS edge.
+// v37: Java/Kotlin capture side-channels include Spring AOP owner/advice facts
+// (#2416). Warm cache entries at v36 do not carry those facts and would silently
+// omit ADVISED_BY evidence.
+// v38: Swift nested conditional-compilation directives are blanked before the
+// parse (#2771), so a class body that previously error-recovered away now
+// survives. The chunk key hashes raw on-disk bytes and `preprocessSource` runs
+// after it is computed, so unchanged Swift files would otherwise replay their
+// pre-fix `ParseWorkerResult` verbatim — including across `--force`. Allocated
+// on `main`, NOT by this branch — kept so the number is not reused a third time.
+// v39: receiver-chain wire format v2 — the encoded chain gained name-free
+// `await` and `index` step kinds, so the VERSION prefix moved 1 -> 2 and every
+// persisted chain string changed. A v2 decoder REFUSES a v1 payload (that is
+// the point: a chain missing its await or index hop decodes cleanly as a
+// different, shorter chain and would type the receiver against the wrong
+// member), so a stale cache replays chains this build silently discards —
+// the feature degrades to the text cascade with no error anywhere. Bumped so
+// the stale cache is rejected rather than half-read.
+//
+// NUMBERED 39, AFTER TWO REALLOCATIONS. This branch first used 37; `main` took
+// 37 for Spring AOP (#2416) mid-flight, so it moved to 38; `main` then took 38
+// for the Swift directive fix (#2771), landing on the branch's number AGAIN.
+// That is the EIGHTH collision in this series and the SECOND exact clash — two
+// incompatible schemas claiming one number, twice running. The lesson is not
+// "pick a bigger number": it is that the check must happen immediately before
+// merge, because the window between review and merge is exactly when `main`
+// allocates. Re-check against origin/main before merging this.
+// v40: inference-typed class fields emit type-binding captures in SIX languages
+// (#2807) — TypeScript/JavaScript `public_field_definition|field_definition` with a
+// `new_expression` value and `this.<field> = new X()`; Python `self.x = Outer()`;
+// Ruby `@ivar = Foo.new`; Swift optional property annotations; Dart inferred-type
+// and final field declarations plus constructor-body field writes. Every one of
+// these is PARSE-TIME capture emission, so a warm cache replays the pre-fix
+// capture set verbatim for byte-unchanged files and the new receiver edges never
+// appear — silently, with no error, exactly the v27/v30 failure mode. `analyze`
+// skips tree-sitter dispatch for unchanged chunks (GUARDRAILS.md), so a plain
+// re-analyze does NOT surface them without this bump.
+// RE-CHECK AGAINST origin/main IMMEDIATELY BEFORE MERGING — main was also at 39
+// when this was allocated, and this file records eight prior collisions.
+// v41: the v40 Dart field-write binding gained its READ-side mask (#2807 review)
+// — a Dart class-member body that rebinds one of its class's field names now
+// emits `@receiver-owner.shadowed-fields` on its synthesized `@scope.function`
+// match, which becomes `Scope.ownsReceivers`. Parse-time capture emission again,
+// so a v40 warm cache replays scope matches with no marker and the receiver walk
+// still reaches the class field — i.e. it keeps serving the WRONG edge this
+// bump's fix removes, silently. Same bump-or-nothing situation as v40.
+// RE-CHECK AGAINST origin/main IMMEDIATELY BEFORE MERGING.
+// v42: the v40/v41 Python constructor-field arm stopped accepting a DOTTED
+// callee (#2807 review). `self.svc = f.Alpha()` no longer emits a
+// `@type-binding.constructor` capture at all, which is what removes the
+// fabricated edge to the same-named class `Alpha` and what stops
+// `self.conn = Registry.get()` displacing an earlier real `self.conn = Outer()`.
+// A within-PR re-bump, not a collision fix: v41 was allocated by this same
+// unmerged branch, so v41-stamped caches exist only on it — but they exist on
+// every reviewer's and CI runner's checkout of it, and parse-time emission means
+// they replay the pre-fix capture set for byte-unchanged files and keep serving
+// the fabricated edge. main is at 39, so 40/41/42 are all this branch's.
+// RE-CHECK AGAINST origin/main IMMEDIATELY BEFORE MERGING.
+// v43: Go embedded fields now emit `@reference.embedded-pointer` when written
+// as `*T` rather than `T` (#2813 exact method sets). Go's method-set rules make
+// the two forms genuinely different — `struct{ Base }` does NOT get Base's
+// pointer-receiver methods in its value method set while `struct{ *Base }` does
+// — so structural interface satisfaction cannot be exact without the spelling.
+// This is PARSE-TIME capture emission, so a warm cache replays the pre-fix
+// capture set for byte-unchanged files and the distinction never appears:
+// silently, with no error, the v27/v30 failure mode. `analyze` skips tree-sitter
+// dispatch for unchanged chunks (GUARDRAILS.md), so a plain re-analyze does NOT
+// surface it without this bump.
+//
+// 42 -> 43: this branch originally allocated 43 while sitting at 39, because
+// main had already taken 40/41/42 for #2807. main has since merged those and
+// this branch rebased onto it, so 43 remains the next free number and the
+// value is unchanged by the rebase — the reason it was chosen is simply now
+// visible in the history above. RE-CHECK AGAINST origin/main IMMEDIATELY
+// BEFORE MERGING; this file records eight prior collisions, two EXACT.
+// Moved 43 -> 44 for #2842's TypeScript heritage capture, which now emits
+// `@reference.inherits` for `interface_declaration` and
+// `abstract_class_declaration`. That is PARSE-TIME emission, so a v43 warm
+// cache would serve entries that are missing those matches entirely — the
+// exact failure a bump exists to prevent. Verified against origin/main at
+// a857f4c5a, which is still on 43, so 44 is free. RE-CHECK BEFORE MERGE.
+
+// 44 -> 45: #2837 re-anchors Go's struct/interface captures from the
+// `type_declaration` onto the `type_spec` (`languages/go/query.ts`
+// @scope.class/@declaration.struct/@declaration.interface, and GO_QUERIES
+// @definition.struct/@definition.interface in `tree-sitter-queries.ts`). Every
+// Go file declaring a type therefore emits DIFFERENT capture ranges — measured:
+// 70 fixture digests moved with zero change in capture COUNT — and a grouped
+// `type (...)` block emits nodes it previously did not emit at all. Parse-time,
+// so a warm cache would replay pre-fix ParsedFiles and the fix would be a silent
+// no-op on every incremental analyze while still passing every cold-run test.
+//
+// This branch originally took 44 and it COLLIDED: #2842 above merged first and
+// claimed it. The ninth entry in this ledger, and the third EXACT clash. Worth
+// recording HOW it was caught, because the pin test cannot catch it — both PRs
+// asserted `toBe(44)`, which passes even when main is already 44, so the two
+// capture schemas would have shared one PARSE_CACHE_VERSION and the durable
+// ParsedFile store would have replayed pre-fix ParsedFiles verbatim for one of
+// them. Only comparing against origin/main at MERGE time surfaces it.
+// PR #2840 (Objective-C, draft) still claims 44 as well — it must move too.
+// RE-CHECK AGAINST origin/main IMMEDIATELY BEFORE MERGING.
+//
+// 46 -> 47: method-level Spring `@RequestMapping` now emits wildcard routes
+// and one route per static `RequestMethod.X` value. These decorator routes live
+// in ParseWorkerResult and are replayed verbatim on warm cache hits, so keeping
+// the previous version would make the fix a no-op for every unchanged Java file.
+// PR #2856 claims 46, so this branch owns 47. Verified against upstream/main at
+// 021ac3037 (still 45). RE-CHECK BEFORE MERGE.
+
+// 47 -> 48: #2833 makes a generic-typed FIELD usable as a call receiver. Three
+// parse-time changes ride on this one value:
+//   - C++ (`languages/cpp/query.ts`) gains `field_declaration` rules whose
+//     `type:` is a `template_type` or a `qualified_identifier` wrapping one.
+//     The rules that existed all required a bare `type_identifier`, so
+//     `Repo<User> repo;` and `std::vector<Item> items;` matched NONE of them and
+//     the member got no type binding at all — new captures where there were none.
+//   - Python (`languages/python/interpret.ts`) reduces a subscripted type its
+//     container allow-lists do not claim to its base name, so `Repo[User]` binds
+//     as `Repo`. That rewrites `TypeRef.rawName`, which is serialized into the
+//     cached ParsedFile.
+//   - `SymbolDefinition.typeParameters` — the DECLARED parameter list
+//     (`template <class T>`, `class Box<T extends Repo>`), captured nowhere
+//     before and on a different axis from the existing `templateArguments`. Six
+//     per-language declaration queries gained `@declaration.type-parameters` and
+//     `scope-extractor.ts` reads it onto every class-like def.
+// A warm cache would replay the pre-fix ParsedFiles, so every file served from
+// it would carry the old captures while passing every cold-run test — the exact
+// failure this constant exists to prevent.
+//
+// WHAT THE BUMP DOES NOT COVER. It invalidates the PARSE half only. Whether the
+// re-parsed captures reach the graph is a separate gate: `isIncremental`
+// (`core/run-analyze.ts`) tests `!options.force`, an existing meta,
+// `!schemaFingerprintMismatch(...)`, feature parity, non-empty `fileHashes` and
+// a git repo — SCHEMA_BUMP appears in none of them — and an incremental run then
+// writes back only `hashDiff.toWrite`, logging the rest as "unchanged file rows
+// preserved". SCHEMA_FINGERPRINT is a hash of node/relation DDL, which this
+// branch does not touch, so it is byte-identical and moves nothing either.
+// Net: after this bump an incremental analyze re-parses an unchanged file
+// correctly but keeps its existing rows, and the new edges land on the next full
+// rebuild (`--force`, or any run whose runner identity or DDL moved). That is
+// the pre-existing contract for every capture change, not a regression here.
+//
+// THIS BRANCH COLLIDED TWICE, which is why it lands on 48 rather than 46.
+// It first took 46 (the C++/Python captures) and then 47 (typeParameters), both
+// verified free against origin/main at 021ac3037. By merge time main had moved:
+// #2856 claims 46 and #2857 took 47 and merged first. The eleventh entry in this
+// ledger and the FOURTH and FIFTH exact clashes — and note what caught them.
+// Not the pin test: this branch asserted `toBe(47)` and so did #2857, and both
+// pass, because a literal pin cannot see the other side. Only diffing
+// origin/main at the moment of merge surfaces it. Every value this branch
+// published (46, 47) is superseded by 48, so a warm cache stamped with either is
+// correctly invalidated.
+// RE-CHECK AGAINST origin/main IMMEDIATELY BEFORE MERGING.
+const SCHEMA_BUMP = 48;
 const GITNEXUS_PKG_VERSION = (() => {
   try {
     // package.json sits at gitnexus/package.json — two levels up from
