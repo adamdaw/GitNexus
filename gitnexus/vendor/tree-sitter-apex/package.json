@@ -2,6 +2,7 @@
   "name": "tree-sitter-apex",
   "version": "0.0.0-abi14",
   "description": "ABI-14 regeneration of aheber/tree-sitter-sfapex (apex grammar), vendored for tree-sitter@0.21.1.",
+  "_vendoredBy": "gitnexus — ABI-14 regeneration of the sfapex `apex` grammar. Upstream parser.c is ABI-15 and will not load on the pinned tree-sitter@0.21.1, so this copy is regenerated with `tree-sitter generate --abi 14`; never copy upstream's parser.c in. Upstream also ships darwin+win32 prebuilds only (no linux), so ours are cross-built by build-tree-sitter-prebuilds.yml.",
   "main": "bindings/node/index.js",
   "license": "MIT",
   "dependencies": {
