@@ -477,7 +477,13 @@ jobs:
               proto:  "syntax = \"proto3\";\nmessage M { int32 id = 1; }",
               kotlin: "fun main() { println(\"hi\") }",
               swift:  "func greet() { print(\"hi\") }",
-              apex:   "public class C { public void go() { System.debug(\"hi\"); } }",
+              // Apex string literals are SINGLE-quoted, so a double-quoted snippet is a
+              // syntax error and parses with hasError set. Kept as a string literal on
+              // purpose: single-quoted strings are the main lexical divergence between
+              // Apex and the Java grammar it derives from. Written \u0027 because this
+              // whole node script is single-quoted to the shell, where a bare apostrophe
+              // would close it early -- that applies to these comment lines too.
+              apex:   "public class C { public void go() { System.debug(\u0027hi\u0027); } }",
             };
             const lang = require("node-gyp-build")(process.cwd());
             const Parser = require("tree-sitter");
