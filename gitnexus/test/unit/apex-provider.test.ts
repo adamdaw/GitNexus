@@ -53,7 +53,9 @@ describe('apexClassConfig.extractType (REQ-002)', () => {
     const en = parse('public enum E { A, B }');
     const trig = parse('trigger T on Account (before insert) {}');
     expect(apexClassConfig.extractType!(findFirst(cls, 'class_declaration'))).toBe('Class');
-    expect(apexClassConfig.extractType!(findFirst(iface, 'interface_declaration'))).toBe('Interface');
+    expect(apexClassConfig.extractType!(findFirst(iface, 'interface_declaration'))).toBe(
+      'Interface',
+    );
     expect(apexClassConfig.extractType!(findFirst(en, 'enum_declaration'))).toBe('Enum');
     expect(apexClassConfig.extractType!(findFirst(trig, 'trigger_declaration'))).toBe('Class');
   });
@@ -77,7 +79,9 @@ describe('apexExportChecker (REQ-002 visibility buckets)', () => {
   it('treats global/public/webservice as exported', () => {
     expect(exportableOf('global class C {}', 'class_declaration')).toBe(true);
     expect(exportableOf('public class C {}', 'class_declaration')).toBe(true);
-    expect(exportableOf('class C { webservice static void m() {} }', 'method_declaration')).toBe(true);
+    expect(exportableOf('class C { webservice static void m() {} }', 'method_declaration')).toBe(
+      true,
+    );
   });
 
   it('treats protected/private as not exported', () => {
@@ -98,7 +102,9 @@ describe('apexExportChecker (REQ-002 visibility buckets)', () => {
   });
 
   it('defaults a trigger to not exported', () => {
-    expect(exportableOf('trigger T on Account (before insert) {}', 'trigger_declaration')).toBe(false);
+    expect(exportableOf('trigger T on Account (before insert) {}', 'trigger_declaration')).toBe(
+      false,
+    );
   });
 
   // Regression (Gate 4 Pass 2, finding 1): a modifier-less member must NOT be
@@ -116,13 +122,18 @@ describe('Apex case-insensitive modifiers (Gate 4 Pass 2, finding — REQ-002/00
 
   it('recognises mixed-case visibility keywords as exported (Apex is case-insensitive)', () => {
     // `webService` (capital S) is Salesforce's documented canonical casing.
-    expect(exportableOf('class C { webService static void m() {} }', 'method_declaration')).toBe(true);
+    expect(exportableOf('class C { webService static void m() {} }', 'method_declaration')).toBe(
+      true,
+    );
     expect(exportableOf('class C { Public Integer a; }', 'field_declaration')).toBe(true);
     expect(exportableOf('GLOBAL class C {}', 'class_declaration')).toBe(true);
   });
 
   it('reads mixed-case static/final/visibility on field and method configs', () => {
-    const fld = findFirst(parse('class C { Private Static Final Integer X = 0; }'), 'field_declaration');
+    const fld = findFirst(
+      parse('class C { Private Static Final Integer X = 0; }'),
+      'field_declaration',
+    );
     expect(apexFieldConfig.extractVisibility!(fld)).toBe('private');
     expect(apexFieldConfig.isStatic!(fld)).toBe(true);
     expect(apexFieldConfig.isReadonly!(fld)).toBe(true);
@@ -140,14 +151,20 @@ describe('apexFieldConfig (REQ-003/014)', () => {
   });
 
   it('reads visibility, static, and final/readonly modifiers', () => {
-    const fld = findFirst(parse('class C { private static final Integer COUNT = 0; }'), 'field_declaration');
+    const fld = findFirst(
+      parse('class C { private static final Integer COUNT = 0; }'),
+      'field_declaration',
+    );
     expect(apexFieldConfig.extractVisibility!(fld)).toBe('private');
     expect(apexFieldConfig.isStatic!(fld)).toBe(true);
     expect(apexFieldConfig.isReadonly!(fld)).toBe(true);
   });
 
   it('normalises field annotations to @Name with args stripped', () => {
-    const fld = findFirst(parse('class C { @AuraEnabled(cacheable=true) String n; }'), 'field_declaration');
+    const fld = findFirst(
+      parse('class C { @AuraEnabled(cacheable=true) String n; }'),
+      'field_declaration',
+    );
     expect(apexFieldConfig.extractAnnotations!(fld)).toEqual(['@AuraEnabled']);
   });
 
@@ -178,7 +195,10 @@ describe('apexProvider (SDD-001 §1 — registration shape)', () => {
 
 describe('apexMethodConfig (REQ-003/014)', () => {
   it('extracts parameter rawType for overload disambiguation', () => {
-    const m = findFirst(parse('class C { void m(List<Account> accts, Integer n) {} }'), 'method_declaration');
+    const m = findFirst(
+      parse('class C { void m(List<Account> accts, Integer n) {} }'),
+      'method_declaration',
+    );
     const params = apexMethodConfig.extractParameters!(m);
     expect(params.map((p) => p.name)).toEqual(['accts', 'n']);
     expect(params[0].rawType).toBe('List<Account>');

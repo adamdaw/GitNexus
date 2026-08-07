@@ -63,89 +63,93 @@ const RESOLUTION_EDGE_TYPES = [
 ];
 
 // ── REQ-008 completion — parameter-typed-argument narrowing (WI-2-deferred) ───
-describe.skipIf(!apexAvailable)('Apex parameter-typed-argument narrowing (REQ-008 completion, SDD-004 §2/§8)', () => {
-  let result: PipelineResult;
+describe.skipIf(!apexAvailable)(
+  'Apex parameter-typed-argument narrowing (REQ-008 completion, SDD-004 §2/§8)',
+  () => {
+    let result: PipelineResult;
 
-  beforeAll(async () => {
-    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-param-arg'), () => {});
-  }, 120000);
+    beforeAll(async () => {
+      result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-param-arg'), () => {});
+    }, 120000);
 
-  it('narrows a cross-file overload by a USER-DEFINED top-level parameter type (b.f(p:Widget)) to f(Widget) (REQ-008)', () => {
-    // §1(3)(a): the oracle recognizes Widget via workspaceFqnBindings folded membership -> narrows.
-    // RED until WI-4 gates resolveVarTypeBindings on the oracle.
-    const f = getRelationships(result, 'CALLS').find(
-      (e) => e.target === 'f' && e.sourceFilePath.includes('ParamUserCaller'),
-    );
-    expect(f, 'b.f(p) narrows to an overload').toBeDefined();
-    expect(f!.rel.targetId, 'f(Widget), the user-defined param type').toContain('Widget');
-    expect(f!.rel.targetId, 'never f(String)').not.toContain('String');
-  });
+    it('narrows a cross-file overload by a USER-DEFINED top-level parameter type (b.f(p:Widget)) to f(Widget) (REQ-008)', () => {
+      // §1(3)(a): the oracle recognizes Widget via workspaceFqnBindings folded membership -> narrows.
+      // RED until WI-4 gates resolveVarTypeBindings on the oracle.
+      const f = getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'f' && e.sourceFilePath.includes('ParamUserCaller'),
+      );
+      expect(f, 'b.f(p) narrows to an overload').toBeDefined();
+      expect(f!.rel.targetId, 'f(Widget), the user-defined param type').toContain('Widget');
+      expect(f!.rel.targetId, 'never f(String)').not.toContain('String');
+    });
 
-  it('leaves an EXTERNAL-typed parameter argument (b.f(s:String)) arity-only -> unresolved, never mis-bound (REQ-008 conservative)', () => {
-    // §1(3)/§2 conservative arm: String is external -> no unique user-defined resolution -> narrowing
-    // skipped -> two arity-1 overloads survive -> ambiguous -> no binding edge (never f(Widget)).
-    expect(
-      getRelationships(result, 'CALLS').filter(
-        (e) => e.target === 'f' && e.sourceFilePath.includes('ParamExtCaller'),
-      ),
-      'no binding edge for the external-typed parameter arg',
-    ).toEqual([]);
-  });
+    it('leaves an EXTERNAL-typed parameter argument (b.f(s:String)) arity-only -> unresolved, never mis-bound (REQ-008 conservative)', () => {
+      // §1(3)/§2 conservative arm: String is external -> no unique user-defined resolution -> narrowing
+      // skipped -> two arity-1 overloads survive -> ambiguous -> no binding edge (never f(Widget)).
+      expect(
+        getRelationships(result, 'CALLS').filter(
+          (e) => e.target === 'f' && e.sourceFilePath.includes('ParamExtCaller'),
+        ),
+        'no binding edge for the external-typed parameter arg',
+      ).toEqual([]);
+    });
 
-  it('narrows by a DOTTED nested parameter type (b.g(p:NOuter.NInner)) to g(NOuter.NInner), never the same-tail decoy (REQ-008)', () => {
-    // §1(3)(b): the inc-11 OUTER-first nested lookup resolves the dotted param type to the NESTED
-    // NInner (decoy-safe — a mis-resolution to the top-level decoy NInner would not exact-match the
-    // g(NOuter.NInner) overload, so it would fall to arity-only ambiguity). RED until WI-4.
-    const g = getRelationships(result, 'CALLS').find(
-      (e) => e.target === 'g' && e.sourceFilePath.includes('NestedParamCaller'),
-    );
-    expect(g, 'b.g(p) narrows to the nested-typed overload').toBeDefined();
-    expect(g!.rel.targetId, 'the nested NOuter.NInner overload, not g(String)').not.toContain(
-      'String',
-    );
-  });
+    it('narrows by a DOTTED nested parameter type (b.g(p:NOuter.NInner)) to g(NOuter.NInner), never the same-tail decoy (REQ-008)', () => {
+      // §1(3)(b): the inc-11 OUTER-first nested lookup resolves the dotted param type to the NESTED
+      // NInner (decoy-safe — a mis-resolution to the top-level decoy NInner would not exact-match the
+      // g(NOuter.NInner) overload, so it would fall to arity-only ambiguity). RED until WI-4.
+      const g = getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'g' && e.sourceFilePath.includes('NestedParamCaller'),
+      );
+      expect(g, 'b.g(p) narrows to the nested-typed overload').toBeDefined();
+      expect(g!.rel.targetId, 'the nested NOuter.NInner overload, not g(String)').not.toContain(
+        'String',
+      );
+    });
 
-  it('narrows by a SIMPLE-name nested parameter type referenced from within its enclosing class (NOuter.callInnerFromEnclosing(p:NInner)) (REQ-008 §1(3)(c))', () => {
-    // §1(3)(c): the enclosing-scope owned-def lookup binds the unqualified NInner param type ->
-    // narrows g(NOuter.NInner). [Gate-3 reliance] arm. RED until WI-4.
-    const g = getRelationships(result, 'CALLS').find(
-      (e) => e.target === 'g' && e.sourceFilePath.includes('NOuter'),
-    );
-    expect(g, 'the enclosing-scope nested param narrows').toBeDefined();
-    expect(g!.rel.targetId, 'the nested overload, not g(String)').not.toContain('String');
-  });
+    it('narrows by a SIMPLE-name nested parameter type referenced from within its enclosing class (NOuter.callInnerFromEnclosing(p:NInner)) (REQ-008 §1(3)(c))', () => {
+      // §1(3)(c): the enclosing-scope owned-def lookup binds the unqualified NInner param type ->
+      // narrows g(NOuter.NInner). [Gate-3 reliance] arm. RED until WI-4.
+      const g = getRelationships(result, 'CALLS').find(
+        (e) => e.target === 'g' && e.sourceFilePath.includes('NOuter'),
+      );
+      expect(g, 'the enclosing-scope nested param narrows').toBeDefined();
+      expect(g!.rel.targetId, 'the nested overload, not g(String)').not.toContain('String');
+    });
 
-  it('SKIPS narrowing on a duplicate-named (ambiguous) parameter type — the enclosing-scope tie refuses -> arity-only, never mis-bound (REQ-008 §4)', () => {
-    // §4 duplicate-named ambiguous arm: ETie owns colliding nested Amb/AMB, useAmb(p:Amb) -> the
-    // §1(3)(c) enclosing-scope owned-def lookup finds a genuine tie (NOT foreclosed by workspace
-    // inject-none, since it is scope-local) -> refuses -> arity-only -> h(p) binds nothing. A pick-one
-    // oracle bug would narrow to h(ETie.Amb); this asserts the conservative skip.
-    expect(
-      getRelationships(result, 'CALLS').filter(
-        (e) => e.target === 'h' && e.sourceFilePath.includes('ETie'),
-      ),
-      'no binding edge for the ambiguous duplicate-typed parameter arg',
-    ).toEqual([]);
-  });
+    it('SKIPS narrowing on a duplicate-named (ambiguous) parameter type — the enclosing-scope tie refuses -> arity-only, never mis-bound (REQ-008 §4)', () => {
+      // §4 duplicate-named ambiguous arm: ETie owns colliding nested Amb/AMB, useAmb(p:Amb) -> the
+      // §1(3)(c) enclosing-scope owned-def lookup finds a genuine tie (NOT foreclosed by workspace
+      // inject-none, since it is scope-local) -> refuses -> arity-only -> h(p) binds nothing. A pick-one
+      // oracle bug would narrow to h(ETie.Amb); this asserts the conservative skip.
+      expect(
+        getRelationships(result, 'CALLS').filter(
+          (e) => e.target === 'h' && e.sourceFilePath.includes('ETie'),
+        ),
+        'no binding edge for the ambiguous duplicate-typed parameter arg',
+      ).toEqual([]);
+    });
 
-  it('records no false unresolved/suppressed outcome for the resolving parameter-arg cases (REQ-006)', () => {
-    // The user-defined narrowing cases resolve, so `f`/`g` from the resolving callers emit no
-    // suppressed record. (The external ParamExtCaller case is a conservative arity-only miss —
-    // edge-absence, not a suppressed record.)
-    const resolvingSites = getRelationships(result, 'CALLS').filter(
-      (e) =>
-        (e.target === 'f' && e.sourceFilePath.includes('ParamUserCaller')) ||
-        (e.target === 'g' &&
-          (e.sourceFilePath.includes('NestedParamCaller') || e.sourceFilePath.includes('NOuter'))),
-    );
-    // anchor: at least the three user-defined narrowing sites resolve (red until WI-4)
-    expect(resolvingSites.length, 'the three user-defined narrowing sites resolve').toBe(3);
-  });
+    it('records no false unresolved/suppressed outcome for the resolving parameter-arg cases (REQ-006)', () => {
+      // The user-defined narrowing cases resolve, so `f`/`g` from the resolving callers emit no
+      // suppressed record. (The external ParamExtCaller case is a conservative arity-only miss —
+      // edge-absence, not a suppressed record.)
+      const resolvingSites = getRelationships(result, 'CALLS').filter(
+        (e) =>
+          (e.target === 'f' && e.sourceFilePath.includes('ParamUserCaller')) ||
+          (e.target === 'g' &&
+            (e.sourceFilePath.includes('NestedParamCaller') ||
+              e.sourceFilePath.includes('NOuter'))),
+      );
+      // anchor: at least the three user-defined narrowing sites resolve (red until WI-4)
+      expect(resolvingSites.length, 'the three user-defined narrowing sites resolve').toBe(3);
+    });
 
-  it('leaves no dangling resolution edges', () => {
-    expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
-  });
-});
+    it('leaves no dangling resolution edges', () => {
+      expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
+    });
+  },
+);
 
 // ── REQ-013 — external references are benign, not defects ─────────────────────
 describe.skipIf(!apexAvailable)('Apex external-reference handling (REQ-013, SDD-004 §2/§8)', () => {
@@ -158,10 +162,22 @@ describe.skipIf(!apexAvailable)('Apex external-reference handling (REQ-013, SDD-
   it('emits NO edge for stdlib / sObject / managed-package references (System.debug, new Account(), a.Name, ExtNs.Svc.ping)', () => {
     // The host default on any unresolved reference: no edge (SDD-004 §2, finding 6).
     // [conservative-negative; see WI-4-red-gate.md] — anchored by the run-completes assertion below.
-    expect(getRelationships(result, 'CALLS').filter((e) => e.target === 'debug'), 'no System.debug edge').toEqual([]);
-    expect(getRelationships(result, 'CALLS').filter((e) => e.target === 'ping'), 'no ExtNs.Svc.ping edge').toEqual([]);
-    expect(getRelationships(result, 'CALLS').filter((e) => e.target === 'Account'), 'no external sObject ctor edge').toEqual([]);
-    expect(getRelationships(result, 'ACCESSES').filter((e) => e.target === 'Name'), 'no sObject field edge').toEqual([]);
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'debug'),
+      'no System.debug edge',
+    ).toEqual([]);
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'ping'),
+      'no ExtNs.Svc.ping edge',
+    ).toEqual([]);
+    expect(
+      getRelationships(result, 'CALLS').filter((e) => e.target === 'Account'),
+      'no external sObject ctor edge',
+    ).toEqual([]);
+    expect(
+      getRelationships(result, 'ACCESSES').filter((e) => e.target === 'Name'),
+      'no sObject field edge',
+    ).toEqual([]);
   });
 
   it('records NO unresolved *defect* for the external references (REQ-013 observable acceptance)', () => {
@@ -183,9 +199,7 @@ describe.skipIf(!apexAvailable)('Apex external-reference handling (REQ-013, SDD-
   });
 
   it('reports the managed-package call as a dropped site, not a defect (#2744 completeness signal)', () => {
-    const receiverUnresolved = suppressed(result).filter(
-      (o) => o.reason === 'receiver-unresolved',
-    );
+    const receiverUnresolved = suppressed(result).filter((o) => o.reason === 'receiver-unresolved');
     expect(
       receiverUnresolved.map((o) => ({ name: o.name, filePath: o.filePath })),
       'exactly the ExtNs.Svc.ping() site is reported as dropped',
@@ -332,85 +346,96 @@ describe.skipIf(!apexAvailable)('Apex cross-file heritage cycle (NFR-001, SDD-00
 });
 
 // ── SDD-004 §4 — nested-aware heritage-base seam: dotted-base refuse/resolve shapes ──
-describe.skipIf(!apexAvailable)('Apex nested-aware heritage-base seam — dotted refuse/resolve shapes (SDD-004 §1(2)/§4)', () => {
-  let result: PipelineResult;
+describe.skipIf(!apexAvailable)(
+  'Apex nested-aware heritage-base seam — dotted refuse/resolve shapes (SDD-004 §1(2)/§4)',
+  () => {
+    let result: PipelineResult;
 
-  beforeAll(async () => {
-    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-heritage-refuse'), () => {});
-  }, 120000);
+    beforeAll(async () => {
+      result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-heritage-refuse'), () => {});
+    }, 120000);
 
-  const extendsFrom = (src: string) =>
-    getRelationships(result, 'EXTENDS').filter((e) => e.source === src);
+    const extendsFrom = (src: string) =>
+      getRelationships(result, 'EXTENDS').filter((e) => e.source === src);
 
-  it('RESOLVES a case-varied OUTER (RCaseOuter extends HOUTER.HInner) to the nested HInner (seam state-i)', () => {
-    // The dotted analogue of BL-1: the OUTER folds to HOuter, the tail HInner resolves. RED until the
-    // reorder + seam ship (pre-WI-4 the folded workspace channel is empty for heritage).
-    const ext = extendsFrom('RCaseOuter').find((e) => e.target === 'HInner');
-    expect(ext, 'RCaseOuter extends HOUTER.HInner -> the nested HInner').toBeDefined();
-    expect(ext!.targetFilePath, 'declared in HOuter.cls').toContain('HOuter.cls');
-  });
+    it('RESOLVES a case-varied OUTER (RCaseOuter extends HOUTER.HInner) to the nested HInner (seam state-i)', () => {
+      // The dotted analogue of BL-1: the OUTER folds to HOuter, the tail HInner resolves. RED until the
+      // reorder + seam ship (pre-WI-4 the folded workspace channel is empty for heritage).
+      const ext = extendsFrom('RCaseOuter').find((e) => e.target === 'HInner');
+      expect(ext, 'RCaseOuter extends HOUTER.HInner -> the nested HInner').toBeDefined();
+      expect(ext!.targetFilePath, 'declared in HOuter.cls').toContain('HOuter.cls');
+    });
 
-  it('REFUSES an external/absent OUTER (RExtOuter extends Ext.Ghost) — no edge, never the same-tail decoy Ghost (seam state-ii)', () => {
-    // Pre-WI-4 the shared QNI dotted-tail fallback mis-binds the top-level decoy Ghost (BL-4 pattern);
-    // the seam gates that fallback for any dotted base with a non-unique OUTER. RED until the seam.
-    expect(extendsFrom('RExtOuter'), 'no EXTENDS edge for an external-OUTER dotted base').toEqual([]);
-    expect(
-      getRelationships(result, 'EXTENDS').filter(
-        (e) => e.source === 'RExtOuter' && e.targetFilePath.endsWith('Ghost.cls'),
-      ),
-      'never the same-tail top-level decoy Ghost',
-    ).toEqual([]);
-  });
+    it('REFUSES an external/absent OUTER (RExtOuter extends Ext.Ghost) — no edge, never the same-tail decoy Ghost (seam state-ii)', () => {
+      // Pre-WI-4 the shared QNI dotted-tail fallback mis-binds the top-level decoy Ghost (BL-4 pattern);
+      // the seam gates that fallback for any dotted base with a non-unique OUTER. RED until the seam.
+      expect(extendsFrom('RExtOuter'), 'no EXTENDS edge for an external-OUTER dotted base').toEqual(
+        [],
+      );
+      expect(
+        getRelationships(result, 'EXTENDS').filter(
+          (e) => e.source === 'RExtOuter' && e.targetFilePath.endsWith('Ghost.cls'),
+        ),
+        'never the same-tail top-level decoy Ghost',
+      ).toEqual([]);
+    });
 
-  it('REFUSES an OUTER-found/tail-absent dotted base (RTailAbsent extends HOuter.Ghost) — no edge, never the decoy (seam state-ii, the BL-4 near-miss guard)', () => {
-    // HOuter binds but owns no Ghost; a top-level Ghost decoy exists. The seam must refuse rather than
-    // fall through to re-bind the decoy. RED until the seam (pre-WI-4 mis-binds Ghost).
-    expect(extendsFrom('RTailAbsent'), 'no EXTENDS for the tail-absent dotted base').toEqual([]);
-    expect(
-      getRelationships(result, 'EXTENDS').filter(
-        (e) => e.source === 'RTailAbsent' && e.targetFilePath.endsWith('Ghost.cls'),
-      ),
-      'never the same-tail decoy Ghost',
-    ).toEqual([]);
-  });
+    it('REFUSES an OUTER-found/tail-absent dotted base (RTailAbsent extends HOuter.Ghost) — no edge, never the decoy (seam state-ii, the BL-4 near-miss guard)', () => {
+      // HOuter binds but owns no Ghost; a top-level Ghost decoy exists. The seam must refuse rather than
+      // fall through to re-bind the decoy. RED until the seam (pre-WI-4 mis-binds Ghost).
+      expect(extendsFrom('RTailAbsent'), 'no EXTENDS for the tail-absent dotted base').toEqual([]);
+      expect(
+        getRelationships(result, 'EXTENDS').filter(
+          (e) => e.source === 'RTailAbsent' && e.targetFilePath.endsWith('Ghost.cls'),
+        ),
+        'never the same-tail decoy Ghost',
+      ).toEqual([]);
+    });
 
-  it('REFUSES a case-collided OUTER (RCollidedOuter extends COuter.CInner) — no edge, never the decoy CInner (seam state-ii)', () => {
-    // COuter/couter collide -> inject-none -> 0 workspace candidates -> OUTER not unique -> refuse; the
-    // BL-4 guard holds for a case-collided OUTER too. RED until the seam (pre-WI-4 mis-binds CInner).
-    expect(extendsFrom('RCollidedOuter'), 'no EXTENDS for the case-collided-OUTER dotted base').toEqual([]);
-    expect(
-      getRelationships(result, 'EXTENDS').filter(
-        (e) => e.source === 'RCollidedOuter' && e.targetFilePath.endsWith('CInner.cls'),
-      ),
-      'never the same-tail top-level decoy CInner',
-    ).toEqual([]);
-  });
+    it('REFUSES a case-collided OUTER (RCollidedOuter extends COuter.CInner) — no edge, never the decoy CInner (seam state-ii)', () => {
+      // COuter/couter collide -> inject-none -> 0 workspace candidates -> OUTER not unique -> refuse; the
+      // BL-4 guard holds for a case-collided OUTER too. RED until the seam (pre-WI-4 mis-binds CInner).
+      expect(
+        extendsFrom('RCollidedOuter'),
+        'no EXTENDS for the case-collided-OUTER dotted base',
+      ).toEqual([]);
+      expect(
+        getRelationships(result, 'EXTENDS').filter(
+          (e) => e.source === 'RCollidedOuter' && e.targetFilePath.endsWith('CInner.cls'),
+        ),
+        'never the same-tail top-level decoy CInner',
+      ).toEqual([]);
+    });
 
-  it('REFUSES a >2-segment namespace-qualified base (RNamespace extends ns.HOuter.HInner) — no edge (seam state-ii)', () => {
-    // A managed-package namespace-qualified external reference (Apex user-defined nesting is at most
-    // two segments). Conservative-negative anchor (no same-tail top-level decoy exists for the tail).
-    // [no-red justification: the >2-segment tail has no top-level match, so it binds nothing pre- or
-    // post-seam; the seam formalizes the refuse.]
-    expect(extendsFrom('RNamespace'), 'no EXTENDS for a >2-segment namespace-qualified base').toEqual([]);
-  });
+    it('REFUSES a >2-segment namespace-qualified base (RNamespace extends ns.HOuter.HInner) — no edge (seam state-ii)', () => {
+      // A managed-package namespace-qualified external reference (Apex user-defined nesting is at most
+      // two segments). Conservative-negative anchor (no same-tail top-level decoy exists for the tail).
+      // [no-red justification: the >2-segment tail has no top-level match, so it binds nothing pre- or
+      // post-seam; the seam formalizes the refuse.]
+      expect(
+        extendsFrom('RNamespace'),
+        'no EXTENDS for a >2-segment namespace-qualified base',
+      ).toEqual([]);
+    });
 
-  it('REFUSES an ambiguous nested tail (RAmbiguous extends HOuter.Dup, HOuter owns Dup+DUP) — refuse-on-tie, no guess (SDD-004 §7)', () => {
-    // The uniquely-bound OUTER owns two case-colliding nested Dup/DUP -> the nested lookup refuses on
-    // the tie (mirrors REQ-015 / resolveQualifiedInheritanceBase). Conservative-negative anchor (no
-    // top-level Dup decoy exists). [no-red justification: no decoy to mis-bind pre- or post-seam.]
-    expect(extendsFrom('RAmbiguous'), 'no EXTENDS for the ambiguous nested tail').toEqual([]);
-  });
+    it('REFUSES an ambiguous nested tail (RAmbiguous extends HOuter.Dup, HOuter owns Dup+DUP) — refuse-on-tie, no guess (SDD-004 §7)', () => {
+      // The uniquely-bound OUTER owns two case-colliding nested Dup/DUP -> the nested lookup refuses on
+      // the tie (mirrors REQ-015 / resolveQualifiedInheritanceBase). Conservative-negative anchor (no
+      // top-level Dup decoy exists). [no-red justification: no decoy to mis-bind pre- or post-seam.]
+      expect(extendsFrom('RAmbiguous'), 'no EXTENDS for the ambiguous nested tail').toEqual([]);
+    });
 
-  it('records no false unresolved *defect* for the refuse shapes (REQ-013-adjacent — a refuse is benign, not a defect)', () => {
-    // The refused heritage bases emit no edge and no defect (benign, like an external reference).
-    const refuseNames = new Set(['Ghost', 'CInner', 'Dup', 'HInner']);
-    expect(
-      suppressed(result).filter((o) => refuseNames.has(o.name)),
-      'no unresolved defect for the refused dotted bases',
-    ).toEqual([]);
-  });
+    it('records no false unresolved *defect* for the refuse shapes (REQ-013-adjacent — a refuse is benign, not a defect)', () => {
+      // The refused heritage bases emit no edge and no defect (benign, like an external reference).
+      const refuseNames = new Set(['Ghost', 'CInner', 'Dup', 'HInner']);
+      expect(
+        suppressed(result).filter((o) => refuseNames.has(o.name)),
+        'no unresolved defect for the refused dotted bases',
+      ).toEqual([]);
+    });
 
-  it('leaves no dangling resolution edges', () => {
-    expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
-  });
-});
+    it('leaves no dangling resolution edges', () => {
+      expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
+    });
+  },
+);

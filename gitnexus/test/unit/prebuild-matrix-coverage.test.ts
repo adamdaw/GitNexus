@@ -58,9 +58,7 @@ describe('tree-sitter prebuild matrix coverage', () => {
       yaml.indexOf('const REGISTRY = {'),
       yaml.indexOf('};', yaml.indexOf('const REGISTRY = {')),
     );
-    const shortnames = new Set(
-      [...yamlRegistry.matchAll(/^\s{12}(\w+):\s*\{/gm)].map((m) => m[1]),
-    );
+    const shortnames = new Set([...yamlRegistry.matchAll(/^\s{12}(\w+):\s*\{/gm)].map((m) => m[1]));
 
     expect([...shortnames].sort()).toEqual([...withSnippet].sort());
   });

@@ -109,9 +109,7 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
       'the binding enables the member access',
     ).toBeDefined();
     // the binding itself emits NO standalone edge (REQ-005 v1.3 parity)
-    expect(
-      getRelationships(result, 'USES').filter((e) => e.target === 'Engine'),
-    ).toEqual([]);
+    expect(getRelationships(result, 'USES').filter((e) => e.target === 'Engine')).toEqual([]);
   });
 
   // cross-file chain (REQ-009 cross-file form) ────────────────────────────────
@@ -201,9 +199,7 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
 
   // case-varied cross-file (§2.2 seam ∘ REQ-010) ─────────────────────────────
   it('resolves a case-varied cross-file reference (ENGINE e; e.STOP()) via the folded global key (REQ-010)', () => {
-    expect(
-      getRelationships(result, 'CALLS').find((e) => e.target === 'stop'),
-    ).toBeDefined();
+    expect(getRelationships(result, 'CALLS').find((e) => e.target === 'stop')).toBeDefined();
   });
 
   it('resolves a CASE-VARIED cross-file constructor (new ENGINE()) via the folded key (REQ-010/§7(11))', () => {
@@ -216,7 +212,7 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     ).toBeDefined();
   });
 
-  it('resolves CaseKid\'s inherited() to the cross-file parent Base — BL-8 discharge (WI-4 reorder, SDD-004 §2)', () => {
+  it("resolves CaseKid's inherited() to the cross-file parent Base — BL-8 discharge (WI-4 reorder, SDD-004 §2)", () => {
     // WI-4 FLIP (was: pinned unresolved, SRS v1.11(a)/BL-8). Post-reorder BL-1's case-varied
     // EXTENDS edge exists, so buildMro includes Base and inc-15's gated MRO walk reaches the
     // inherited implicit-this — the BL-8 super/inherited fallout of the BL-1 discharge
@@ -234,13 +230,16 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     // unresolved (independent reach); post-WI-4 reorder the EXTENDS edge resolves too (BL-1, flipped
     // below), so super() and the heritage edge now agree — this assertion is unchanged (green pre-
     // and post-reorder), the BL-1 EXTENDS/IMPLEMENTS discharge is asserted in the flipped pin below.
-    const kidCalls = getRelationships(result, 'CALLS').filter(
-      (e) => e.sourceFilePath.includes('CaseKid'),
+    const kidCalls = getRelationships(result, 'CALLS').filter((e) =>
+      e.sourceFilePath.includes('CaseKid'),
     );
     const superCtor = kidCalls.find((e) => e.target === 'Base');
     expect(superCtor, 'super() resolves to the parent ctor').toBeDefined();
     expect(superCtor!.rel.targetId, 'the Base ctor across files').toContain('Base.Base');
-    expect(kidCalls.filter((e) => e.target === 'CaseKid'), 'no ctor self-loop').toEqual([]);
+    expect(
+      kidCalls.filter((e) => e.target === 'CaseKid'),
+      'no ctor self-loop',
+    ).toEqual([]);
   });
 
   it('resolves super.greet() to the PARENT member (SRS v1.12; heritage EDGE now resolves too — BL-1)', () => {
@@ -252,7 +251,9 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
       (e) => e.target === 'greet' && e.sourceFilePath.includes('CaseKid'),
     );
     expect(call, 'super.greet() resolves').toBeDefined();
-    expect(call!.rel.targetId, "targets Base's greet, not CaseKid's override").toContain('Base.greet');
+    expect(call!.rel.targetId, "targets Base's greet, not CaseKid's override").toContain(
+      'Base.greet',
+    );
   });
 
   it('resolves CASE-VARIED heritage (CaseKid extends BASE implements IFACE) — BL-1 discharge + its implements arm (WI-4 reorder, SDD-004 §2)', () => {
@@ -334,8 +335,14 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
   it('resolves nested-enum constants (Outer.Mood.UP exact + OUTER.MOOD.DOWN case-varied) (REQ-010/§7(5)∘§2)', () => {
     // The valid qualified static-member shape: nested-member lookup ∘ enum-constant arm.
     const accesses = getRelationships(result, 'ACCESSES');
-    expect(accesses.find((e) => e.target === 'UP'), 'exact-case constant').toBeDefined();
-    expect(accesses.find((e) => e.target === 'DOWN'), 'case-varied form').toBeDefined();
+    expect(
+      accesses.find((e) => e.target === 'UP'),
+      'exact-case constant',
+    ).toBeDefined();
+    expect(
+      accesses.find((e) => e.target === 'DOWN'),
+      'case-varied form',
+    ).toBeDefined();
   });
 
   it('resolves TAIL-VARIED qualified nested access (Outer.INNER → new Outer.INNER() + d.ping()) via the folded member segment (REQ-010/§7(5), §8 both kinds)', () => {
@@ -431,9 +438,7 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
 
   // misfiled + non-exported top-level types (§3 inject-all) ──────────────────
   it('injects a misfiled top-level type (class Helper in Utils.cls) — h.assist() resolves (REQ-010/§3)', () => {
-    expect(
-      getRelationships(result, 'CALLS').find((e) => e.target === 'assist'),
-    ).toBeDefined();
+    expect(getRelationships(result, 'CALLS').find((e) => e.target === 'assist')).toBeDefined();
   });
 
   it('does not MIS-BIND a cross-file non-exported-type reference (hd.reveal()) — §8 pins no-throw + no-mis-bind only (§7(7))', () => {
@@ -513,12 +518,30 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     // legitimate plain miss and plain misses emit no record — so a global empty-set
     // assertion is equivalent today, but the scoped set is the SDD-003 §8 obligation).
     const resolvingNames = new Set([
-      'start', 'stop', 'label', 'leaf', 'value', 'greet', 'inherited', 'Base',
-      'Engine', 'assist', 'reveal', 'MAX_SIZE', 'FLOOR', 'RED', 'Iface',
+      'start',
+      'stop',
+      'label',
+      'leaf',
+      'value',
+      'greet',
+      'inherited',
+      'Base',
+      'Engine',
+      'assist',
+      'reveal',
+      'MAX_SIZE',
+      'FLOOR',
+      'RED',
+      'Iface',
       // §8 (SDD.md:1997-2001): the negative also covers nested-qualified and enum-constant
       // resolved refs — the nested Inner ctor + i.ping(), the nested-enum Mood constants
       // (UP/DOWN), the interface method (act), and the case-varied Color constant (BLUE).
-      'Inner', 'ping', 'UP', 'DOWN', 'act', 'BLUE',
+      'Inner',
+      'ping',
+      'UP',
+      'DOWN',
+      'act',
+      'BLUE',
     ]);
     expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
   });
@@ -529,7 +552,9 @@ describe.skipIf(!apexAvailable)('Apex cross-file binding (REQ-010, SDD-003 §8)'
     // resolving its in this describe.
     expect(result).toBeDefined();
     const calls = getRelationships(result, 'CALLS');
-    expect(calls.filter((e) => e.target === 'poke' && e.sourceFilePath.includes('NoTarget'))).toEqual([]);
+    expect(
+      calls.filter((e) => e.target === 'poke' && e.sourceFilePath.includes('NoTarget')),
+    ).toEqual([]);
     expect(calls.filter((e) => e.target === 'Missing')).toEqual([]);
   });
 
@@ -550,10 +575,7 @@ describe.skipIf(!apexAvailable)('Apex cross-file overload resolution (REQ-008 �
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'apex-cross-file-overload'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-cross-file-overload'), () => {});
   }, 120000);
 
   const resolvesExactly = (name: string, mustInclude: string, mustExclude: string) => {
@@ -646,8 +668,14 @@ describe.skipIf(!apexAvailable)('Apex cross-file cyclic chain (REQ-009/§4)', ()
     // the reachable segments still resolve per-segment (REQ-009).
     expect(result).toBeDefined();
     const accesses = getRelationships(result, 'ACCESSES');
-    expect(accesses.find((e) => e.target === 'b'), 'x.b (CycA.b)').toBeDefined();
-    expect(accesses.find((e) => e.target === 'a'), '(x.b).a (CycB.a)').toBeDefined();
+    expect(
+      accesses.find((e) => e.target === 'b'),
+      'x.b (CycA.b)',
+    ).toBeDefined();
+    expect(
+      accesses.find((e) => e.target === 'a'),
+      '(x.b).a (CycB.a)',
+    ).toBeDefined();
   });
 });
 
@@ -656,10 +684,7 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'apex-cross-file-collision'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-cross-file-collision'), () => {});
   }, 120000);
 
   it('resolves the unique-key sibling (s.ok()) — the fixture red anchor (REQ-010)', () => {
@@ -687,7 +712,9 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
       (e) => (e.target === 'Dupe' || e.target === 'DUPE') && e.sourceFilePath.includes('DupCaller'),
     );
     expect(ctors.length, 'exactly the exact-case bind, nothing for the case-varied form').toBe(1);
-    expect(ctors[0]!.targetFilePath, 'exact-case target, not the case-variant').toContain('DupOne.cls');
+    expect(ctors[0]!.targetFilePath, 'exact-case target, not the case-variant').toContain(
+      'DupOne.cls',
+    );
   });
 
   it('pins the v1.5-family heritage and static arms binding the unique exact-case match (Addendum 15)', () => {
@@ -727,9 +754,7 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     // The .trigger-extension discriminant governs the INJECTION channel: `Rogue r` gets no
     // declared-type binding, so r.sneak() misses (invalid-source-only limitation,
     // Architect-accepted). [conservative-negative; see WI-3-red-gate.md]
-    expect(
-      getRelationships(result, 'CALLS').filter((e) => e.target === 'sneak'),
-    ).toEqual([]);
+    expect(getRelationships(result, 'CALLS').filter((e) => e.target === 'sneak')).toEqual([]);
   });
 
   it('binds the misfiled class ctor via the host fallback channel (§4 documented limitation)', () => {
@@ -771,7 +796,8 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     // exception). [conservative pin; see WI-3-red-gate.md]
     expect(
       getRelationships(result, 'CALLS').filter(
-        (e) => (e.target === 'real' || e.target === 'fake') && e.sourceFilePath.includes('FragCaller'),
+        (e) =>
+          (e.target === 'real' || e.target === 'fake') && e.sourceFilePath.includes('FragCaller'),
       ),
     ).toEqual([]);
   });
@@ -1051,9 +1077,7 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
         (e) => e.target === 'good' && e.targetFilePath.endsWith('Poison.cls'),
       ),
     ).toBeDefined();
-    expect(
-      getRelationships(result, 'CALLS').filter((e) => e.target === 'bad'),
-    ).toEqual([]);
+    expect(getRelationships(result, 'CALLS').filter((e) => e.target === 'bad')).toEqual([]);
   });
 
   it('injects a trigger misfiled in a .cls file — a case-varied reference binds it (§4/§A.13 limitation)', () => {
@@ -1112,7 +1136,8 @@ describe.skipIf(!apexAvailable)('Apex cross-file conservatism (REQ-015, SDD-003 
     // the guard-miss shapes. Red until the cross-file receiver binding lands.
     expect(
       getRelationships(result, 'CALLS').filter(
-        (e) => (e.target === 'act' || e.target === 'ACT') && e.sourceFilePath.includes('CaseCollCaller'),
+        (e) =>
+          (e.target === 'act' || e.target === 'ACT') && e.sourceFilePath.includes('CaseCollCaller'),
       ),
       'obligation 1: no binding edge',
     ).toEqual([]);
@@ -1214,7 +1239,9 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
       (e) => e.target === 'BaseHandler' && fromTrigger(e),
     );
     expect(ctors, 'the case-varied trigger ctor resolves via the folded key').toHaveLength(1);
-    expect(ctors[0]!.targetFilePath, 'the class, resolved from the trigger').toContain('BaseHandler.cls');
+    expect(ctors[0]!.targetFilePath, 'the class, resolved from the trigger').toContain(
+      'BaseHandler.cls',
+    );
   });
 
   it('resolves trigger-body nested-qualified access (Kit.Part p; p.snap()) from the trigger (REQ-011 ∘ §7(5)/(13))', () => {
@@ -1324,23 +1351,33 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
   it('leaves trigger-body external references (System.debug, Trigger.new) unresolved, no throw (§2 invariant/NFR-001)', () => {
     // [conservative-negative; see WI-3-red-gate.md] — value is no-throw + no Apex defect.
     expect(result).toBeDefined();
-    expect(
-      getRelationships(result, 'CALLS').filter((e) => e.target === 'debug'),
-    ).toEqual([]);
+    expect(getRelationships(result, 'CALLS').filter((e) => e.target === 'debug')).toEqual([]);
     // Trigger.new: the external context-variable member access emits no edge.
-    expect(
-      getRelationships(result, 'ACCESSES').filter((e) => e.target === 'new'),
-    ).toEqual([]);
+    expect(getRelationships(result, 'ACCESSES').filter((e) => e.target === 'new')).toEqual([]);
   });
 
   it('records no unresolved/suppressed outcome for the resolving trigger references (REQ-006)', () => {
     // `pick` is excluded: its undisambiguable call is a REQ-015 reference the host records.
     const resolvingNames = new Set([
-      'handle', 'process', 'name', 'MAX_SIZE', 'HIGH', 'AccountHandler', 'log', 'notify', 'ilog', 'tag', 'wake',
+      'handle',
+      'process',
+      'name',
+      'MAX_SIZE',
+      'HIGH',
+      'AccountHandler',
+      'log',
+      'notify',
+      'ilog',
+      'tag',
+      'wake',
       // §8 (SDD.md:1997-2001): also the trigger-scope nested-qualified/enum/chain/interface
       // resolved refs — the interface method (ring), nested Kit.Part (snap), chain segment
       // (next), case-varied enum constant (LOW), declared-type member (size).
-      'ring', 'snap', 'next', 'LOW', 'size',
+      'ring',
+      'snap',
+      'next',
+      'LOW',
+      'size',
     ]);
     expect(suppressed(result).filter((o) => resolvingNames.has(o.name))).toEqual([]);
   });
@@ -1353,66 +1390,66 @@ describe.skipIf(!apexAvailable)('Apex trigger-body resolution (REQ-011, SDD-003 
 // ── NFR-002 — cross-language folded-key share: REGRESSION PIN (the former §7(8)
 // reliance is retired — workspaceFqnBindings is a per-language-run instance,
 // Addendum 12; this guards the structurally foreclosed surface, it validates no reliance) ──
-describe.skipIf(!apexAvailable)('Apex cross-language registry partitioning (NFR-002 regression pin)', () => {
-  let result: PipelineResult;
+describe.skipIf(!apexAvailable)(
+  'Apex cross-language registry partitioning (NFR-002 regression pin)',
+  () => {
+    let result: PipelineResult;
 
-  beforeAll(async () => {
-    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-cross-file-mixed'), () => {});
-  }, 120000);
+    beforeAll(async () => {
+      result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-cross-file-mixed'), () => {});
+    }, 120000);
 
-  it('resolves the Apex reference only to the Apex def despite a peer symbol on the same folded key (NFR-002 registry partitioning)', () => {
-    // Motor folds to 'motor'; mod.py declares class motor. The Apex m.rev() must bind
-    // the Apex member (red until the injection lands; a bind into mod.py is a §7(8) FAIL).
-    const rev = getRelationships(result, 'CALLS').find((e) => e.target === 'rev');
-    expect(rev, 'm.rev() resolves').toBeDefined();
-    expect(rev!.targetFilePath, 'targets the Apex def').toContain('Motor.cls');
-  });
+    it('resolves the Apex reference only to the Apex def despite a peer symbol on the same folded key (NFR-002 registry partitioning)', () => {
+      // Motor folds to 'motor'; mod.py declares class motor. The Apex m.rev() must bind
+      // the Apex member (red until the injection lands; a bind into mod.py is a §7(8) FAIL).
+      const rev = getRelationships(result, 'CALLS').find((e) => e.target === 'rev');
+      expect(rev, 'm.rev() resolves').toBeDefined();
+      expect(rev!.targetFilePath, 'targets the Apex def').toContain('Motor.cls');
+    });
 
-  it('partitions the peer-ENTRY direction: C# and Apex each bind only their own def (NFR-002 registry partitioning)', () => {
-    // motor.cs is a GLOBAL-namespace C# type: its hook WRITES workspaceFqnBindings, so a
-    // peer entry genuinely occupies the folded key 'motor'. The C# m.Whir() must bind the
-    // C# member, and no Apex-sourced edge may land on the .cs def (nor C#-sourced on .cls).
-    const whir = getRelationships(result, 'CALLS').find((e) => e.target === 'Whir');
-    expect(whir, 'C# m.Whir() resolves').toBeDefined();
-    expect(whir!.targetFilePath, 'targets the C# def').toContain('motor.cs');
-    expect(
-      getRelationships(result, 'CALLS').filter(
-        (e) => e.sourceFilePath.endsWith('.cls') && e.targetFilePath.endsWith('.cs'),
-      ),
-      'no Apex-sourced edge into the C# def',
-    ).toEqual([]);
-    expect(
-      getRelationships(result, 'CALLS').filter(
-        (e) => e.sourceFilePath.endsWith('.cs') && e.targetFilePath.endsWith('.cls'),
-      ),
-      'no C#-sourced edge into the Apex def',
-    ).toEqual([]);
-  });
+    it('partitions the peer-ENTRY direction: C# and Apex each bind only their own def (NFR-002 registry partitioning)', () => {
+      // motor.cs is a GLOBAL-namespace C# type: its hook WRITES workspaceFqnBindings, so a
+      // peer entry genuinely occupies the folded key 'motor'. The C# m.Whir() must bind the
+      // C# member, and no Apex-sourced edge may land on the .cs def (nor C#-sourced on .cls).
+      const whir = getRelationships(result, 'CALLS').find((e) => e.target === 'Whir');
+      expect(whir, 'C# m.Whir() resolves').toBeDefined();
+      expect(whir!.targetFilePath, 'targets the C# def').toContain('motor.cs');
+      expect(
+        getRelationships(result, 'CALLS').filter(
+          (e) => e.sourceFilePath.endsWith('.cls') && e.targetFilePath.endsWith('.cs'),
+        ),
+        'no Apex-sourced edge into the C# def',
+      ).toEqual([]);
+      expect(
+        getRelationships(result, 'CALLS').filter(
+          (e) => e.sourceFilePath.endsWith('.cs') && e.targetFilePath.endsWith('.cls'),
+        ),
+        'no C#-sourced edge into the Apex def',
+      ).toEqual([]);
+    });
 
-  it('leaves the peer-language resolution unchanged (Python binds only the Python def) (NFR-002)', () => {
-    // The Python use.py -> mod.motor().spin() path must be untouched by Apex keys.
-    // [already-green regression pin; see WI-3-red-gate.md]
-    const spin = getRelationships(result, 'CALLS').find((e) => e.target === 'spin');
-    expect(spin, 'python m.spin() resolves').toBeDefined();
-    expect(spin!.targetFilePath, 'targets the Python def').toContain('mod.py');
-    // and no Python-sourced edge ever lands on the Apex def
-    expect(
-      getRelationships(result, 'CALLS').filter(
-        (e) => e.sourceFilePath.endsWith('.py') && e.targetFilePath.endsWith('.cls'),
-      ),
-    ).toEqual([]);
-  });
-});
+    it('leaves the peer-language resolution unchanged (Python binds only the Python def) (NFR-002)', () => {
+      // The Python use.py -> mod.motor().spin() path must be untouched by Apex keys.
+      // [already-green regression pin; see WI-3-red-gate.md]
+      const spin = getRelationships(result, 'CALLS').find((e) => e.target === 'spin');
+      expect(spin, 'python m.spin() resolves').toBeDefined();
+      expect(spin!.targetFilePath, 'targets the Python def').toContain('mod.py');
+      // and no Python-sourced edge ever lands on the Apex def
+      expect(
+        getRelationships(result, 'CALLS').filter(
+          (e) => e.sourceFilePath.endsWith('.py') && e.targetFilePath.endsWith('.cls'),
+        ),
+      ).toEqual([]);
+    });
+  },
+);
 
 // ── NFR-001 (cross-file slice) — no crash on garbage / partial trees ─────────
 describe.skipIf(!apexAvailable)('Apex cross-file crash-safety (NFR-001 slice)', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'apex-cross-file-malformed'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'apex-cross-file-malformed'), () => {});
   }, 120000);
 
   it('completes the run and resolves the valid cross-file reference despite a garbage sibling', () => {
@@ -1424,9 +1461,7 @@ describe.skipIf(!apexAvailable)('Apex cross-file crash-safety (NFR-001 slice)', 
   it('leaves a reference into the skipped/garbage sibling unresolved, with no dangling edges', () => {
     // Wreck.cls is unparseable garbage -> no def, no injection -> w.crash() misses.
     // [conservative-negative; see WI-3-red-gate.md] — anchored red by s.fine().
-    expect(
-      getRelationships(result, 'CALLS').filter((e) => e.target === 'crash'),
-    ).toEqual([]);
+    expect(getRelationships(result, 'CALLS').filter((e) => e.target === 'crash')).toEqual([]);
     expect(findDanglingEdges(result, RESOLUTION_EDGE_TYPES)).toEqual([]);
   });
 

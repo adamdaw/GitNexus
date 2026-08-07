@@ -586,8 +586,7 @@ export function emitReceiverBoundCalls(
       // fold the member name via the language's normalizeIdentifier (Apex → toLowerCase)
       // so `acc.NAME` keys onto the field registered `name`. Identity for case-sensitive
       // peers. pickOverload/findOwnedMember inherit this folded name.
-      const memberName =
-        provider.languageProvider?.normalizeIdentifier?.(site.name) ?? site.name;
+      const memberName = provider.languageProvider?.normalizeIdentifier?.(site.name) ?? site.name;
       const siteKey = `${parsed.filePath}:${site.atRange.startLine}:${site.atRange.startCol}`;
 
       // ── owned-but-unbound receiver ───────────────────────────────

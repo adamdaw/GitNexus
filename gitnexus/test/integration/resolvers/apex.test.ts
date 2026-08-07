@@ -144,7 +144,10 @@ describe.skipIf(!apexAvailable)('Apex type container nodes (REQ-002)', () => {
     // qualified id (Outer.Inner), built by the distinct buildQualifiedName name-path.
     const defines = getRelationships(result, 'DEFINES');
     for (const nested of ['InnerBox', 'Drawable', 'Palette']) {
-      expect(defines.find((e) => e.target === nested && e.sourceLabel === 'File'), nested).toBeDefined();
+      expect(
+        defines.find((e) => e.target === nested && e.sourceLabel === 'File'),
+        nested,
+      ).toBeDefined();
     }
   });
 });
@@ -225,9 +228,9 @@ describe.skipIf(!apexAvailable)('Apex overloads and duplicates (REQ-003)', () =>
   });
 
   it('emits two distinct Constructor nodes for a constructor overload', () => {
-    expect(getNodesByLabelFull(result, 'Constructor').filter((c) => c.name === 'Overloads').length).toBe(
-      2,
-    );
+    expect(
+      getNodesByLabelFull(result, 'Constructor').filter((c) => c.name === 'Overloads').length,
+    ).toBe(2);
   });
 
   it('collapses an identical-signature duplicate to a single node (host default, REQ-003/§4)', () => {
@@ -394,9 +397,7 @@ describe.skipIf(!apexAvailable)('Apex trigger container node (REQ-004)', () => {
     const defines = getRelationships(result, 'DEFINES');
     const triggerDefine = defines.find(
       (e) =>
-        e.target === 'Foo' &&
-        e.sourceLabel === 'File' &&
-        e.targetFilePath.endsWith('.trigger'),
+        e.target === 'Foo' && e.sourceLabel === 'File' && e.targetFilePath.endsWith('.trigger'),
     );
     expect(triggerDefine).toBeDefined();
   });
@@ -429,8 +430,9 @@ describe.skipIf(!apexAvailable)('Apex annotation metadata (REQ-014)', () => {
   }, 60000);
 
   const annotationsOf = (label: string, name: string): string[] =>
-    (getNodesByLabelFull(result, label).find((n) => n.name === name)?.properties
-      .annotations as string[] | undefined) ?? [];
+    (getNodesByLabelFull(result, label).find((n) => n.name === name)?.properties.annotations as
+      | string[]
+      | undefined) ?? [];
 
   it('captures a field annotation, normalised to @Name', () => {
     expect(annotationsOf('Property', 'secret')).toContain('@TestVisible');
@@ -530,7 +532,10 @@ describe.skipIf(!apexAvailable)('Apex per-file resource budget (NFR-003)', () =>
   beforeAll(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'apex-oversized-'));
     // One valid small file (must survive) + one over the host buffer (must skip).
-    fs.writeFileSync(path.join(tmpDir, 'Small.cls'), 'public class Small { public void ok() {} }\n');
+    fs.writeFileSync(
+      path.join(tmpDir, 'Small.cls'),
+      'public class Small { public void ok() {} }\n',
+    );
     const filler = '// padding to exceed TREE_SITTER_MAX_BUFFER\n'.repeat(
       Math.ceil(TREE_SITTER_MAX_BUFFER / 40) + 1000,
     );

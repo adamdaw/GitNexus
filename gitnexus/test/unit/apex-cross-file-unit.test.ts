@@ -34,12 +34,13 @@ const loadPopulate = async (): Promise<PopulateFn> => {
 };
 
 /** Minimal SymbolDefinition-shaped def (the §3 discriminant fields). */
-const def = (
-  nodeId: string,
-  type: string,
-  name: string,
-  filePath: string,
-) => ({ nodeId, filePath, type, qualifiedName: name, name });
+const def = (nodeId: string, type: string, name: string, filePath: string) => ({
+  nodeId,
+  filePath,
+  type,
+  qualifiedName: name,
+  name,
+});
 
 /** Minimal ParsedFile on the §3 owning-scope shape (Java package-siblings iteration):
  *  a Module scope + one class-kind scope per type entry, `parent` = the Module scope
@@ -177,9 +178,7 @@ describe('Apex namespace-siblings injection (SDD-003 §3, pure def-selection + k
 
   it('dedups a def seen twice by nodeId — still exactly one binding (§3 dedup-by-nodeId)', async () => {
     const d = def('n10', 'Class', 'Solo', '/repo/Solo.cls');
-    const ws = await run([
-      parsedFile('/repo/Solo.cls', [{ d }, { d }]),
-    ]);
+    const ws = await run([parsedFile('/repo/Solo.cls', [{ d }, { d }])]);
     const bucket = ws.get('solo') as unknown[] | undefined;
     expect(bucket).toBeDefined();
     expect(bucket!.length, 'same nodeId is one def, not a collision').toBe(1);

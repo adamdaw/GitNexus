@@ -15,7 +15,11 @@
  */
 
 import { type SyntaxNode } from '../../utils/ast-helpers.js';
-import type { LanguageTypeConfig, TypeBindingExtractor, ParameterExtractor } from '../../type-extractors/types.js';
+import type {
+  LanguageTypeConfig,
+  TypeBindingExtractor,
+  ParameterExtractor,
+} from '../../type-extractors/types.js';
 import { extractSimpleTypeName, extractVarName } from '../../type-extractors/shared.js';
 
 /** Apex type names are case-insensitive — fold to the canonical lookup key. */
