@@ -64,6 +64,10 @@ jobs:
           sparse-checkout: .github/scripts/triage
           sparse-checkout-cone-mode: false
           fetch-depth: 1
+          # Nothing downstream talks to git — the sweep authenticates with an
+          # explicit GITHUB_TOKEN. Leaving the credential in .git/config only
+          # exposes it to being packed into an artifact (zizmor artipacked).
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

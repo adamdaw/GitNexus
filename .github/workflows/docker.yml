@@ -104,6 +104,9 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.tag || github.ref }}
+          # The build only reads the tree; registry auth is its own login step.
+          # Keeps the checkout credential out of .git/config (zizmor artipacked).
+          persist-credentials: false
 
       # ── Lock the docker image version to the npm package version ──────────
       # Mirrors the check in publish.yml: refuse to build unless the git tag

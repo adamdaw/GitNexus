@@ -129,6 +129,10 @@ jobs:
         with:
           sparse-checkout: gitnexus/vitest.config.ts
           sparse-checkout-cone-mode: false
+          # Only the config file is read; base-branch coverage comes from the
+          # REST API via github-script, not git. Keeps the credential out of
+          # .git/config (zizmor artipacked).
+          persist-credentials: false
 
       # ── Fetch base branch coverage for delta reporting ───────────
       - name: Fetch base branch coverage
