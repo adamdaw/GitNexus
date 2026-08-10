@@ -82,10 +82,10 @@ Group-mode `trace` (`gitnexus/src/core/group/cross-trace.ts`) stitches a path th
 
 ## Pipeline Phase DAG
 
-19 default phases are defined in `gitnexus/src/core/ingestion/pipeline-phases/`, each with explicit `deps` and typed output. `--pdg` adds `taintSummaries` and `callSummaries` (21 total).
+20 default phases are defined in `gitnexus/src/core/ingestion/pipeline-phases/`, each with explicit `deps` and typed output. `--pdg` adds `taintSummaries` and `callSummaries` (22 total).
 
 ```
-scan → structure → [springConfig, markdown, cobol] → parse → [routes, tools, orm]
+scan → structure → [springConfig, markdown, cobol] → parse → [salesforceMetadata, routes, tools, orm]
   → crossFile → scopeResolution → [springAutoConfiguration, springAop]
   → pruneLocalSymbols → mro → springAopInheritance → di → communities → processes
 ```
@@ -98,6 +98,7 @@ scan → structure → [springConfig, markdown, cobol] → parse → [routes, to
 | `markdown`                | `markdown.ts`                          | `structure`                                                        | Section nodes, cross-link edges from .md/.mdx                                                                                                                                               |
 | `cobol`                   | `cobol.ts`                             | `structure`                                                        | COBOL program/paragraph/section nodes (regex, no tree-sitter)                                                                                                                               |
 | `parse`                   | `parse.ts` + `parse-impl.ts`           | `structure`, `markdown`, `cobol`                                   | Symbol nodes, IMPORTS/CALLS/EXTENDS edges, extracted routes/tools/ORM queries                                                                                                               |
+| `salesforceMetadata`      | `salesforce-metadata.ts`               | `structure`, `parse`                                               | Record nodes for Salesforce objects/fields/validation rules/flows from `-meta.xml`, plus CONTAINS/USES/CALLS edges (regex, no tree-sitter)                                                   |
 | `routes`                  | `routes.ts`                            | `parse`                                                            | Route nodes + HANDLES_ROUTE edges (Next.js, Expo, PHP, decorators)                                                                                                                          |
 | `tools`                   | `tools.ts`                             | `parse`                                                            | Tool nodes + HANDLES_TOOL edges                                                                                                                                                             |
 | `orm`                     | `orm.ts`                               | `parse`                                                            | QUERIES edges (Prisma, Supabase)                                                                                                                                                            |

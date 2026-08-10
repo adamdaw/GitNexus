@@ -27,6 +27,7 @@ import {
   markdownPhase,
   cobolPhase,
   parsePhase,
+  salesforceMetadataPhase,
   routesPhase,
   toolsPhase,
   ormPhase,
@@ -271,7 +272,8 @@ export interface PipelineOptions {
  *
  * Phase dependency graph:
  *
- *   scan → structure → [springConfig, markdown, cobol] → parse → [routes, tools, orm]
+ *   scan → structure → [springConfig, markdown, cobol] → parse
+ *     → [salesforceMetadata, routes, tools, orm]
  *     → crossFile → scopeResolution → [springAutoConfiguration, springAop] → pruneLocalSymbols
  *     → mro → springAopInheritance → di → communities → processes
  *
@@ -294,6 +296,9 @@ export function buildPhaseList(options?: PipelineOptions): PipelinePhase[] {
       .register(markdownPhase)
       .register(cobolPhase)
       .register(parsePhase)
+      // After `parse`: the flow→Apex edge resolves against Class nodes, which
+      // do not exist until the Apex files are parsed.
+      .register(salesforceMetadataPhase)
       .register(routesPhase)
       .register(toolsPhase)
       .register(ormPhase)
