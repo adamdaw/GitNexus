@@ -11,7 +11,13 @@ import assert from 'node:assert/strict';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const serverScript = join(__dirname, 'docker-server.mjs');
 
-function getFreePort() {
+// A port is handed to a child process to bind, so it cannot stay held here — the
+// probe socket has to close first. The OS is then free to hand the same ephemeral
+// port to the very next probe, which is how two servers in this file ended up
+// racing for 127.0.0.1:42071. Remembering what we've issued closes that window.
+const issuedPorts = new Set();
+
+function probeFreePort() {
   return new Promise((resolve) => {
     const s = createServer();
     s.listen(0, '127.0.0.1', () => {
@@ -19,6 +25,17 @@ function getFreePort() {
       s.close(() => resolve(port));
     });
   });
+}
+
+async function getFreePort() {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const port = await probeFreePort();
+    if (!issuedPorts.has(port)) {
+      issuedPorts.add(port);
+      return port;
+    }
+  }
+  throw new Error('could not find an unissued ephemeral port after 50 attempts');
 }
 
 function rawGet(port, path) {
