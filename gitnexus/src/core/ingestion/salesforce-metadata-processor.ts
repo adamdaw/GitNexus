@@ -4,7 +4,13 @@
  * Salesforce ships most of its behaviour as declarative XML, not code: objects,
  * fields, validation rules and flows. Those files were already scanned — every
  * `-meta.xml` gets a `File` node — but nothing looked inside them, so a field
- * rename had no blast radius and `impact` on `Foo__c` returned nothing.
+ * rename had no blast radius at all.
+ *
+ * Fields and validation rules are named `Object.Field__c`, because a bare
+ * `<fullName>` collides across objects. Symbol resolution is an exact match on
+ * `name` (`local-backend.ts`), so `impact` answers on the qualified form;
+ * the bare `Foo__c` a formula or an Apex expression would use does NOT resolve
+ * to a field. Objects and flows are named bare and resolve directly.
  *
  * Regex, not tree-sitter, and no XML parser: the shapes read here are flat
  * single-line elements, and `markdown-processor.ts` set the precedent that a
@@ -62,6 +68,26 @@ function declaringLine(content: string): number {
 const ACTION_CALL_RE = /<actionCalls>([\s\S]*?)<\/actionCalls>/g;
 const ACTION_NAME_RE = /<actionName>([^<]+)<\/actionName>/;
 const ACTION_TYPE_RE = /<actionType>([^<]+)<\/actionType>/;
+
+/** `<subflows>` names its target in `<flowName>`, not in `<name>` (that is the element's own id). */
+const SUBFLOW_RE = /<subflows>([\s\S]*?)<\/subflows>/g;
+const FLOW_NAME_RE = /<flowName>([^<]+)<\/flowName>/;
+
+/** The legacy Apex-plugin invocation, separate from `actionCalls`. */
+const APEX_PLUGIN_RE = /<apexPluginCalls>([\s\S]*?)<\/apexPluginCalls>/g;
+const APEX_CLASS_RE = /<apexClass>([^<]+)<\/apexClass>/;
+
+/**
+ * A flow's DML elements. The backreference keeps each block matched to its own
+ * closing tag, so a flow mixing lookups and updates cannot bleed one block's
+ * fields into another's object.
+ */
+const RECORD_OP_RE = /<(recordLookups|recordUpdates|recordCreates|recordDeletes)>([\s\S]*?)<\/\1>/g;
+const OBJECT_EL_RE = /<object>([^<]+)<\/object>/;
+const FIELD_EL_RE = /<field>([^<]+)<\/field>/g;
+
+/** A formula field's own expression, which reads other fields on the same object. */
+const FIELD_FORMULA_RE = /<formula>([\s\S]*?)<\/formula>/g;
 
 const FORMULA_RE =
   /<(?:errorConditionFormula|errorDisplayField)>([\s\S]*?)<\/(?:errorConditionFormula|errorDisplayField)>/g;
@@ -296,12 +322,27 @@ export const processSalesforceMetadata = (
 
   let apexIndex: Map<string, string> | undefined;
 
+  /** Bare field name qualified by the object it is being read on. */
+  const fieldId = (object: string | undefined, field: string): string | undefined =>
+    object ? resolved(byName, `field:${`${object}.${field}`.toLowerCase()}`) : undefined;
+
   // ── Edges ────────────────────────────────────────────────────────
   for (const { entity, id: sourceId } of created) {
     if (entity.kind === 'field') {
       // Object CONTAINS field, matching the direction Class CONTAINS Method
       // rather than pointing the member back at its container.
       link(objectId(entity.object), sourceId, 'CONTAINS', 'salesforce-field-of-object', 1.0);
+      // A formula field reads other fields on its own object, which is what
+      // gives a rename its field-to-field blast radius.
+      for (const name of customNamesIn(entity.content, FIELD_FORMULA_RE)) {
+        link(
+          sourceId,
+          fieldId(entity.object, name),
+          'USES',
+          'salesforce-formula-references-field',
+          0.9,
+        );
+      }
       continue;
     }
 
@@ -310,10 +351,10 @@ export const processSalesforceMetadata = (
       // Formulas name fields bare (`VDM_Id__c`), so qualify with the object the
       // rule already lives under. A standard field (`FirstName`) has no
       // `-meta.xml`, hence no node, and simply finds nothing here.
-      for (const name of customNamesIn(entity.content)) {
+      for (const name of customNamesIn(entity.content, FORMULA_RE)) {
         link(
           sourceId,
-          resolved(byName, `field:${`${entity.object}.${name}`.toLowerCase()}`),
+          fieldId(entity.object, name),
           'USES',
           'salesforce-rule-references-field',
           0.9,
@@ -324,14 +365,33 @@ export const processSalesforceMetadata = (
 
     if (entity.kind === 'flow') {
       apexIndex ??= buildApexClassIndex(graph);
-      for (const actionName of apexActionNames(entity.content)) {
+      const invokes = [...apexActionNames(entity.content), ...apexPluginClasses(entity.content)];
+      for (const className of invokes) {
         link(
           sourceId,
-          resolved(apexIndex, actionName.toLowerCase()),
+          resolved(apexIndex, className.toLowerCase()),
           'CALLS',
           'salesforce-flow-invokes-apex',
           0.9,
         );
+      }
+
+      for (const target of subflowNames(entity.content)) {
+        link(
+          sourceId,
+          resolved(byName, `flow:${target.toLowerCase()}`),
+          'CALLS',
+          'salesforce-flow-invokes-subflow',
+          0.9,
+        );
+      }
+
+      // A flow's DML is where an object or field rename actually bites.
+      for (const op of recordOperations(entity.content)) {
+        link(sourceId, objectId(op.object), 'USES', 'salesforce-flow-uses-object', 0.9);
+        for (const field of op.fields) {
+          link(sourceId, fieldId(op.object, field), 'USES', 'salesforce-flow-uses-field', 0.9);
+        }
       }
     }
   }
@@ -339,17 +399,63 @@ export const processSalesforceMetadata = (
   return result;
 };
 
-/** Distinct `__c`/`__r` API names appearing anywhere in a rule's formulas. */
-function customNamesIn(content: string): string[] {
+/** Distinct custom field API names appearing inside the elements `blockRe` matches. */
+function customNamesIn(content: string, blockRe: RegExp): string[] {
   const names = new Set<string>();
-  FORMULA_RE.lastIndex = 0;
+  blockRe.lastIndex = 0;
   let block: RegExpExecArray | null;
-  while ((block = FORMULA_RE.exec(content)) !== null) {
+  while ((block = blockRe.exec(content)) !== null) {
     CUSTOM_NAME_RE.lastIndex = 0;
     let name: RegExpExecArray | null;
     while ((name = CUSTOM_NAME_RE.exec(block[1])) !== null) names.add(name[2]);
   }
   return [...names];
+}
+
+/** `<flowName>` targets of every `<subflows>` block. */
+function subflowNames(content: string): string[] {
+  return blockValues(content, SUBFLOW_RE, FLOW_NAME_RE);
+}
+
+/** `<apexClass>` targets of every `<apexPluginCalls>` block. */
+function apexPluginClasses(content: string): string[] {
+  return blockValues(content, APEX_PLUGIN_RE, APEX_CLASS_RE);
+}
+
+function blockValues(content: string, blockRe: RegExp, valueRe: RegExp): string[] {
+  const values = new Set<string>();
+  blockRe.lastIndex = 0;
+  let block: RegExpExecArray | null;
+  while ((block = blockRe.exec(content)) !== null) {
+    const value = valueRe.exec(block[1])?.[1];
+    if (value) values.add(value);
+  }
+  return [...values];
+}
+
+/**
+ * Objects and fields touched by a flow's DML elements.
+ *
+ * Fields are only reported when the block declares an `<object>`. A
+ * `recordUpdates` driven by `<inputReference>` names its fields bare with no
+ * object anywhere in the block, and guessing one would bind to whatever
+ * same-named field happened to exist.
+ */
+function recordOperations(content: string): { object: string; fields: string[] }[] {
+  const ops: { object: string; fields: string[] }[] = [];
+  RECORD_OP_RE.lastIndex = 0;
+  let block: RegExpExecArray | null;
+  while ((block = RECORD_OP_RE.exec(content)) !== null) {
+    const body = block[2];
+    const object = OBJECT_EL_RE.exec(body)?.[1];
+    if (!object) continue;
+    const fields = new Set<string>();
+    FIELD_EL_RE.lastIndex = 0;
+    let field: RegExpExecArray | null;
+    while ((field = FIELD_EL_RE.exec(body)) !== null) fields.add(field[1]);
+    ops.push({ object, fields: [...fields] });
+  }
+  return ops;
 }
 
 /**

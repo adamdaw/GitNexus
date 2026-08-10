@@ -400,6 +400,122 @@ describe('processSalesforceMetadata', () => {
     expect(withComment.split('\n')[node.properties.startLine as number]).toContain('<fullName>');
   });
 
+  it('links a flow to the subflow it invokes', () => {
+    const graph = createKnowledgeGraph();
+    const TARGET = 'pkgs/vacatia/main/default/flows/Process_Receivable.flow-meta.xml';
+    const callerXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <subflows>
+        <name>Create_Payment_Allocation</name>
+        <flowName>Process_Receivable</flowName>
+    </subflows>
+</Flow>`;
+    withFiles(graph, [FLOW, TARGET]);
+    processSalesforceMetadata(graph, [
+      { path: FLOW, content: callerXml },
+      { path: TARGET, content: '<Flow/>' },
+    ]);
+
+    const calls = edgesFrom(graph, recordId(graph, 'Update_Case_Records')).filter(
+      (r) => r.type === 'CALLS',
+    );
+    expect(calls.map((r) => graph.getNode(r.targetId)?.properties.name)).toEqual([
+      'Process_Receivable',
+    ]);
+  });
+
+  it('links a flow to an Apex plugin class', () => {
+    const graph = createKnowledgeGraph();
+    const pluginXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apexPluginCalls>
+        <name>Legacy</name>
+        <apexClass>FlowLogEntry</apexClass>
+    </apexPluginCalls>
+</Flow>`;
+    withFiles(graph, [FLOW]);
+    const classId = addApexClass(graph, 'FlowLogEntry', 'pkgs/x/classes/FlowLogEntry.cls');
+    processSalesforceMetadata(graph, [{ path: FLOW, content: pluginXml }]);
+
+    const calls = edgesFrom(graph, recordId(graph, 'Update_Case_Records')).filter(
+      (r) => r.type === 'CALLS',
+    );
+    expect(calls.map((r) => r.targetId)).toEqual([classId]);
+  });
+
+  it('links a flow to the object and fields its record operations touch', () => {
+    const graph = createKnowledgeGraph();
+    const STATUS = 'pkgs/vacatia/main/default/objects/Contact/fields/Status__c.field-meta.xml';
+    const dmlXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <recordLookups>
+        <name>Get_Contact</name>
+        <filters>
+            <field>Status__c</field>
+        </filters>
+        <object>Contact</object>
+    </recordLookups>
+</Flow>`;
+    withFiles(graph, [OBJ, STATUS, FLOW]);
+    processSalesforceMetadata(graph, [
+      { path: OBJ, content: objectXml },
+      { path: STATUS, content: fieldXml },
+      { path: FLOW, content: dmlXml },
+    ]);
+
+    // The block declares its own <object>, so unlike a validation-rule formula
+    // the bare field name here is qualified by real metadata, not a guess.
+    const uses = edgesFrom(graph, recordId(graph, 'Update_Case_Records'))
+      .filter((r) => r.type === 'USES')
+      .map((r) => graph.getNode(r.targetId)?.properties.name)
+      .sort();
+    expect(uses).toEqual(['Contact', 'Contact.Status__c']);
+  });
+
+  it('does not bind record-operation fields when the block declares no object', () => {
+    const graph = createKnowledgeGraph();
+    const STATUS = 'pkgs/vacatia/main/default/objects/Contact/fields/Status__c.field-meta.xml';
+    const noObjectXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <recordUpdates>
+        <name>Update_It</name>
+        <inputReference>someVar</inputReference>
+        <inputAssignments>
+            <field>Status__c</field>
+        </inputAssignments>
+    </recordUpdates>
+</Flow>`;
+    withFiles(graph, [OBJ, STATUS, FLOW]);
+    processSalesforceMetadata(graph, [
+      { path: OBJ, content: objectXml },
+      { path: STATUS, content: fieldXml },
+      { path: FLOW, content: noObjectXml },
+    ]);
+
+    expect([...graph.iterRelationships()].filter((r) => r.type === 'USES')).toEqual([]);
+  });
+
+  it('links a formula field to the fields its formula reads', () => {
+    const graph = createKnowledgeGraph();
+    const FORMULA = 'pkgs/vacatia/main/default/objects/Contact/fields/Age__c.field-meta.xml';
+    const formulaXml = `<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Age__c</fullName>
+    <formula>TODAY() &gt; VDM_Id__c</formula>
+</CustomField>`;
+    withFiles(graph, [OBJ, FIELD, FORMULA]);
+    processSalesforceMetadata(graph, [
+      { path: OBJ, content: objectXml },
+      { path: FIELD, content: fieldXml },
+      { path: FORMULA, content: formulaXml },
+    ]);
+
+    const uses = edgesFrom(graph, recordId(graph, 'Contact.Age__c'))
+      .filter((r) => r.type === 'USES')
+      .map((r) => graph.getNode(r.targetId)?.properties.name);
+    expect(uses).toEqual(['Contact.VDM_Id__c']);
+  });
+
   it('ignores files that are not Salesforce metadata', () => {
     const graph = createKnowledgeGraph();
     withFiles(graph, ['src/index.ts', 'pom.xml']);
