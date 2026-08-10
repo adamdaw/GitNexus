@@ -272,7 +272,8 @@ export interface PipelineOptions {
  *
  * Phase dependency graph:
  *
- *   scan → structure → [springConfig, markdown, cobol] → parse → [routes, tools, orm]
+ *   scan → structure → [springConfig, markdown, cobol] → parse
+ *     → [salesforceMetadata, routes, tools, orm]
  *     → crossFile → scopeResolution → [springAutoConfiguration, springAop] → pruneLocalSymbols
  *     → mro → springAopInheritance → di → communities → processes
  *

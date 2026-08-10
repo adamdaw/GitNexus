@@ -27,13 +27,18 @@ import { logger } from '../../logger.js';
 
 export type SalesforceMetadataOutput = SalesforceMetadataResult;
 
-const EMPTY: SalesforceMetadataOutput = {
+/**
+ * A fresh object per call, matching `markdown.ts`. A shared module-level
+ * constant handed out by reference lets one caller's mutation corrupt every
+ * later run of the phase.
+ */
+const empty = (): SalesforceMetadataOutput => ({
   objects: 0,
   fields: 0,
   validationRules: 0,
   flows: 0,
   edges: 0,
-};
+});
 
 /**
  * `-meta.xml` is the suffix every Salesforce source-format metadata file
@@ -54,7 +59,7 @@ export const salesforceMetadataPhase: PipelinePhase<SalesforceMetadataOutput> = 
     const { scannedFiles } = getPhaseOutput<StructureOutput>(deps, 'structure');
 
     const metaScanned = scannedFiles.filter((f) => isSalesforceMetadata(f.path));
-    if (metaScanned.length === 0) return EMPTY;
+    if (metaScanned.length === 0) return empty();
 
     const contents = await readFileContents(
       ctx.repoPath,
