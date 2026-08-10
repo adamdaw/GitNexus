@@ -94,7 +94,7 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
   const arrMatch = matcherArrayRe.exec(content);
   if (arrMatch) {
     const items = arrMatch[1];
-    const strRe = /(['"`])((?:[^'"`\\\\]|\\\\.)*)\1/g;
+    const strRe = /(['"`])((?:[^'"`\\]|\\.)*)\1/g;
     let m;
     while ((m = strRe.exec(items)) !== null) {
       matchers.push(m[2]);

@@ -6,8 +6,8 @@
  * replaced, produce a smaller KnowledgeGraph that contains:
  *
  *   - Every node whose `properties.filePath` is in `toWriteSet`.
- *   - Every graph-wide node (Community, Process) — these are regenerated
- *     each run by the communities/processes phases and must be fully
+ *   - Every graph-wide node (Community, Process, and Spring metadata
+ *     placeholders) — these are regenerated each run and must be fully
  *     rewritten.
  *   - Every relationship where AT LEAST ONE endpoint is in the writable
  *     set above. Relationships entirely between unchanged-file nodes
@@ -22,7 +22,7 @@
  *
  * `extractChangedSubgraph` intentionally does NOT expand the set it is
  * given — expansion is the orchestrator's job, so the SAME expanded set
- * can be fed to both `deleteNodesForFile` and this function (asymmetry
+ * can be fed to both `deleteNodesForFiles` and this function (asymmetry
  * between the delete set and the write set silently corrupts the DB).
  * `computeEffectiveWriteSet` below performs the boundary-crossing 1-hop
  * walk; the orchestrator composes it with its importer-BFS expansion and
@@ -51,8 +51,17 @@
 import type { GraphNode, GraphRelationship } from 'gitnexus-shared';
 import { createKnowledgeGraph } from '../graph/graph.js';
 import type { KnowledgeGraph } from '../graph/types.js';
+import {
+  isSpringAutoConfigurationDeclaration,
+  isSpringAutoConfigurationSyntheticClass,
+} from '../ingestion/frameworks/spring/auto-configuration.js';
+import { isSpringAopEvidenceNode } from '../ingestion/frameworks/spring/aop.js';
 
-const isGraphWide = (label: string): boolean => label === 'Community' || label === 'Process';
+const isGraphWideNode = (node: GraphNode): boolean =>
+  node.label === 'Community' ||
+  node.label === 'Process' ||
+  isSpringAopEvidenceNode(node) ||
+  isSpringAutoConfigurationSyntheticClass(node);
 
 /**
  * Relationship types whose VALIDITY is a whole-program property, not a
@@ -68,8 +77,34 @@ const isGraphWide = (label: string): boolean => label === 'Community' || label =
 // re-included from the FULL fresh graph (which the emit phase recomputes every
 // run) or an unchanged function's summary would be lost. Cheap: one self-loop
 // edge per return-flowing function.
-const isGraphWideRelType = (type: string): boolean =>
-  type === 'TAINT_PATH' || type === 'CALL_SUMMARY';
+//
+// `INJECTS` (DI collection injection, #2200) is the same class as TAINT_PATH
+// (the #2084 M4 U6 pattern above): its validity is a whole-program property —
+// a change to a THIRD file (the interface itself, or a new/removed
+// implementer) creates or invalidates edges between two files that were never
+// touched, so the endpoint-writability rule would strand a stale
+// consumer→implementer edge (or miss a new one). Always re-extracted from the
+// fresh graph; the orchestrator unconditionally delete-alls the old rows
+// first (`deleteAllInjects`). Crash-recovery: delete-then-COPY is not atomic
+// by design — a crash between them loses INJECTS edges until the next
+// analyze, and the `incrementalInProgress` dirty flag (saved before any
+// delete) forces a full rebuild on the next run. Temporary absence is
+// possible; duplicates are not.
+//
+// Spring auto-configuration DECLARES edges (#2415) are also recomputed from
+// repository-wide metadata. A third-file class addition/removal can retarget
+// an unchanged declaration, so they need the same global re-extract contract.
+// DECLARES itself is generic, however: only the two Spring-owned reasons are
+// graph-wide, leaving future metadata systems under their own lifecycle.
+const isGraphWideRelationship = (relationship: GraphRelationship): boolean =>
+  relationship.type === 'TAINT_PATH' ||
+  relationship.type === 'CALL_SUMMARY' ||
+  relationship.type === 'INJECTS' ||
+  // Spring pointcut matching (#2416) is repository-wide. A third-file change
+  // can alter annotation-name visibility or the set matched by a wildcard,
+  // even when neither endpoint file changed.
+  relationship.type === 'ADVISED_BY' ||
+  isSpringAutoConfigurationDeclaration(relationship);
 
 /**
  * Build a Map<nodeId, filePath> for every File-bound node in the graph.
@@ -93,7 +128,7 @@ export const extractChangedSubgraph = (
 
   fullGraph.forEachNode((n: GraphNode) => {
     const filePath = n.properties?.filePath as string | undefined;
-    const include = (filePath && toWriteSet.has(filePath)) || isGraphWide(n.label);
+    const include = (filePath && toWriteSet.has(filePath)) || isGraphWideNode(n);
     if (include) {
       sub.addNode(n);
       writableNodeIds.add(n.id);
@@ -104,7 +139,7 @@ export const extractChangedSubgraph = (
     if (
       writableNodeIds.has(r.sourceId) ||
       writableNodeIds.has(r.targetId) ||
-      isGraphWideRelType(r.type)
+      isGraphWideRelationship(r)
     ) {
       sub.addRelationship(r);
     }
@@ -115,13 +150,16 @@ export const extractChangedSubgraph = (
 
 /**
  * Public — derive the EFFECTIVE write-set: `toWriteSet` expanded by one
- * hop along every edge in the new graph that crosses the writable
- * boundary (one endpoint in a writable file, the other in an unchanged
- * file). The unchanged-side file is pulled in so its stale rows are
- * deleted + rewritten in lockstep with the changed side.
+ * hop along every file-owned edge in the new graph that crosses the
+ * writable boundary (one endpoint in a writable file, the other in an
+ * unchanged file). Graph-wide relationships are excluded: their owner
+ * phase delete-alls and re-extracts them independently, so following them
+ * here would turn high-fan-out metadata into a near-full-repository write.
+ * For ordinary edges, the unchanged-side file is pulled in so its stale
+ * rows are deleted + rewritten in lockstep with the changed side.
  *
  * Single pass over the edge list. Does NOT mutate `toWriteSet`. The
- * orchestrator MUST feed the returned set to both `deleteNodesForFile`
+ * orchestrator MUST feed the returned set to both `deleteNodesForFiles`
  * and `extractChangedSubgraph` — feeding the unexpanded set to either
  * one leaves stale rows or PK-conflicts at COPY time.
  */
@@ -132,6 +170,7 @@ export const computeEffectiveWriteSet = (
   const nodeFilePaths = indexNodeFilePaths(fullGraph);
   const expanded = new Set<string>(toWriteSet);
   fullGraph.forEachRelationship((r: GraphRelationship) => {
+    if (isGraphWideRelationship(r)) return;
     const sourcePath = nodeFilePaths.get(r.sourceId);
     const targetPath = nodeFilePaths.get(r.targetId);
     if (!sourcePath || !targetPath) return; // skip edges to graph-wide nodes

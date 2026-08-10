@@ -6,6 +6,7 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { checkStaleness } from '../git-staleness.js';
+import { loadMeta, type RepoMeta } from '../../storage/repo-manager.js';
 import { GroupNotFoundError, loadGroupConfig } from './config-parser.js';
 import {
   fileMatchesServicePrefix,
@@ -13,7 +14,10 @@ import {
   repoInSubgroup,
 } from './group-path-utils.js';
 import { getDefaultGitnexusDir, getGroupDir, listGroups, readContractRegistry } from './storage.js';
-import { syncGroup } from './sync.js';
+// `./sync.js` is imported LAZILY in `groupSync` — see the comment at its call
+// site. It statically pulls the six contract extractors and, through them, the
+// native tree-sitter binding; a static import here puts all of that on MCP
+// server startup, which never syncs.
 import { logger } from '../logger.js';
 import type {
   ContractRegistry,
@@ -337,6 +341,12 @@ export class GroupService {
         return { error: `Group "${name}" not found. Run group_list to see configured groups.` };
       throw err;
     }
+    // Lazy: `sync.js` reaches the six contract extractors and the native
+    // tree-sitter binding. `groupSync` is the ONLY consumer — the other seven
+    // group tools never need it — so deferring it here keeps that closure off
+    // MCP server startup entirely and off every non-sync group call. The CLI
+    // already does exactly this at `cli/group.ts`'s sync command.
+    const { syncGroup } = await import('./sync.js');
     const result = await syncGroup(config, {
       groupDir,
       exactOnly: Boolean(params.exactOnly),
@@ -576,9 +586,8 @@ export class GroupService {
     for (const [repoPath, registryName] of Object.entries(config.repos)) {
       try {
         const repoObj = await this.port.resolveRepo(registryName);
-        const metaPath = path.join(repoObj.storagePath, 'meta.json');
-        const metaRaw = await fsp.readFile(metaPath, 'utf-8').catch(() => '{}');
-        const meta = JSON.parse(metaRaw) as { lastCommit?: string; indexedAt?: string };
+        const meta: Partial<Pick<RepoMeta, 'lastCommit' | 'indexedAt'>> =
+          (await loadMeta(repoObj.storagePath)) ?? {};
 
         const staleness = meta.lastCommit
           ? checkStaleness(repoObj.repoPath, meta.lastCommit)

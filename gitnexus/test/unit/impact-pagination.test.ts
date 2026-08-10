@@ -82,6 +82,18 @@ function setupMultiDepthHub(d1Count: number, d2Count: number) {
   executeQueryMock.mockImplementation(async () => []);
 }
 
+// `impacted` is ordered by node id, and ids are STRINGS — so `caller-107` sorts
+// before `caller-11`, not after. That was always production's order (the frontier
+// query used to carry `ORDER BY id`), but the mock returns rows unsorted and the
+// old code trusted the DB, so these expectations used to encode the mock's numeric
+// insertion order — an order the real engine never produced. #2787 moved the sort
+// into JS, which is what finally makes the mocked path agree with production.
+/** The nth caller in id (code-unit) order, matching what `_impactImpl` returns. */
+function callerAtIndex(total: number, index: number): string {
+  const sorted = Array.from({ length: total }, (_, i) => `caller-${i}`).sort();
+  return sorted[index].replace('caller-', 'caller');
+}
+
 function setupHubSymbol(count: number) {
   executeParameterizedMock.mockImplementation(async (...args: any[]) => {
     const query = typeof args[1] === 'string' ? args[1] : String(args[0] ?? '');
@@ -164,7 +176,7 @@ describe('impact: pagination and summaryOnly (#414)', () => {
     });
 
     expect(res.byDepth[1].length).toBe(20);
-    expect(res.byDepth[1][0].name).toBe('caller10');
+    expect(res.byDepth[1][0].name).toBe(callerAtIndex(200, 10));
     expect(res.pagination).toEqual({
       limit: 20,
       offset: 10,
@@ -243,6 +255,34 @@ describe('impact: pagination and summaryOnly (#414)', () => {
     expect(res.byDepthCounts).toEqual({ 1: 800 });
     expect(res.byDepth).toBeUndefined();
     expect(res.pagination).toBeUndefined();
+  });
+
+  it.each([
+    ['skipEpistemic', { skipEpistemic: true }],
+    ['summaryOnly', { summaryOnly: true }],
+  ])('%s suppresses Class bean metadata lookups', async (_name, suppression) => {
+    const { backend, repoHandle } = makeBackend();
+    setupHubSymbol(1);
+
+    await (backend as any)._runImpactBFS(
+      repoHandle,
+      { id: 'hub1', name: 'HubClass' },
+      'Class',
+      'upstream',
+      {
+        maxDepth: 1,
+        relationTypes: ['CALLS'],
+        includeTests: false,
+        minConfidence: 0,
+        ...suppression,
+      },
+    );
+
+    expect(
+      executeParameterizedMock.mock.calls.some((args) =>
+        String(args[1] ?? '').includes('frameworkAnnotations'),
+      ),
+    ).toBe(false);
   });
 
   it('limit clamps to 1–10000 range', async () => {
@@ -334,7 +374,7 @@ describe('impact: pagination and summaryOnly (#414)', () => {
     });
 
     expect(res.byDepth[1].length).toBe(20);
-    expect(res.byDepth[1][0].name).toBe('caller5');
+    expect(res.byDepth[1][0].name).toBe(callerAtIndex(50, 5));
     expect(res.pagination.limit).toBe(20);
     expect(res.pagination.offset).toBe(5);
   });

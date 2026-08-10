@@ -70,7 +70,7 @@ describe.skipIf(!apexAvailable)('Apex WI-4 hardening — adversarial corpus (Gat
     'param arg shadowed': 'public class C { Foo x; void m(Bar x) { g(x); } }',
     // Degenerate / empty
     'extends nothing': 'public class C extends { }',
-    'empty': '',
+    empty: '',
     'whitespace only': '   \n\t\r\n  ',
     'only heritage keywords': 'extends implements super this new ....',
   };
@@ -102,9 +102,30 @@ describe.skipIf(!apexAvailable)('Apex WI-4 hardening — bounded smoke-fuzz (Gat
   // Atoms biased toward WI-4's capture-surface additions: dotted heritage bases,
   // dotted super/ctor refs, parameter-typed method headers, and their delimiters.
   const ATOMS = [
-    'class C {', 'void m(', 'Foo x', 'Outer.Inner', 'extends Outer.Inner',
-    'extends A.B.C', 'implements I.J', 'super(', 'this(', 'new Outer.Inner()',
-    ') {', 'g(x)', 'x, ', 'Outer.', '.Inner', ', ', '(', ')', '.', ';', '{', '}', ' ', '\n',
+    'class C {',
+    'void m(',
+    'Foo x',
+    'Outer.Inner',
+    'extends Outer.Inner',
+    'extends A.B.C',
+    'implements I.J',
+    'super(',
+    'this(',
+    'new Outer.Inner()',
+    ') {',
+    'g(x)',
+    'x, ',
+    'Outer.',
+    '.Inner',
+    ', ',
+    '(',
+    ')',
+    '.',
+    ';',
+    '{',
+    '}',
+    ' ',
+    '\n',
   ];
 
   const EXECUTIONS = 10_000; // Constitution §6 floor
@@ -121,7 +142,9 @@ describe.skipIf(!apexAvailable)('Apex WI-4 hardening — bounded smoke-fuzz (Gat
       try {
         matches = capture(src);
       } catch (err) {
-        throw new Error(`fuzz draw ${i} threw unexpectedly on input ${JSON.stringify(src)}: ${String(err)}`);
+        throw new Error(
+          `fuzz draw ${i} threw unexpectedly on input ${JSON.stringify(src)}: ${String(err)}`,
+        );
       }
       expect(matches).toBeDefined();
     }

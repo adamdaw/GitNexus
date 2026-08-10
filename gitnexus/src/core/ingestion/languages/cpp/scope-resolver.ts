@@ -9,6 +9,7 @@ import {
   tagNamespacePrefixes,
 } from '../../scope-resolution/scope/walkers.js';
 import type { ScopeResolver } from '../../scope-resolution/contract/scope-resolver.js';
+import { extractElementTypeFromString } from '../../type-extractors/shared.js';
 import { cppProvider } from '../c-cpp.js';
 import { cppArityCompatibility } from './arity.js';
 import { CPP_CONVERSION_ONLY_ARG_TYPE_PREFIXES, cppConversionRank } from './conversion-rank.js';
@@ -46,6 +47,12 @@ import {
   clearCppMemberLookupState,
   resolveCppReceiverMember,
 } from './member-lookup.js';
+import { stripCppSpecifiers } from './interpret.js';
+
+/** A pointee worth binding: a bare identifier, not `T**`, `T[]`, `A::B` or a
+ *  template spelling. Hoisted — a literal here would mint a fresh RegExp on
+ *  every subscript the resolver folds. */
+const CPP_SIMPLE_POINTEE_RE = /^[A-Za-z_]\w*$/;
 
 /**
  * Per-pass memo of the augmented `#include`-resolution file set
@@ -247,6 +254,29 @@ export const cppScopeResolver: ScopeResolver = {
     return mro.includes(lhsDef.nodeId);
   },
 
+  // Subscript route only — C++ collection views are method calls.
+  //
+  // Two container spellings reach a subscript. A POINTER is one of them: `p[i]`
+  // on a `User*` is pointer arithmetic yielding a `User`, so the trailing `*` is
+  // peeled here rather than by `stripTypePreservingDecoration` (C++ declares
+  // none) — and peeling it at a bare class lookup instead would be wrong, since
+  // that is the route by which `p->m()` must keep seeing `User`'s own members.
+  // The other is a template container (`std::vector<User>`), left to the shared
+  // extractor.
+  //
+  // Fed the annotation AS WRITTEN, since `normalizeCppTypeName` strips both the
+  // star and the array brackets at capture. `undefined` = "not a container", so
+  // an `operator[]`-bearing class does not fold `grid[0]` onto `Grid`.
+  elementTypeOf: (containerType, via) => {
+    if (via.kind !== 'index') return undefined;
+    const t = stripCppSpecifiers(containerType);
+    if (t.endsWith('*')) {
+      const pointee = t.slice(0, -1).trim();
+      return CPP_SIMPLE_POINTEE_RE.test(pointee) ? pointee : undefined;
+    }
+    return extractElementTypeFromString(t);
+  },
+
   // C++ is statically typed — disable field fallback heuristic
   fieldFallbackOnMethodLookup: false,
   // C++ needs return type propagation across #include boundaries
@@ -286,6 +316,20 @@ export const cppScopeResolver: ScopeResolver = {
     // walked at `populateOwners` time into a per-file nodeId set.
     if (!isCppDefGloballyVisible(def.filePath, def.nodeId)) return true;
     return false;
+  },
+
+  // Keep declaration/definition identity narrower than the global free-call
+  // visibility gate above: namespace and class ownership do not imply
+  // internal linkage, while a namespace-scope `static` function does.
+  hasFileLocalCallableLinkage: (def: SymbolDefinition) => {
+    // Class members have EXTERNAL linkage even when declared `static` —
+    // inside a class, `static` means "no instance", not internal linkage.
+    // The name-keyed set below is populated from every `static` declaration,
+    // so without this gate a header-declared static member refused its
+    // cross-file definition join (#2522 review, M2).
+    if (def.type === 'Method' || def.type === 'Constructor') return false;
+    const simple = def.qualifiedName?.split('.').pop() ?? def.qualifiedName ?? '';
+    return isFileLocal(def.filePath, simple);
   },
 
   // C++ two-phase template lookup: inside a class template body,

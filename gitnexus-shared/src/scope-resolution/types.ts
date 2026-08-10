@@ -33,14 +33,27 @@ export type ScopeId = string;
 /** Stable symbol-definition identifier (graph nodeId). */
 export type DefId = string;
 
-/** Kinds of lexical scope a `Scope` node can represent. */
+/**
+ * Kinds of lexical scope a `Scope` node can represent.
+ *
+ * `Object` is a hoist boundary ONLY: an object/record literal body
+ * (TS/JS `{...}`, Kotlin anonymous `object {...}`). Members are
+ * reachable via property access, never as bare identifiers, so
+ * scope-chain walkers (`scope/walkers.ts`) must skip an `Object`
+ * scope's own bindings while still traversing past it to the parent
+ * (#2545/#2551) -- unlike `Block`, where a nested closure legitimately
+ * DOES see a sibling `let`/`const` from an enclosing `if`/`for`/`while`,
+ * a nested closure inside an object literal must NOT see a sibling
+ * property's name as a free identifier.
+ */
 export type ScopeKind =
   | 'Module' // file root
   | 'Namespace' // C++ namespace, C# namespace, Kotlin package-object, Rust mod
   | 'Class' // class/struct/trait/interface body
   | 'Function' // function/method/closure/lambda body
   | 'Block' // { ... }, if-body, for-body, with-body, match arms
-  | 'Expression'; // comprehensions, for-init, pattern bindings, lambda param lists
+  | 'Expression' // comprehensions, for-init, pattern bindings, lambda param lists
+  | 'Object'; // object/record literal body -- see doc comment above
 
 // ─── Range + Capture (parser-agnostic) ──────────────────────────────────────
 
@@ -105,6 +118,9 @@ export type ParsedImport =
       readonly localName: string;
       readonly importedName: string;
       readonly targetRaw: string;
+      /** Provider-specific imported symbol category when module and symbol
+       * namespaces have distinct resolution rules (for example PHP). */
+      readonly importedSymbolKind?: 'type' | 'function' | 'const';
       /**
        * Set by providers when `targetRaw` already names the imported symbol
        * rather than only its containing module. Consumers that compose
@@ -126,6 +142,8 @@ export type ParsedImport =
       readonly importedName: string;
       readonly alias: string;
       readonly targetRaw: string;
+      /** See the same field on the `named` variant. */
+      readonly importedSymbolKind?: 'type' | 'function' | 'const';
       /** See the same field on the `named` variant. */
       readonly targetIncludesImportedName?: boolean;
     }
@@ -246,8 +264,24 @@ export type ParsedImport =
 export interface ParsedTypeBinding {
   /** The name being bound (parameter name, `self`, assignment LHS, …). */
   readonly boundName: string;
-  /** The raw type name as written in source (`'User'`, `'models.User'`, …). */
+  /** The type name AFTER this provider's normalization (`'User'`,
+   *  `'models.User'`, …) — see `TypeRef.rawName`. */
   readonly rawTypeName: string;
+  /**
+   * Optional override for `TypeRef.declaredSpelling`, for a grammar that does
+   * not keep the whole written type under `@type-binding.type`.
+   *
+   * The scope extractor derives the spelling from that capture by default,
+   * which is right for every language whose type node spans the annotation.
+   * C++ is the exception: `User* repos` parses with the `*` on the DECLARATOR,
+   * so the type capture is a bare `User` and the container-ness the index step
+   * needs is nowhere in the captures the extractor reads. A provider that can
+   * reconstruct it exactly sets it here.
+   *
+   * Leave undefined otherwise — the extractor's derivation is preferred to a
+   * per-language reimplementation of it.
+   */
+  readonly declaredSpelling?: string;
   readonly source: TypeRef['source'];
 }
 
@@ -333,6 +367,11 @@ export interface BindingRef {
   readonly origin: 'local' | 'import' | 'namespace' | 'wildcard' | 'reexport';
   /** Non-null for non-local origins; carries the `ImportEdge` that brought the name into this scope. */
   readonly via?: ImportEdge;
+  /**
+   * Optional semantic visibility evidence supplied by a language hook.
+   * Shared resolution consumes this without inspecting language syntax.
+   */
+  readonly visibility?: 'static-member-import';
 }
 
 // ─── §2.5 TypeRef ───────────────────────────────────────────────────────────
@@ -347,8 +386,36 @@ export interface BindingRef {
  * re-exports, and nested modules. Generics deferred to V2 via `typeArgs`.
  */
 export interface TypeRef {
-  /** The name as written in source (e.g., `'User'`, `'models.User'`, `'List'`). */
+  /**
+   * The type name AFTER the language's capture-time normalization — NOT
+   * necessarily what the source says. Every provider's `interpretTypeBinding`
+   * reduces the annotation before it gets here: TypeScript runs
+   * `stripGeneric` + `stripArraySuffix` to a FIXED POINT (`User[][]` → `User`),
+   * Go's `normalizeGoTypeName` drops `[]` and `map[K]`, C#/Python/Kotlin/Rust
+   * strip their single-arg collection wrappers. What survives is the name a
+   * class lookup can use (`'User'`, `'models.User'`, `'List'`).
+   *
+   * A consumer that needs the CONTAINER, not the element, must read
+   * `declaredSpelling` — see below.
+   */
   readonly rawName: string;
+  /**
+   * The annotation exactly as written, kept ONLY when `rawName` is not it.
+   *
+   * `rawName` alone cannot distinguish `repos: User[]` (a container the capture
+   * layer already reduced, so the position IS the element) from `grid: Grid`
+   * (an ordinary class the source happened to subscript). Both arrive as a bare
+   * class name that resolves. An index step reading only `rawName` therefore had
+   * no choice but to guess, and guessing "already reduced" typed `grid[0]` as
+   * `Grid` — a confidently WRONG owner for the next member.
+   *
+   * Absent when the provider's normalization was a no-op (nothing was lost, so
+   * `rawName` is already the written spelling), and absent for TypeRefs
+   * synthesized outside the capture path (a `this` receiver binding, a
+   * propagated return type). Consumers must treat absence as "no container
+   * evidence" and decline, never as "not a container".
+   */
+  readonly declaredSpelling?: string;
   /** Anchor for resolving `rawName` — the scope where the annotation/inference was written. */
   readonly declaredAtScope: ScopeId;
   readonly source:
@@ -391,6 +458,25 @@ export interface Scope {
 
   /** Local type facts visible from this scope (parameter annotations, `self` binding, etc.). */
   readonly typeBindings: ReadonlyMap<string, TypeRef>;
+
+  /** Lexically bound names that may have no definition or type fact of their
+   * own (for example, an untyped function parameter). Consumers use this only
+   * as a shadowing barrier; it never resolves a symbol by itself. */
+  readonly lexicalNames?: ReadonlySet<string>;
+
+  /** Receiver names this scope BINDS rather than inherits — `this`, `self`, … (#2701).
+   *
+   *  A receiver walk (`findReceiverTypeBinding`) that reaches such a scope
+   *  without finding the name in `typeBindings` stops here and reports the
+   *  receiver unresolved, instead of continuing up and borrowing an enclosing
+   *  scope's binding. In JavaScript/TypeScript an ordinary `function` binds its
+   *  own `this` (ECMA-262 `[[ThisMode]]`) while an arrow inherits one, so
+   *  `this.m()` inside a nested `function` must NOT reach the enclosing class.
+   *
+   *  Left unset by every language whose closures capture the receiver
+   *  lexically, which is nearly all of them — the walk is unchanged there.
+   *  Populated from `LanguageProvider.scopeOwnsReceivers`. */
+  readonly ownsReceivers?: ReadonlySet<string>;
 }
 
 // ─── §2.6 Resolution + ResolutionEvidence ───────────────────────────────────
@@ -448,7 +534,15 @@ export interface Reference {
   readonly toDef: DefId;
   /** Location of the reference in source. */
   readonly atRange: Range;
-  readonly kind: 'call' | 'read' | 'write' | 'type-reference' | 'inherits' | 'import-use' | 'macro';
+  readonly kind:
+    | 'call'
+    | 'read'
+    | 'write'
+    | 'type-reference'
+    | 'inherits'
+    | 'import-use'
+    | 'value-ref'
+    | 'macro';
   readonly confidence: number;
   readonly evidence: readonly ResolutionEvidence[];
 }

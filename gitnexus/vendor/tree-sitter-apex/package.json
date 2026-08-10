@@ -2,6 +2,8 @@
   "name": "tree-sitter-apex",
   "version": "0.0.0-abi14",
   "description": "ABI-14 regeneration of aheber/tree-sitter-sfapex (apex grammar), vendored for tree-sitter@0.21.1.",
+  "_vendoredBy": "gitnexus — ABI-14 regeneration of the sfapex `apex` grammar, cut from the SAME grammar.json upstream ships in 3.0.0. Regenerate with `tree-sitter generate --abi 14`; never copy upstream's parser.c in, because it is ABI-15 and will not load on the pinned tree-sitter@0.21.1. Prebuilds are cross-built by .github/workflows/build-tree-sitter-prebuilds.yml.",
+  "_whyNotAPublishedRelease": "Asked and answered (2026-08-07): sfapex 1.0.0 through 2.4.1 ARE ABI-14 (only 3.0.0 moved to 15), so adopting one looks tempting. Three reasons not to. (1) GRAMMAR: our src/grammar.json is byte-identical to 3.0.0's (sha dd026301764ee697); 2.4.1's differs (a14b703072184593), so dropping back trades the current grammar for the Feb-2025 one. (2) PREBUILDS: every published release — 2.4.1 and 3.0.0 alike — ships only darwin-x64+arm64 and win32-x64+arm64. There is NO linux prebuild, so no release fixes the platform gap; it only swaps which platforms are missing. (3) SHAPE: the published package is multi-grammar — one tree-sitter-sfapex.node whose binding exports apex/soql/sosl/sflog as sub-objects — whereas this vendor is single-grammar (the module IS the language, per bindings/node/index.js). Consuming theirs means changing the loader, not just the file. Their peer dep is also ^0.22.4, above our pin, though that never resolves since vendored-grammars.ts loads by absolute path.",
   "main": "bindings/node/index.js",
   "license": "MIT",
   "dependencies": {

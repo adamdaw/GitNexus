@@ -7,7 +7,7 @@ name: Build tree-sitter prebuilds
 #
 # Grammars covered here (the at-risk set — everything else already ships 6
 # upstream prebuilds AND stays dependency-review-tracked, so it is left alone).
-# All five are vendored under gitnexus/vendor/; `kind` (below) only picks where
+# All six are vendored under gitnexus/vendor/; `kind` (below) only picks where
 # the build job fetches the C source to compile:
 #   - tree-sitter-c      (vendored prebuild-only; built from the published npm
 #                         package — closes upstream's 4/6 ARM gap #2116 for a
@@ -20,6 +20,10 @@ name: Build tree-sitter prebuilds
 #   - tree-sitter-swift  (vendored source; built from gitnexus/vendor/ — its
 #                         prebuilds were originally upstream-shipped, now
 #                         GitNexus-cross-built like the rest for uniformity)
+#   - tree-sitter-apex   (vendored source; built from gitnexus/vendor/ — an
+#                         ABI-14 regeneration of aheber/tree-sitter-sfapex. The
+#                         published package is ABI-15 and ships darwin+win32 only,
+#                         so its prebuilds can never be reused here)
 #
 # Output: gitnexus/vendor/<grammar>/prebuilds/<platform-arch>/<grammar>.node for
 # all 6 targets ({linux,darwin,win32}-{x64,arm64}). tree-sitter grammars are
@@ -55,7 +59,7 @@ on:
   workflow_dispatch:
     inputs:
       grammars:
-        description: 'Comma-separated grammar shortnames to build (c,dart,proto,kotlin,swift), or "all".'
+        description: 'Comma-separated grammar shortnames to build (c,dart,proto,kotlin,swift,apex), or "all".'
         required: false
         type: string
         default: 'all'
@@ -86,7 +90,7 @@ on:
       - '!gitnexus/vendor/tree-sitter-*/prebuilds/**'
       # Self-test: re-run the guard if a future grammar pin is reintroduced in
       # the main package.json (optionalDependencies fallback). No-op otherwise —
-      # all five grammars are now fully vendored (kotlin included).
+      # all six grammars are now fully vendored (kotlin and apex included).
       - 'gitnexus/package.json'
       # Self-test: re-run the guard (normally a no-op) when the recipe changes.
       - '.github/workflows/build-tree-sitter-prebuilds.yml'
@@ -157,6 +161,12 @@ jobs:
             // so it builds from gitnexus/vendor/ like dart/proto. Its prebuilds
             // were originally upstream-shipped; rebuilding them here unifies it.
             swift:  { name: 'tree-sitter-swift',  kind: 'vendored' },
+            // apex MUST be 'vendored'. Its source is an ABI-14 regeneration of
+            // aheber/tree-sitter-sfapex, whose own parser.c is ABI-15 and will not
+            // load on the pinned tree-sitter@0.21.1 — so the published package's
+            // prebuilds (darwin + win32 only, no linux) are unusable here no matter
+            // what. Only this cross-build produces loadable binaries for the fork.
+            apex:   { name: 'tree-sitter-apex',   kind: 'vendored' },
           };
           const PLATFORMS = [
             { platform_arch: 'linux-x64',    os: 'ubuntu-24.04' },
@@ -352,13 +362,13 @@ jobs:
         with:
           persist-credentials: false # this job uploads artifacts (artipacked)
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
       - name: Ensure Python (arm64 Windows only)
         if: matrix.platform_arch == 'win32-arm64'
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
 
@@ -414,7 +424,13 @@ jobs:
           # prebuilds/<platform>-<arch>/<something>.node.
           ( cd "$pkgdir" && npx --no-install prebuildify --napi --strip )
 
-          out=$(find "$pkgdir/prebuilds" -name '*.node' -print -quit)
+          # `|| true` so the `test -n` below is the thing that reports a missing
+          # prebuild.  `rm -rf` above deletes the directory, so a prebuildify
+          # run that emits nothing without failing leaves `find` searching a
+          # path that no longer exists — it exits 1 and `-e` would kill the step
+          # before the `::error::` line, which is exactly the case that line
+          # exists to explain.
+          out=$(find "$pkgdir/prebuilds" -name '*.node' -print -quit || true)
           test -n "$out" || { echo "::error::prebuildify produced no .node"; exit 1; }
           produced=$(basename "$(dirname "$out")")
           [ "$produced" = "$PLATFORM_ARCH" ] || { echo "::error::built $produced, expected $PLATFORM_ARCH"; exit 1; }
@@ -461,6 +477,13 @@ jobs:
               proto:  "syntax = \"proto3\";\nmessage M { int32 id = 1; }",
               kotlin: "fun main() { println(\"hi\") }",
               swift:  "func greet() { print(\"hi\") }",
+              // Apex string literals are SINGLE-quoted, so a double-quoted snippet is a
+              // syntax error and parses with hasError set. Kept as a string literal on
+              // purpose: single-quoted strings are the main lexical divergence between
+              // Apex and the Java grammar it derives from. Written \u0027 because this
+              // whole node script is single-quoted to the shell, where a bare apostrophe
+              // would close it early -- that applies to these comment lines too.
+              apex:   "public class C { public void go() { System.debug(\u0027hi\u0027); } }",
             };
             const lang = require("node-gyp-build")(process.cwd());
             const Parser = require("tree-sitter");
@@ -561,7 +584,7 @@ jobs:
           NODE
 
       - name: Attest build provenance (SLSA)
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: 'gitnexus/vendor/tree-sitter-*/prebuilds/**/*.node'
 

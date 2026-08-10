@@ -528,6 +528,19 @@ describe('extractNextjsMiddlewareConfig', () => {
     expect(result!.exportedName).toBe('middleware');
   });
 
+  it('keeps a matcher containing an escaped quote intact', () => {
+    // The array-item regex alternates "not a quote or backslash" with "backslash
+    // then anything". Writing that second branch as `\\\\.` demands two literal
+    // backslashes, so a singly-escaped quote fell through and the match restarted
+    // mid-pattern — this matcher used to come back as "s/:p*".
+    const content = `
+      export function middleware(req) {}
+      export const config = { matcher: ['/it\\'s/:p*', '/api/:path*'] };
+    `;
+    const result = extractNextjsMiddlewareConfig(content);
+    expect(result!.matchers).toEqual(["/it\\'s/:p*", '/api/:path*']);
+  });
+
   it('extracts single string matcher', () => {
     const content = `
       export function middleware(req) {}

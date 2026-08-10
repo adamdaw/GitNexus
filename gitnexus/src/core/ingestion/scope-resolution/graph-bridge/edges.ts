@@ -15,16 +15,19 @@
  * language-agnostic — no language needs to change it.
  */
 
-import type { Reference, ScopeId, SymbolDefinition } from 'gitnexus-shared';
+import type { NodeLabel, Reference, ScopeId, SymbolDefinition } from 'gitnexus-shared';
 import type { KnowledgeGraph } from '../../../graph/types.js';
 import type { ScopeResolutionIndexes } from '../../model/scope-resolution-indexes.js';
+import { CALL_TARGET_TYPES } from '../../model/symbol-table.js';
 import type { GraphNodeLookup } from '../graph-bridge/node-lookup.js';
 import { resolveCallerGraphId, resolveDefGraphId } from '../graph-bridge/ids.js';
 import type { CalleeIdSink } from './callee-id-sink.js';
 
 /**
  * Optional resolved-callee-id capture context (#2227 follow-up U2). Threaded
- * in only under `--pdg` (else `undefined` → zero overhead, byte-identity R4).
+ * in under `--pdg` OR when always-on callable-flow facts need direct call
+ * targets (#2437 — the accumulator then carries a position filter); else
+ * `undefined` → zero overhead, byte-identity (R4).
  * `filePath` is NOT on the `site` param, so it rides here alongside the sink.
  */
 export interface CalleeIdCaptureCtx {
@@ -50,6 +53,12 @@ export function mapReferenceKindToEdgeType(
       return 'EXTENDS';
     case 'type-reference':
       return 'USES';
+    // A function registered as an object-literal property value emits a
+    // reference-class USES edge, NOT CALLS — a registration is not an
+    // invocation (Kythe `ref` vs `ref/call`; Joern `METHOD_REF`). The
+    // invocation side is synthesized by the property-dispatch pass (#2437).
+    case 'value-ref':
+      return 'USES';
     // Macro invocations resolve to a `Macro` node (never a function), so
     // they emit `USES` — kept out of the `CALLS` keyspace which denotes
     // function/method dispatch (#1934 review).
@@ -60,6 +69,41 @@ export function mapReferenceKindToEdgeType(
     default:
       return undefined;
   }
+}
+
+/**
+ * Is this read site a PHANTOM — a duplicate of the call happening beside it?
+ *
+ * Some languages' member-read capture also matches the callee of a member call,
+ * so `obj.f()` produces a `call` site on `f` AND a `read` site on `obj.f` at the
+ * same position (Go's `@reference.read` matches every `selector_expression`).
+ * The capture layer marks that second site `inCalleePosition` rather than
+ * dropping it, because the two cases it covers are indistinguishable there:
+ *
+ *   - tail resolves to a METHOD → phantom. The ACCESSES edge duplicates the
+ *     CALLS edge emitted for the same source position; suppress it.
+ *   - tail resolves to a FIELD  → genuine. `h.dep.Work()` where
+ *     `Work func() error` reads a func-typed struct field and calls the value
+ *     it holds. That read is the field's only ACCESSES evidence — keep it.
+ *
+ * Only the resolved target's kind separates them, which is why this decision
+ * lives at emission and not in any language's capture code. Sites without the
+ * marker are untouched, so a genuine method VALUE (`f := obj.method`) — never in
+ * callee position — keeps its read.
+ *
+ * "Invoked rather than read" is `CALL_TARGET_TYPES` — the canonical callable
+ * target set (`FREE_CALLABLE_TYPES` ∪ Method/Constructor), not a local copy. A
+ * hand-rolled `{Function, Method, Constructor}` silently omits `Macro` (C/C++)
+ * and `Delegate` (C#), the two labels that set exists to add, and drops the
+ * `satisfies` guard in `symbol-table.ts` that compile-enforces every free
+ * callable label against `LABEL_BEHAVIOR`.
+ */
+function isPhantomCalleeRead(
+  site: { readonly kind: string; readonly inCalleePosition?: boolean },
+  targetDef: { readonly type: NodeLabel },
+): boolean {
+  if (site.kind !== 'read' || site.inCalleePosition !== true) return false;
+  return CALL_TARGET_TYPES.has(targetDef.type);
 }
 
 /**
@@ -79,6 +123,9 @@ export function tryEmitEdge(
     readonly inScope: ScopeId;
     readonly atRange: { startLine: number; startCol: number };
     readonly kind: string;
+    /** See {@link isPhantomCalleeRead}. Set by the extractor from the
+     *  language's `@reference.callee-position` marker; absent otherwise. */
+    readonly inCalleePosition?: boolean;
   },
   targetDef: SymbolDefinition,
   reason: string,
@@ -87,6 +134,10 @@ export function tryEmitEdge(
   collapseByCallerTarget = false,
   calleeCapture?: CalleeIdCaptureCtx,
 ): boolean {
+  // A read that only exists because it is the callee of the call beside it, and
+  // whose tail resolved to a callable, is that call restated as an access —
+  // checked first because it needs no id resolution.
+  if (isPhantomCalleeRead(site, targetDef)) return false;
   // Inheritance edges are emitted directly by `preEmitInheritanceEdges` (which
   // owns the enclosing-class caller and the EXTENDS-vs-IMPLEMENTS type), so this
   // generic bridge derives caller + edge type purely from the site.
@@ -144,6 +195,15 @@ export function tryEmitEdge(
  *
  * All other invariants of `tryEmitEdge` apply: dedup key shape, collapse
  * flag honoring, edge-type mapping, caller-id resolution.
+ *
+ * ONE deliberate exception: the {@link isPhantomCalleeRead} suppression is not
+ * applied here, because it keys on the target's node label and this entry point
+ * is handed an id rather than a def. Reachable only for a `read` site marked
+ * `inCalleePosition` whose receiver typed as an object-literal VALUE — a
+ * JS/TS-shaped registration. No language that sets the marker resolves through
+ * this bridge today (verified for Go, whose func-valued struct-literal fields
+ * resolve through the owned-member path instead). A language adding the marker
+ * must re-check this path.
  */
 export function tryEmitEdgeWithExplicitTargetId(
   graph: KnowledgeGraph,

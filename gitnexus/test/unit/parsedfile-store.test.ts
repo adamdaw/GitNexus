@@ -40,6 +40,19 @@ const makeParsedFile = (filePath: string): ParsedFile =>
     ],
   }) as unknown as ParsedFile;
 
+/**
+ * Store payload with arbitrary (possibly corrupt) field overrides. The one
+ * controlled escape hatch for building malformed serialization-boundary
+ * fixtures lives HERE instead of double-casts scattered through the tests
+ * (#2522 review).
+ */
+function makeStoreEntry(filePath: string, overrides: Record<string, unknown>): ParsedFile {
+  return {
+    ...(makeParsedFile(filePath) as unknown as Record<string, unknown>),
+    ...overrides,
+  } as unknown as ParsedFile;
+}
+
 describe('parsedfile-store', () => {
   it('round-trips ParsedFiles (incl. Scope Maps) and filters by requested paths', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'pfstore-'));
@@ -97,6 +110,122 @@ describe('parsedfile-store', () => {
     try {
       const loaded = await loadParsedFilesForPaths(dir, new Set(['a.c']));
       expect(loaded.size).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('round-trips validated callable-flow operand and signature metadata', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'pfstore-'));
+    try {
+      const pf = makeStoreEntry('flow.cpp', {
+        callableFlowSites: [
+          {
+            kind: 'seed',
+            destination: {
+              name: 'member',
+              inScope: 'scope:entry',
+              atRange: { startLine: 3, startCol: 2, endLine: 3, endCol: 8 },
+              indirection: 0,
+              addressOf: false,
+              expressionKind: 'binding',
+            },
+            targetName: 'run',
+            targetQualifiedName: 'Base.run',
+            targetRange: { startLine: 3, startCol: 12, endLine: 3, endCol: 21 },
+            expectedSignature: {
+              parameterCount: 1,
+              parameterTypes: ['int'],
+              isConst: true,
+            },
+          },
+        ],
+      });
+      await persistParsedFileChunk(dir, 'flow', [pf]);
+
+      const loaded = await loadParsedFilesForPaths(dir, new Set(['flow.cpp']));
+      expect(loaded.get('flow.cpp')?.callableFlowSites).toEqual(pf.callableFlowSites);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops a malformed callable-flow site but retains the file and its other sites (per-site sanitation, #2522)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'pfstore-'));
+    try {
+      const operand = {
+        name: 'callback',
+        inScope: 'scope:entry',
+        atRange: { startLine: 2, startCol: 2, endLine: 2, endCol: 10 },
+        indirection: 17,
+        addressOf: false,
+        expressionKind: 'binding',
+      };
+      const invalid = makeStoreEntry('invalid.c', {
+        callableFlowSites: [
+          {
+            kind: 'invoke',
+            callSite: { startLine: 2, startCol: 2, endLine: 2, endCol: 12 },
+            inScope: 'scope:entry',
+            callee: operand,
+            invocationKind: 'indirect',
+            arity: 0,
+          },
+        ],
+      });
+      await persistParsedFileChunk(dir, 'invalid', [invalid, makeParsedFile('valid.c')]);
+
+      const loaded = await loadParsedFilesForPaths(dir, new Set(['invalid.c', 'valid.c']));
+      // The file survives with the offending site dropped — a per-file
+      // rejection here caused a permanent, silent warm-cache reparse loop.
+      expect(loaded.get('invalid.c')?.callableFlowSites).toEqual([]);
+      expect(loaded.has('valid.c')).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts empty-string parameterTypes entries ("" = unknown type, real C++ extractor output)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'pfstore-'));
+    try {
+      const pf = makeStoreEntry('cv.cpp', {
+        callableFlowSites: [
+          {
+            kind: 'seed',
+            destination: {
+              name: 'fp',
+              inScope: 'scope:entry',
+              atRange: { startLine: 1, startCol: 0, endLine: 1, endCol: 8 },
+              indirection: 0,
+              addressOf: false,
+              expressionKind: 'binding',
+            },
+            targetName: 'handler',
+            targetRange: { startLine: 1, startCol: 12, endLine: 1, endCol: 19 },
+            expectedSignature: { parameterCount: 2, parameterTypes: ['int', ''] },
+          },
+        ],
+      });
+      await persistParsedFileChunk(dir, 'cv', [pf]);
+
+      const loaded = await loadParsedFilesForPaths(dir, new Set(['cv.cpp']));
+      expect(loaded.get('cv.cpp')?.callableFlowSites).toEqual(pf.callableFlowSites);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects the whole file only when callableFlowSites is non-array garbage', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'pfstore-'));
+    try {
+      const garbage = makeStoreEntry('garbage.c', {
+        callableFlowSites: 'not-an-array',
+      });
+      await persistParsedFileChunk(dir, 'garbage', [garbage, makeParsedFile('ok.c')]);
+
+      const loaded = await loadParsedFilesForPaths(dir, new Set(['garbage.c', 'ok.c']));
+      expect(loaded.has('garbage.c')).toBe(false);
+      expect(loaded.has('ok.c')).toBe(true);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -178,10 +307,9 @@ describe('parsedfile-store', () => {
           dependentPackBaseClasses: ['Mix'],
         },
       };
-      const pf = {
-        ...(makeParsedFile('app.cpp') as unknown as Record<string, unknown>),
+      const pf = makeStoreEntry('app.cpp', {
         captureSideChannel: sideChannel,
-      } as unknown as ParsedFile;
+      });
 
       persistParsedFileShardSync(dir, 'w1-0', [pf]);
       const loaded = await loadParsedFilesForPaths(dir, new Set(['app.cpp']));
@@ -193,8 +321,8 @@ describe('parsedfile-store', () => {
     }
   });
 
-  // #1983 (Kotlin): the kotlin provider carries a self-describing companion-
-  // scope side-channel `{ kind: 'kotlin', companionScopes: ScopeId[] }`. It
+  // #1983 (Kotlin): the kotlin provider carries a self-describing capture
+  // side-channel containing companion scopes and class annotation facts. It
   // shares the single generic `captureSideChannel` field with C++, so confirm
   // the (Set→array) plain-data shape survives the JSON store round-trip too.
   it('round-trips a Kotlin ParsedFile.captureSideChannel through the store', async () => {
@@ -203,11 +331,17 @@ describe('parsedfile-store', () => {
       const sideChannel = {
         kind: 'kotlin',
         companionScopes: ['scope:Logger.companion', 'scope:Animal.companion'],
+        packageFact: { status: 'known', packageName: 'com.example' },
+        classAnnotations: [
+          {
+            classScopeId: 'scope:App.kt#1:0-2:0:Class',
+            annotationNames: ['Service'],
+          },
+        ],
       };
-      const pf = {
-        ...(makeParsedFile('App.kt') as unknown as Record<string, unknown>),
+      const pf = makeStoreEntry('App.kt', {
         captureSideChannel: sideChannel,
-      } as unknown as ParsedFile;
+      });
 
       persistParsedFileShardSync(dir, 'w1-0', [pf]);
       const loaded = await loadParsedFilesForPaths(dir, new Set(['App.kt']));
@@ -228,10 +362,9 @@ describe('parsedfile-store', () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'pfstore-'));
     try {
       const sideChannel = { kind: 'c', staticNames: ['compute', 'helper'] };
-      const pf = {
-        ...(makeParsedFile('local.c') as unknown as Record<string, unknown>),
+      const pf = makeStoreEntry('local.c', {
         captureSideChannel: sideChannel,
-      } as unknown as ParsedFile;
+      });
 
       persistParsedFileShardSync(dir, 'w1-0', [pf]);
       const loaded = await loadParsedFilesForPaths(dir, new Set(['local.c']));
@@ -366,6 +499,115 @@ describe('parsedfile-store', () => {
       // Each still re-shares with its own ownedDefs copy.
       expect(loaded.localDefs[0]).toBe(loaded.scopes[0].ownedDefs[0]);
       expect(loaded.localDefs[1]).toBe(loaded.scopes[0].ownedDefs[1]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * `receiverChain` at the untrusted boundary. Unlike `callableFlowSites`,
+ * `referenceSites` had no sanitizer here at all, so this field arrives with the
+ * first one.
+ */
+describe('parsedfile-store receiverChain sanitation', () => {
+  const siteWith = (receiverChain: unknown) => ({
+    name: 'save',
+    atRange: { startLine: 3, startCol: 2, endLine: 3, endCol: 6 },
+    inScope: 'x.ts:module',
+    kind: 'call',
+    ...(receiverChain === undefined ? {} : { receiverChain }),
+  });
+
+  it('round-trips a well-formed chain', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'pfstore-chain-'));
+    try {
+      await persistParsedFileChunk(dir, 'chunk-0', [
+        makeStoreEntry('x.ts', { referenceSites: [siteWith('2|svc|cgetUser')] }),
+      ]);
+      const loaded = (await loadParsedFilesForPaths(dir, new Set(['x.ts']))).get('x.ts')!;
+      expect(loaded.referenceSites[0]).toMatchObject({
+        name: 'save',
+        receiverChain: '2|svc|cgetUser',
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('loads a shard written before the field existed, unchanged', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'pfstore-chain-old-'));
+    try {
+      await persistParsedFileChunk(dir, 'chunk-0', [
+        makeStoreEntry('x.ts', { referenceSites: [siteWith(undefined)] }),
+      ]);
+      const loaded = (await loadParsedFilesForPaths(dir, new Set(['x.ts']))).get('x.ts')!;
+      expect(loaded.referenceSites[0]).toMatchObject({ name: 'save' });
+      expect(loaded.referenceSites[0]).not.toHaveProperty('receiverChain');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['malformed', 'not-a-chain'],
+    ['unknown future version', '3|svc|cgetUser'],
+    ['superseded v1 payload', '1|svc|cgetUser'],
+    ['over depth', '2|svc|ca|cb|cc|cd'],
+    ['non-string', 42],
+  ])(
+    'strips a %s chain but KEEPS the site — it still resolves via the text cascade',
+    async (_label, payload) => {
+      const dir = await mkdtemp(path.join(tmpdir(), 'pfstore-chain-bad-'));
+      try {
+        await persistParsedFileChunk(dir, 'chunk-0', [
+          makeStoreEntry('x.ts', { referenceSites: [siteWith(payload)] }),
+        ]);
+        const loaded = (await loadParsedFilesForPaths(dir, new Set(['x.ts']))).get('x.ts')!;
+        expect(loaded.referenceSites).toHaveLength(1);
+        expect(loaded.referenceSites[0]).toMatchObject({ name: 'save' });
+        expect(loaded.referenceSites[0]).not.toHaveProperty('receiverChain');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('rejects the file when referenceSites is not an array at all', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'pfstore-chain-garbage-'));
+    try {
+      await persistParsedFileChunk(dir, 'chunk-0', [
+        makeStoreEntry('garbage.ts', { referenceSites: 'nonsense' }),
+        makeStoreEntry('ok.ts', { referenceSites: [siteWith('2|svc|cgetUser')] }),
+      ]);
+      const loaded = await loadParsedFilesForPaths(dir, new Set(['garbage.ts', 'ok.ts']));
+      expect(loaded.has('garbage.ts')).toBe(false);
+      expect(loaded.has('ok.ts')).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('strips only the invalid chain and leaves a valid sibling intact', async () => {
+    // Sanitation is per-FIELD, not per-site or per-file. Every other case here
+    // uses a single-element array, so the `dropped > 0` .map() branch was never
+    // shown to preserve a good neighbour.
+    const dir = await mkdtemp(path.join(tmpdir(), 'pfstore-chain-mixed-'));
+    try {
+      await persistParsedFileChunk(dir, 'chunk-0', [
+        makeStoreEntry('x.ts', {
+          referenceSites: [
+            siteWith('2|svc|cgetUser'),
+            siteWith('not-a-chain'),
+            siteWith('2|other|ffield'),
+          ],
+        }),
+      ]);
+      const loaded = (await loadParsedFilesForPaths(dir, new Set(['x.ts']))).get('x.ts')!;
+      expect(loaded.referenceSites).toHaveLength(3);
+      expect(loaded.referenceSites[0]).toMatchObject({ receiverChain: '2|svc|cgetUser' });
+      expect(loaded.referenceSites[1]).not.toHaveProperty('receiverChain');
+      expect(loaded.referenceSites[2]).toMatchObject({ receiverChain: '2|other|ffield' });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

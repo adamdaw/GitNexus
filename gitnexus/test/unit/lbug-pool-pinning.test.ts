@@ -14,8 +14,9 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 // repo resident through deferred manifest/workspace resolution. Pinning makes
 // that resident set survive automatic (LRU + idle) eviction.
 
-const { loadFTSExtensionMock } = vi.hoisted(() => ({
+const { loadFTSExtensionMock, loadVectorExtensionMock } = vi.hoisted(() => ({
   loadFTSExtensionMock: vi.fn(),
+  loadVectorExtensionMock: vi.fn().mockResolvedValue(false),
 }));
 
 vi.mock('@ladybugdb/core', () => ({
@@ -36,6 +37,7 @@ vi.mock('@ladybugdb/core', () => ({
 vi.mock('../../src/core/lbug/lbug-adapter.js', () => ({
   isReadOnlyDbError: vi.fn(() => false),
   loadFTSExtension: loadFTSExtensionMock,
+  loadVectorExtension: loadVectorExtensionMock,
 }));
 
 vi.mock('../../src/core/lbug/lbug-config.js', () => ({
@@ -52,10 +54,17 @@ vi.mock('../../src/core/lbug/lbug-config.js', () => ({
 
 vi.mock('../../src/core/lbug/sidecar-recovery.js', () => ({
   preflightLbugSidecars: vi.fn().mockResolvedValue(undefined),
+  guardWalQuarantine: vi.fn().mockResolvedValue(undefined),
   isMissingFsError: vi.fn(() => false),
   isMissingShadowSidecarError: vi.fn(() => false),
   isReadOnlyShadowReplayError: vi.fn(() => false),
   quarantineWalForMissingShadow: vi.fn().mockResolvedValue(''),
+  // Not consumed by pool-adapter today; listed so this wholesale mock can't
+  // become a TypeError trap if the pool ever routes through dirty recovery
+  // (#2409, tri-review 4669518496 mock-hygiene sweep).
+  quarantineSidecarsForDirtyRecovery: vi
+    .fn()
+    .mockResolvedValue({ moved: [], removed: [], failed: [] }),
   renameFailureMessage: vi.fn((p: string) => `rename failed for ${p}`),
   statIfExists: vi.fn().mockResolvedValue(null),
 }));

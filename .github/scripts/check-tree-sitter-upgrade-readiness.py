@@ -69,6 +69,9 @@ GRAMMARS: dict[str, tuple[str, str, str]] = {
     # Vendored parsers — kept here so the upstream coords for drift
     # detection are co-located with every other grammar's coords.
     "tree-sitter-proto":      ("coder3101/tree-sitter-proto",        "main",   "src/parser.c"),
+    # sfapex is a multi-grammar repo (apex/, soql/, sosl/); only the apex grammar
+    # is vendored, so the drift check reads apex/src/parser.c rather than src/.
+    "tree-sitter-apex":       ("aheber/tree-sitter-sfapex",          "main",   "apex/src/parser.c"),
 }
 
 # npm-installed grammars deliberately held below npm latest (surfaced so reviewers

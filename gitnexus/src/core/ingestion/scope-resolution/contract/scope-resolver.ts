@@ -15,7 +15,7 @@
  *        - propagatesReturnTypesAcrossImports (default true)
  *        - fieldFallbackOnMethodLookup (default true — turn OFF for
  *          statically-typed languages; the heuristic over-connects)
- *        - unwrapCollectionAccessor — property-style collection views
+ *        - elementTypeOf — container element type, by subscript or accessor
  *        - collapseMemberCallsByCallerTarget — one edge per caller/target
  *        - populateNamespaceSiblings — cross-file implicit visibility
  *        - hoistTypeBindingsToModule — enable ONLY when method return
@@ -110,11 +110,28 @@
  *     in this order; the FIRST that emits an edge wins:
  *       1. super branch (`provider.isSuperReceiver(receiverName)`)
  *       2. Case 0 compound (`receiverName` has `.` or `(`)
- *       3. Case 1 namespace-receiver
- *       4. Case 2 class-name receiver
- *       5. Case 3 dotted typeBinding for namespace prefix
- *       6. Case 3b chain-typebinding (compound resolver)
- *       7. Case 4 simple typeBinding (MRO walk + findOwnedMember)
+ *       3. Case 0.5 implicit-`this` chain walk — GATED: fires only for
+ *          languages that set `resolveThisViaEnclosingClass === true`;
+ *          it intercepts every bare-`this` call/read/write site ahead of
+ *          Case 4 and does NOT emit the interface-dispatch fan-out that
+ *          Cases 0, 3b and 4 all perform (Case 0 gained it in #2829 and
+ *          Case 3b in #2832, leaving 0.5 the only INSTANCE-receiver case
+ *          that folds or walks to a receiver type without fanning out.
+ *          Read that narrowly: Case 2 also walks an MRO and its binding
+ *          admits `Interface`, but its receiver IS the type name, so the
+ *          site is static dispatch and a fan-out would be wrong; Cases 3
+ *          and 5 resolve by direct lookup rather than a fold or MRO walk,
+ *          and no language is known to reach Case 3 with an Interface —
+ *          every one that could strips the namespace qualifier first,
+ *          sending it to Case 4), so enabling the toggle
+ *          for a language changes that language's `this` dispatch
+ *          semantics (see the toggle's doc below)
+ *       4. Case 1 namespace-receiver
+ *       5. Case 2 class-name receiver
+ *       6. Case 3 dotted typeBinding for namespace prefix
+ *       7. Case 3b chain-typebinding (compound resolver + interface-dispatch
+ *          fan-out on an Interface fold, #2832)
+ *       8. Case 4 simple typeBinding (MRO walk + findOwnedMember)
  *     Reordering or merging cases changes resolution semantics. The
  *     numbering is part of the contract — keep the comments.
  *
@@ -262,11 +279,13 @@
  * `docs/plans/2026-04-20-001-refactor-emit-pipeline-generalization-plan.md`.
  */
 
+import type { DecorationStripper } from '../scope/walkers.js';
 import type {
   BindingRef,
   Callsite,
   ConstraintContext,
   ParsedFile,
+  ParsedImport,
   ReferenceSite,
   ScopeId,
   SupportedLanguages,
@@ -281,6 +300,7 @@ import {
 } from '../../model/scope-resolution-indexes.js';
 import type { SemanticModel } from '../../model/semantic-model.js';
 import type { ConversionRankFn } from '../passes/overload-narrowing.js';
+import type { WorkspaceResolutionIndex } from '../workspace-index.js';
 
 /** A LinearizeStrategy receives the full ancestor map so C3-style
  *  algorithms (which need to merge each parent's MRO) can implement
@@ -299,9 +319,26 @@ export type ReceiverMemberResolution =
   | { readonly kind: 'resolved'; readonly definition: SymbolDefinition }
   | { readonly kind: 'ambiguous'; readonly candidateIds: readonly string[] };
 
+export interface ImportResolutionContext {
+  readonly parsedFiles: readonly ParsedFile[];
+  readonly parsedImport?: ParsedImport;
+}
+
 /** Re-exported for ScopeResolver consumers — same shape as
  *  `RegistryProviders.constraintCompatibility`'s third parameter. */
 export type { ConstraintContext } from 'gitnexus-shared';
+
+/** How a container's element was reached in the source. */
+export type ElementAccessRoute =
+  | { readonly kind: 'index' }
+  | { readonly kind: 'accessor'; readonly name: string };
+
+/** One structurally-detected implementor plus the receiver form in which it
+ *  satisfies the interface (see `detectInterfaceImplementations`). */
+export interface StructuralImplementor {
+  readonly structDefId: string;
+  readonly receiverForm: 'value' | 'pointer';
+}
 
 export interface ScopeResolver {
   /** Identity for telemetry + per-language flag check. */
@@ -337,13 +374,30 @@ export interface ScopeResolver {
    * orchestrator). TypeScript uses this to thread `tsconfig.json` path
    * aliases through to the standard resolver. Languages that don't
    * need any extra config ignore the parameter.
+   *
+   * `context.parsedFiles` is the complete, read-only language workspace. It is
+   * optional so resolvers that only need paths retain their existing shape.
+   * `context.parsedImport` is the exact import being finalized. PHP uses both
+   * when a PSR-4 import names a function instead of a file.
    */
   resolveImportTarget(
     targetRaw: string,
     fromFile: string,
     allFilePaths: ReadonlySet<string>,
     resolutionConfig?: unknown,
+    context?: ImportResolutionContext,
   ): string | readonly string[] | null;
+
+  /**
+   * Optionally reclassify an import as a namespace handle after target
+   * resolution proves the imported name is itself a module. Returning false
+   * retains ordinary named-binding behavior.
+   */
+  readonly isNamespaceImport?: (
+    parsedImport: ParsedImport,
+    targetFile: string,
+    fromFile: string,
+  ) => boolean;
 
   /**
    * Enumerate names visible through a wildcard import after the target
@@ -397,6 +451,23 @@ export interface ScopeResolver {
    * `(def, callsite)` and need an adapter at the wiring site.
    */
   arityCompatibility(callsite: Callsite, def: SymbolDefinition): ArityVerdict;
+
+  /**
+   * Add provider-specific callable value targets beyond the shared
+   * Function/Method/Constructor set. This is intentionally a predicate hook:
+   * shared flow analysis never branches on a language name or syntax kind.
+   */
+  readonly isCallableValueTarget?: (def: SymbolDefinition) => boolean;
+
+  /**
+   * Restrict this provider's scope-resolution graph mutations to callable-value
+   * CALLS edges. Providers with an existing structural edge pipeline can use
+   * the shared scope model and callable solver without duplicating their
+   * established CALLS, IMPORTS, heritage, or property-dispatch edges.
+   *
+   * Default: `all`.
+   */
+  readonly scopeResolutionEdgeMode?: 'all' | 'callable-flow-only';
 
   /**
    * Per-language constraint compatibility between a callsite and a
@@ -631,6 +702,22 @@ export interface ScopeResolver {
   // ─── Optional toggles ──────────────────────────────────────────────────────
 
   /**
+   * Source-text retention policy for post-extraction hooks that receive a
+   * `fileContents` context (`populateWorkspaceOwners`,
+   * `populateNamespaceSiblings`, `populateRangeBindings`, and
+   * `emitPostResolutionEdges`).
+   *
+   * The default, `all-files`, preserves the existing contract: source text is
+   * loaded for every file before any of those hooks run. A resolver may choose
+   * `uncached-files` only when all of its hooks derive cached-file facts from
+   * `ParsedFile` / capture side-channels and tolerate an empty content string
+   * for pre-extracted files. This keeps the durable ParsedFile path at
+   * O(uncached source) memory without putting language checks in the shared
+   * pipeline.
+   */
+  readonly postExtractSourceTextPolicy?: 'all-files' | 'uncached-files';
+
+  /**
    * Whether the orchestrator should run `propagateImportedReturnTypes`
    * after finalize. Default `true`. TypeScript with explicit type
    * exports may want a different propagation strategy and opt out.
@@ -684,22 +771,56 @@ export interface ScopeResolver {
   readonly resolveInheritedImplicitThisCall?: boolean;
 
   /**
-   * Unwrap a property-style collection accessor on a typed receiver
-   * to its element type. Called by `resolveCompoundReceiverClass`
-   * when walking dotted member-access chains of the form
-   * `receiver.Accessor`. The provider returns the element type's
-   * simple name, or `undefined` when the accessor doesn't unwrap —
-   * in which case the regular field-walk resumes.
+   * Element type of a container, reached either by a subscript (`repos[0]`) or
+   * by a property-style collection view (`dict.Values`). Returns the element
+   * type's simple name, or `undefined` when the container does not unwrap by
+   * that route — in which case the caller resumes its normal walk.
    *
-   * Use this only for languages that expose collection views as
-   * properties rather than method calls; languages whose collection
-   * views are `.values()` / `.keys()` method calls leave this
-   * undefined and let the normal call-expression branch handle them.
+   * ONE hook for both routes, deliberately. They were previously two
+   * (`unwrapCollectionAccessor` for the property route, `unwrapCollectionElement`
+   * for the subscript route), which meant a language implementing one silently
+   * got nothing for the other: C# parsed `Dictionary<K,V>` for `.Values` but
+   * returned nothing for `list[0]`, and TypeScript did the reverse. Two entries
+   * answering one question, each accreting an implementation per language.
+   *
+   * `via` carries the route so a provider can distinguish them where it matters
+   * (a `Dictionary` yields its VALUE type by subscript but either type by
+   * accessor name); a provider that does not care can ignore it.
+   *
+   * Consulted ONLY where the source actually performed the access. It is NOT a
+   * general type-name normalizer: unwrapping a container at a bare class lookup
+   * would let `repos.find(x)` fold to `Repo.find`, because a container's member
+   * set is not its element's. For the same reason it is deliberately separate
+   * from `stripTypePreservingDecoration`: a pointer or a nullable leaves the
+   * member set unchanged and is safe to strip at the lookup; a container is not.
+   *
+   * ## The `index` route is REQUIRED, and `undefined` means "not a container"
+   *
+   * A language that leaves the `index` route unanswered gets NO index folding —
+   * the structural fold declines the step rather than passing the position
+   * through. That is not a default worth softening. `undefined` used to mean
+   * "fall back to identity", on the theory that a capture layer which already
+   * reduced the container (Go's `normalizeGoTypeName`, C#/TypeScript's
+   * `stripGeneric`) leaves nothing to unwrap. The theory holds for a container;
+   * it is false for an ordinary class the source happened to subscript, and
+   * `rawName` cannot tell those apart — `repos: User[]` and `grid: Grid` both
+   * arrive as a bare resolvable class name. Identity there typed `grid[0].run()`
+   * as `Grid.run` and `t[0].Render()` as `Table.Render`: a wrong owner, which
+   * this pipeline ranks strictly below a missing edge.
+   *
+   * The hook is therefore handed `TypeRef.declaredSpelling` — the annotation AS
+   * WRITTEN, retained by the scope extractor precisely because capture-time
+   * normalization destroys it — falling back to `rawName` only when nothing was
+   * normalized away. So a provider sees `User[]`, `List[User]`, `[]*User` or
+   * `Dictionary<string, User>`, never the post-reduction `User`, and answering
+   * `undefined` for a spelling it does not recognize as a container is an
+   * ANSWER, not an absence.
+   *
+   * Implementations may return a still-DECORATED element name (Go's `[]*User`
+   * yields `*User`): the index step looks the element up through
+   * `stripTypePreservingDecoration`, so the pointer resolves.
    */
-  readonly unwrapCollectionAccessor?: (
-    receiverType: string,
-    accessor: string,
-  ) => string | undefined;
+  readonly elementTypeOf?: (containerType: string, via: ElementAccessRoute) => string | undefined;
 
   /**
    * Collapse member-call CALLS edges by `(caller, target)` rather
@@ -722,6 +843,24 @@ export interface ScopeResolver {
   readonly allowGlobalFreeCallFallback?: boolean;
 
   /**
+   * In this language every `Method` belongs to a class instance, so a
+   * FREE (receiver-less) call may resolve to a `Method` only when the
+   * caller's enclosing class chain — the class itself plus its MRO —
+   * contains the method's owner (#2550). Suppresses the finalize-bucket
+   * leak where an unqualified call matched any same-file method by bare
+   * name (`materializeBindings` flattens every declaration onto module
+   * scope). Java opts in; C# is the intended next adopter.
+   *
+   * NOT implemented via `LanguageProvider.builtInNames`: that mechanism
+   * has unrelated consumers (`parse-worker`'s call-site extraction gate
+   * suppresses member calls too; `type-env`'s return-type lookup) which
+   * assume a flagged name is never a real repository declaration —
+   * false for common method names like `run`/`get`/`compare` (verified
+   * regression).
+   */
+  readonly freeCallsRequireInstanceOwnership?: boolean;
+
+  /**
    * When true, a constructor-form call `Type(...)` links to the Class def
    * itself rather than its explicit Constructor def. Default
    * (undefined/false) targets the explicit Constructor when one exists,
@@ -730,6 +869,58 @@ export interface ScopeResolver {
    * Swift — opt in.
    */
   readonly constructorCallTargetsClass?: boolean;
+
+  /**
+   * How this language spells a construction expression, so the compound
+   * receiver resolver can type an INLINE constructor receiver — the
+   * `Service(db).do_work()` shape, where the receiver is the constructed
+   * value itself rather than a binding that holds it (#2708).
+   *
+   * The rule is the same in every language ("constructing a class yields
+   * an instance of that class"); only the surface syntax differs, so the
+   * syntax is declared here and the rule lives once in
+   * `resolveCompoundReceiverClass`:
+   *
+   *   - `bare: true`      — `Service(db).m()`     (Python)
+   *   - `keyword: 'new'`  — `new Service(db).m()` (JS/TS, C#)
+   *   - `selector: 'new'` — `Service.new.m()`     (Ruby)
+   *
+   * Java is deliberately NOT wired even though it spells construction with
+   * `new`: its capture layer already rewrites an `object_creation_expression`
+   * receiver to the constructed type's simple name (#2564), so the raw
+   * `new Svc()` text never reaches this resolver and the declaration would be
+   * unreachable. Measured both ways — Java resolves the shape identically with
+   * and without it.
+   *
+   * Opting in is per-language ON PURPOSE rather than universal, for two
+   * reasons. Correctness: `bare` would mistype `stat(&st).field` in C,
+   * where a struct and a function may share a name and the free call is
+   * NOT a construction. Evidence: PHP, Swift, Dart and Kotlin already
+   * resolve this shape through their own capture-side paths (verified
+   * per language — the receiver typing here changed nothing for them),
+   * so they stay unwired rather than carrying a redundant declaration.
+   *
+   * Only affects receiver TYPING. Which node a construction call links
+   * to is a separate question, owned by `constructorCallTargetsClass`.
+   * Path-syntax constructors (Rust `Foo::new(x)`) are not covered — they
+   * are not member calls and never reach this resolver.
+   */
+  readonly constructionSyntax?: {
+    /** A free call naming a class constructs it: `Service(db)`. */
+    readonly bare?: boolean;
+    /** Prefix keyword form: `new Service(db)`. */
+    readonly keyword?: string;
+    /** Member-selector form on the class itself: `Service.new(db)`.
+     *  Applies only when the receiver names the CLASS — `factory.new` is an
+     *  ordinary call to a member named `new` on an instance and keeps normal
+     *  member resolution. KNOWN LIMITATION: a class that OVERRIDES the
+     *  selector at class level (Ruby `def self.new` returning some other
+     *  type) is still read as construction, because the scope model records
+     *  no staticness for a member, so `def new` and `def self.new` are
+     *  indistinguishable here. Modelling that needs per-member staticness
+     *  from the language provider first. */
+    readonly selector?: string;
+  };
 
   /**
    * Optional per-slot conversion-rank function for overload resolution.
@@ -766,6 +957,20 @@ export interface ScopeResolver {
    * Languages without file-local linkage semantics leave this undefined.
    */
   readonly isFileLocalDef?: (def: SymbolDefinition) => boolean;
+
+  /**
+   * Optional precise linkage predicate used when callable-value flow joins a
+   * declaration graph node (for example a C/C++ prototype in a caller file)
+   * to its out-of-file definition. Unlike `isFileLocalDef`, this hook MUST
+   * answer only language-level internal/file-local linkage. It must not fold
+   * in broader unqualified-name visibility rules such as namespace or member
+   * lookup: an explicit declaration already establishes caller visibility.
+   *
+   * C and C++ provide this hook for `static` free functions. Languages whose
+   * declaration/definition identity is already represented by imports or one
+   * graph node leave it undefined, disabling cross-file prototype joining.
+   */
+  readonly hasFileLocalCallableLinkage?: (def: SymbolDefinition) => boolean;
 
   /**
    * Optional predicate to identify members for which dispatch through
@@ -863,6 +1068,46 @@ export interface ScopeResolver {
   ) => readonly SymbolDefinition[] | undefined;
 
   /**
+   * Optional resolver for a module-qualified FREE call — a call written with
+   * an explicit path but no value receiver (Rust `tools::dispatch(...)`, where
+   * `tools` names a module, not a variable or a type).
+   *
+   * These sites are captured as free calls (`callForm === 'free'`) with the
+   * written path preserved in `site.rawQualifiedName`. Without this hook the
+   * qualifier is inert and the scope-chain walk resolves the bare tail name —
+   * which silently binds to a same-named definition in the CALLER's own file
+   * when one exists, producing a self-loop and dropping the real cross-module
+   * edge (#2730: `fn dispatch` in `sched.rs` calling `tools::dispatch`
+   * resolved to itself, so `impact` reported the central dispatcher as
+   * risk LOW with 0 affected processes).
+   *
+   * `emitFreeCallFallback` invokes this BEFORE the implicit-`this` and
+   * scope-chain lookups, so an explicit path outranks a lexical shadow.
+   * Returning `undefined` (unqualified call, unknown module, or no such
+   * member in the named module) falls through to the unchanged chain — the
+   * hook is strictly additive and never removes an edge the prior tiers
+   * would have produced.
+   *
+   * Languages whose qualified calls carry a value/type receiver (`x.foo()`,
+   * `Type::foo()`) are served by the receiver-bound-calls pass and leave
+   * this undefined.
+   */
+  readonly resolveQualifiedFreeCall?: (
+    site: {
+      readonly name: string;
+      readonly rawQualifiedName?: string;
+      /** Needed to locate the calling MODULE, not just the calling file — a
+       *  relative anchor (`super::`) is resolved against the module the call
+       *  sits in, which may be an inline `mod` block inside that file. */
+      readonly inScope: ScopeId;
+    },
+    callerParsed: ParsedFile,
+    scopes: ScopeResolutionIndexes,
+    workspaceIndex: WorkspaceResolutionIndex,
+    allFilePaths: ReadonlySet<string>,
+  ) => SymbolDefinition | undefined;
+
+  /**
    * Optional resolver for qualified-receiver member calls where the
    * receiver is a namespace (not a class) and ordinary scope-chain /
    * import resolution doesn't find the member. C++ uses this for
@@ -887,6 +1132,44 @@ export interface ScopeResolver {
     parsedFiles: readonly ParsedFile[],
     callsite?: Callsite,
   ) => SymbolDefinition | 'ambiguous' | undefined;
+
+  /**
+   * Every receiver spelling under which a namespace import's target is
+   * reachable, and the file each spelling names (#2826). Returning
+   * `undefined` keeps the shared default: the local binding name alone,
+   * mapped to the edge's own target file.
+   *
+   * Python needs this because one `import a.b.c` statement binds THREE
+   * spellings at once — `a`, `a.b` and `a.b.c` — each naming a DIFFERENT
+   * file (`a/__init__.py`, `a/b/__init__.py`, `a/b/c.py`), while
+   * `ImportEdge` carries only the leaf. The default keyed `a` (its
+   * `localName`) to the LEAF, so `a.helper()` resolved into `a/b/c.py`
+   * whenever that module happened to export `helper` — a wrong edge — and
+   * `a.b.mid()` resolved to nothing at all.
+   *
+   * Shared code cannot derive this. Swift's `import Foo.Bar` produces an
+   * edge shape identical to Python's (`localName: 'Foo'`,
+   * `targetExportedName: 'Foo.Bar'`), yet there the FIRST segment is the
+   * resolved target and `Foo.Bar` names a nested TYPE; keying it would hand
+   * `resolveConstructionExpressionClass` an authoritative namespace — that
+   * branch deliberately does not fall through on a miss — and break
+   * `Foo.Bar(x)` construction that resolves correctly today. And the
+   * `__init__.py` convention that turns a dotted prefix into a file is
+   * Python's alone.
+   *
+   * `moduleFileExists` reports whether a path is a module the workspace
+   * actually parsed, so a provider can propose a prefix file and have it
+   * dropped when absent (a PEP-420 namespace package has no `__init__.py`)
+   * rather than minting a key to a file that is not there.
+   */
+  readonly namespaceReceiverPaths?: (
+    edge: {
+      readonly localName: string;
+      readonly importPath: string;
+      readonly targetFile: string;
+    },
+    moduleFileExists: (filePath: string) => boolean,
+  ) => readonly (readonly [spelling: string, targetFile: string])[] | undefined;
 
   /**
    * Optional language-specific member-lattice lookup. Runs for a resolved
@@ -1009,18 +1292,98 @@ export interface ScopeResolver {
   readonly hoistTypeBindingsToModule?: boolean;
 
   /**
+   * Strip ONE layer of type-preserving decoration off a declared type name,
+   * or return `undefined` when there is nothing left to strip.
+   *
+   * Exists because a declared type is stored as written. Go's
+   * `synthesizeGoReceiverBinding` keeps `typeNode.text`, so a pointer-receiver
+   * method binds its receiver to the literal `*Host` — which matches no class
+   * binding, so receiver-chain resolution declines at the base and every
+   * `h.field.method()` in the dominant Go idiom loses its `CALLS` edge (#2766).
+   * The stored binding is deliberately left decorated (`method-owners.ts`
+   * consumes `*T` vs `T` to model Go's value and pointer method sets), so the
+   * normalization belongs at LOOKUP, never as a rewrite of the binding.
+   *
+   * TYPE-PRESERVING ONLY. Pointer, reference, `const`, nullable, borrow,
+   * deref-transparent smart pointer and sigil all leave the member set
+   * unchanged. A CONTAINER — array, slice, map, `Option` — does not: stripping
+   * one here would type `repos: Repo[]` as `Repo` and let `repos.find(x)` fold
+   * to `Repo.find`, a confident wrong edge the ambiguity gate cannot catch
+   * because `Repo` binds uniquely. Containers are unwrapped only by an index
+   * step that consumed a subscript.
+   *
+   * Consulted ONLY after every undecorated lookup has failed, and only by
+   * receiver-chain base and step resolution — the shared class lookup keeps
+   * exact-name behaviour for its other ~two dozen callers, several of which are
+   * shaped `findClassBindingInScope(...) ?? otherResolver(...)` and would have
+   * their fallback suppressed by a global widening.
+   *
+   * Leave undefined for languages whose declared types carry no type-preserving
+   * decoration. Measured: only Go needs it for a receiver base; Rust, C#, Swift,
+   * TypeScript and C++ need it for field types.
+   */
+  readonly stripTypePreservingDecoration?: DecorationStripper;
+
+  /**
+   * Whether the compound-receiver resolver should strip C-style cast
+   * expressions from receiver-position text before resolving it —
+   * `((Target)((Object)expr)).method()` peels to receiver `expr` with
+   * cast type `Target`, and the outermost captured cast type wins as
+   * the receiver's class. Default `false`.
+   *
+   * Java opts in: decompiler output is dense with cast-wrapped
+   * receivers, and Java's `(Type) expr` cast syntax makes the paren
+   * group textually classifiable. Keep disabled elsewhere:
+   * `(...)`-prefixed receiver text is ambiguous across languages
+   * (grouping, tuples, IIFEs, C-style declarations), so treating it
+   * as a cast would fabricate receiver types — non-opting languages
+   * must see receiver text completely untouched.
+   *
+   * Classifier grammar (exact): a peeled paren group whose content is
+   * a simple identifier (`/^[a-zA-Z_]\w*$/`) is captured as the cast
+   * type; content matching `Ident(.Ident)*(<...>)?([])*` — dotted,
+   * generic, and/or array shapes — is recognized as a cast whose
+   * target type cannot be looked up, and the resolver resolves
+   * NOTHING for that receiver (never the pre-cast expression's own
+   * declared type). Any other paren-group content is not a cast and
+   * the text falls through to the normal resolver.
+   *
+   * A second opting language must extend the classifier grammar or
+   * convert this toggle into a per-language classifier hook (the
+   * `elementTypeOf` pattern) — do not flip this flag for
+   * another language as-is.
+   *
+   * Known non-goal: the compound-receiver options built from this
+   * toggle also feed Case 3b (chain-typeBinding rawNames — declared
+   * types / member paths, never cast RHS for Java) and Case 4's
+   * compound fallback (`receiverName`, paren-free because Case 0
+   * intercepts receivers containing `(` or `.` first), so the
+   * stripper is structurally inert on those inputs.
+   */
+  readonly stripReceiverCastExpressions?: boolean;
+
+  /**
    * Optional: detect structural (duck-typing) interface implementations.
    * Languages like Go use structural typing — a struct satisfies an
    * interface if its method set is a superset, without an explicit
    * `implements` keyword. Runs after finalize, before resolution passes.
-   * Returns: Map<interface_DefId, implementing_struct_DefId[]>.
+   * Returns: Map<interface_DefId, StructuralImplementor[]>, where each entry
+   * names the implementing type AND the form in which it implements.
+   *
+   * `receiverForm` is not a confidence signal — it is the language's own
+   * distinction. In Go the method set of `T` and of `*T` differ (a
+   * pointer-receiver method belongs only to `*T`), so `receiverForm: 'pointer'`
+   * means the VALUE type does not implement the interface and only `*T` does.
+   * `'value'` means both do. Consumers that only want blast radius can ignore
+   * it; consumers reasoning about assignability must not.
+   *
    * Default: undefined (no structural interface detection).
    */
   readonly detectInterfaceImplementations?: (
     parsedFiles: readonly ParsedFile[],
     indexes: ScopeResolutionIndexes,
     model: SemanticModel,
-  ) => Map<string, string[]>;
+  ) => Map<string, readonly StructuralImplementor[]>;
 
   /**
    * Optional: mirror typeBindings from namespace-import target modules

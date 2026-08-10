@@ -30,6 +30,8 @@ import { getCsharpParser, getCsharpScopeQuery } from './query.js';
 import { recordCacheHit, recordCacheMiss } from './cache-stats.js';
 import { getTreeSitterBufferSize } from '../../constants.js';
 import { parseSourceSafe } from '../../../tree-sitter/safe-parse.js';
+import { synthesizeCallableFlowCaptures } from '../../utils/callable-flow-captures.js';
+import { synthesizeReceiverChainCapture } from '../../utils/receiver-chain-captures.js';
 
 /** Declaration anchors that carry function-like arity metadata. */
 const FUNCTION_DECL_TAGS = [
@@ -47,6 +49,28 @@ const FUNCTION_NODE_TYPES = [
   'conversion_operator_declaration',
   'local_function_statement',
 ] as const;
+
+const CSHARP_CALLABLE_CAPTURE_OPTIONS = {
+  functionNodeTypes: new Set([
+    ...FUNCTION_NODE_TYPES,
+    'lambda_expression',
+    'anonymous_method_expression',
+  ]),
+  callNodeTypes: new Set(['invocation_expression']),
+  parameterListNodeTypes: new Set(['parameter_list', 'argument_list']),
+  parameterNodeTypes: new Set(['parameter']),
+  bindingNodeTypes: new Set(['variable_declarator']),
+  assignmentNodeTypes: new Set(['assignment_expression']),
+  identifierNodeTypes: new Set(['identifier', 'generic_name']),
+  callableProtocolMethods: new Set(['Invoke']),
+  extractAssignment: (node: SyntaxNode) => {
+    if (node.type !== 'variable_declarator') return undefined;
+    const destination = node.childForFieldName('name');
+    const source = node.lastNamedChild;
+    if (destination === null || source === null || source.id === destination.id) return undefined;
+    return { destination, source };
+  },
+} as const;
 
 const BUILTIN_TYPE_NAMES = new Set([
   'bool',
@@ -136,6 +160,12 @@ export function emitCsharpScopeCaptures(
       }
       // Defensive fallback: emit the raw match so the extractor at
       // least sees an anchor, even without markers.
+      // Structural receiver chain for a call whose receiver is itself an
+      // expression, so resolution can type it by folding over structure
+      // instead of re-parsing the receiver's source text. Self-gating: a
+      // non-call match, an absent receiver, or a chain with no nameable base
+      // all leave `grouped` untouched.
+      synthesizeReceiverChainCapture(grouped, nodeMap['@reference.receiver']);
       out.push(grouped);
       continue;
     }
@@ -154,6 +184,12 @@ export function emitCsharpScopeCaptures(
     // the AST in code. Mirrors Python's `self`/`cls` synthesis on
     // `@scope.function` matches.
     if (grouped['@scope.function'] !== undefined) {
+      // Structural receiver chain for a call whose receiver is itself an
+      // expression, so resolution can type it by folding over structure
+      // instead of re-parsing the receiver's source text. Self-gating: a
+      // non-call match, an absent receiver, or a chain with no nameable base
+      // all leave `grouped` untouched.
+      synthesizeReceiverChainCapture(grouped, nodeMap['@reference.receiver']);
       out.push(grouped);
       const fnNode = nodeIfType(nodeMap['@scope.function'], ...FUNCTION_NODE_TYPES);
       if (fnNode !== null) {
@@ -264,6 +300,12 @@ export function emitCsharpScopeCaptures(
       }
     }
 
+    // Structural receiver chain for a call whose receiver is itself an
+    // expression, so resolution can type it by folding over structure
+    // instead of re-parsing the receiver's source text. Self-gating: a
+    // non-call match, an absent receiver, or a chain with no nameable base
+    // all leave `grouped` untouched.
+    synthesizeReceiverChainCapture(grouped, nodeMap['@reference.receiver']);
     out.push(grouped);
 
     // Synthesize primary-constructor declarations on class/record
@@ -292,6 +334,7 @@ export function emitCsharpScopeCaptures(
   out.push(...synthesizeGenericTypeArgumentReferences(tree.rootNode));
   out.push(...synthesizeCsharpInheritanceReferences(tree.rootNode));
   out.push(...synthesizeCsharpConstructorInitializerReferences(tree.rootNode));
+  out.push(...synthesizeCallableFlowCaptures(tree.rootNode, CSHARP_CALLABLE_CAPTURE_OPTIONS));
 
   return out;
 }

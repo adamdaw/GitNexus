@@ -39,24 +39,54 @@ const JAVA_SCOPE_QUERY = `
 (record_declaration) @scope.class
 (annotation_type_declaration) @scope.class
 
+;; Anonymous class body: \`new Runnable() { public void run() {} }\`.
+;; Without its own scope, a method's auto-hoist (scope-extractor.ts) has
+;; nowhere to stop and leaks the name past the anonymous class into the
+;; enclosing scope -- the same failure mode fixed for TS/JS object
+;; literals (#2545).
+(object_creation_expression
+  (class_body) @scope.class)
+
+;; Enum constant body: \`enum E { A { public void hook() {} } }\` --
+;; javac's other anonymous-class shape (E$N), same scope-boundary need
+;; and same class_body anchor (#2555).
+(enum_constant
+  body: (class_body) @scope.class)
+
 (method_declaration) @scope.function
 (constructor_declaration) @scope.function
+(compact_constructor_declaration) @scope.function
 
 ;; Declarations — types
+;; Optional-quantifier capture rather than a second pattern: a separate rule
+;; would make every GENERIC declaration match twice under one def id, leaving
+;; match order to decide which twin kept the parameters.
 (class_declaration
-  name: (identifier) @declaration.name) @declaration.class
+  name: (identifier) @declaration.name
+  type_parameters: (type_parameters)? @declaration.type-parameters) @declaration.class
 
 (interface_declaration
-  name: (identifier) @declaration.name) @declaration.interface
+  name: (identifier) @declaration.name
+  type_parameters: (type_parameters)? @declaration.type-parameters) @declaration.interface
 
 (enum_declaration
   name: (identifier) @declaration.name) @declaration.enum
 
 (record_declaration
-  name: (identifier) @declaration.name) @declaration.record
+  name: (identifier) @declaration.name
+  type_parameters: (type_parameters)? @declaration.type-parameters) @declaration.record
 
 (annotation_type_declaration
   name: (identifier) @declaration.name) @declaration.class
+
+;; Class annotation syntax is carried to post-resolution enrichment. Keeping
+;; this in the existing scope query avoids a second AST build/traversal.
+(class_declaration
+  (modifiers
+    [
+      (marker_annotation name: (_) @class-annotation.name)
+      (annotation name: (_) @class-annotation.name)
+    ])) @class-annotation.class
 
 ;; Declarations — methods / constructors
 (method_declaration

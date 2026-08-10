@@ -38,6 +38,17 @@ export type ReferenceKind =
   | 'type-reference'
   | 'inherits'
   | 'import-use'
+  // An identifier in object-literal property-value position
+  // (`{ emitScopeCaptures: emitCppScopeCaptures }`, shorthand `{ hook }`).
+  // Resolution is owned entirely by the post-finalize property-dispatch pass
+  // (`emitPropertyDispatchCalls` via the callable-gated finalized-bindings
+  // walker `findCallableBindingInScope`; `resolveReferenceSites` skips these
+  // sites), so a non-function value never produces a reference. Emitted as a `USES`
+  // reference edge — NOT `CALLS` (a registration is not an invocation;
+  // Kythe `ref` / Joern `METHOD_REF` precedent). The invocation side is
+  // recovered separately by the property-dispatch pass, which uses
+  // `propertyKey` to synthesize CALLS at member-call sites (#2437).
+  | 'value-ref'
   // A macro invocation (`log!(...)` / `vec![...]`). Resolved against
   // `Macro`-labeled definitions ONLY (see `MacroRegistry`) so a macro
   // never aliases a same-named free function — macros and functions are
@@ -90,6 +101,14 @@ export interface ReferenceSite {
   /** Argument count at the call site; used by `provider.arityCompatibility`. */
   readonly arity?: number;
   /**
+   * Object-literal key under which a `value-ref` site registers its value
+   * (`{ emitScopeCaptures: emitHook }` → `'emitScopeCaptures'`; shorthand
+   * `{ emitHook }` → `'emitHook'`). Consumed by the property-dispatch pass
+   * to connect member-call sites (`x.emitScopeCaptures()`) to registered
+   * functions (#2437). Only set for `kind === 'value-ref'`.
+   */
+  readonly propertyKey?: string;
+  /**
    * Inferred argument types at the call site, one per argument. An
    * empty-string entry means "unknown" — consumers narrowing overload
    * candidates treat unknown as any-match. Populated by languages
@@ -104,4 +123,94 @@ export interface ReferenceSite {
    * for existing overload narrowing and conversion-rank logic.
    */
   readonly argumentTypeClasses?: readonly ParameterTypeClass[];
+  /**
+   * Compact encoding of a receiver that is itself an expression, so resolution
+   * can type it by folding over structure instead of re-parsing the receiver's
+   * source text.
+   *
+   * Format and the reason it is a string rather than `MixedChainStep[]` live in
+   * `receiver-chain-codec.ts` — briefly, the store's interning reviver re-shares
+   * objects only when they carry `nodeId` + `filePath`, which a chain step does
+   * not, so an object encoding would survive every warm load as fresh
+   * allocations.
+   *
+   * Absent whenever the receiver is a bare name, which is the overwhelming
+   * majority of sites — the field costs nothing where it is not needed.
+   */
+  readonly receiverChain?: string;
+  /**
+   * This site sits in CALLEE position: it is the expression being invoked by an
+   * enclosing call, not a value the program otherwise consumes. Only ever set on
+   * `kind: 'read'` sites, and only by languages whose member-read capture also
+   * matches the callee of a member call (`obj.f()` yields both a `call` site on
+   * `f` and a `read` site on `obj.f`).
+   *
+   * It is a POSITION FACT, not a decision. Whether that read is redundant
+   * depends on what the tail resolves to, which the capture layer cannot know:
+   *
+   *   - tail is a METHOD  → the read duplicates the call's own edge and must be
+   *                         suppressed (an `ACCESSES → m` beside a `CALLS → m`
+   *                         at the same position is a phantom).
+   *   - tail is a FIELD   → the read is GENUINE. `h.dep.Work()` where
+   *                         `Work func() error` selects a func-typed field and
+   *                         then calls the value it holds; deleting the read
+   *                         erases the only evidence that the field was used
+   *                         (callback/hook structs, hand-rolled mocks).
+   *
+   * The suppression is therefore applied at edge emission, where the resolved
+   * target's kind is known — see `tryEmitEdge`. Absent on every site that is not
+   * in callee position, so nothing changes for languages that never set it.
+   */
+  readonly inCalleePosition?: boolean;
+  /**
+   * This `inherits` site describes an embedded field written as a POINTER
+   * (`struct S { *T }`) rather than as a value (`struct S { T }`).
+   *
+   * Go's method-set rules make the two forms genuinely different, so the
+   * distinction cannot be normalized away without producing wrong answers
+   * (go.dev/ref/spec#Struct_types):
+   *
+   *   - `S` embeds `T`  → `MS(S)` and `MS(*S)` get promoted methods with
+   *                       receiver `T`; only `MS(*S)` also gets those with
+   *                       receiver `*T`.
+   *   - `S` embeds `*T` → `MS(S)` AND `MS(*S)` get promoted methods with
+   *                       receiver `T` **or** `*T`.
+   *
+   * So with `func (t *T) Ping()`, `S{T}` does not implement a `Ping` interface
+   * by value while `S{*T}` does. Collapsing the forms makes both answers the
+   * same, and one of them is then wrong.
+   *
+   * A POSITION FACT, like `inCalleePosition`: the capture layer records how the
+   * field was spelled and resolution decides what it means. Set only by
+   * languages with pointer-embedding semantics (Go today); absent everywhere
+   * else, so every other language's sites stay byte-identical.
+   */
+  readonly embeddedAsPointer?: boolean;
 }
+
+/**
+ * One step in a mixed receiver chain — the decoded form of a receiver that is
+ * itself an expression rather than a bare name.
+ *
+ * For `svc.getUser().address.save()`, the receiver of `save` decodes to
+ * `[{ kind: 'call', name: 'getUser' }, { kind: 'field', name: 'address' }]`
+ * over a base receiver of `svc`.
+ *
+ * Lives here rather than beside its producer because it is part of the
+ * ScopeExtractor output contract that this package owns: the producer
+ * (`extractMixedChain`) walks a tree-sitter AST and so must stay in the
+ * analyzer, but the shape it yields crosses into resolution.
+ */
+/**
+ * One hop in a receiver chain.
+ *
+ * `field` and `call` carry the member name they reach. `await` and `index` are
+ * NAME-FREE: the call step already holds the method name for an awaited call,
+ * and a subscript has no member name at all — an index expression's key is a
+ * value, not an identifier the resolver could look up. The codec encodes them
+ * as a bare sigil and rejects any trailing characters, so the encoder's
+ * non-empty-name guard stays live for exactly the two kinds it was written for.
+ */
+export type MixedChainStep =
+  | { kind: 'field' | 'call'; name: string }
+  | { kind: 'await' | 'index'; name?: undefined };

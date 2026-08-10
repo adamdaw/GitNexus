@@ -105,8 +105,14 @@ describe.skipIf(!apexAvailable)('Apex resolution mechanics (REQ-005/006/007/009)
   // REQ-009 — per-segment field/property chain (a.b.c -> edge per access) ────
   it('resolves each segment of a property chain (i.leaf.value) via ACCESSES (REQ-009)', () => {
     const accesses = getRelationships(result, 'ACCESSES');
-    expect(accesses.find((e) => e.target === 'leaf'), 'i.leaf').toBeDefined();
-    expect(accesses.find((e) => e.target === 'value'), '(i.leaf).value').toBeDefined();
+    expect(
+      accesses.find((e) => e.target === 'leaf'),
+      'i.leaf',
+    ).toBeDefined();
+    expect(
+      accesses.find((e) => e.target === 'value'),
+      '(i.leaf).value',
+    ).toBeDefined();
   });
 
   // REQ-005 — forward (out-of-order) + self/recursive reference ──────────────
@@ -121,7 +127,9 @@ describe.skipIf(!apexAvailable)('Apex resolution mechanics (REQ-005/006/007/009)
   // REQ-007 — nested-type extends/implements (the only in-unit inheritance) ──
   it('resolves nested-type class inheritance (Derived extends Base) via EXTENDS (REQ-007)', () => {
     expect(
-      getRelationships(result, 'EXTENDS').find((e) => e.source === 'Derived' && e.target === 'Base'),
+      getRelationships(result, 'EXTENDS').find(
+        (e) => e.source === 'Derived' && e.target === 'Base',
+      ),
     ).toBeDefined();
   });
 
@@ -220,9 +228,10 @@ describe.skipIf(!apexAvailable)('Apex overload resolution (REQ-008)', () => {
     // m(Integer,Boolean) matches neither overload at every position -> unresolved. So exactly one m binds.
     const mCalls = getRelationships(result, 'CALLS').filter((e) => e.target === 'm');
     expect(mCalls.length, 'exactly the all-positions-identical call resolves').toBe(1);
-    expect(/Integer[\s\S]*String/.test(mCalls[0]?.rel.targetId ?? ''), 'binds m(Integer,String)').toBe(
-      true,
-    );
+    expect(
+      /Integer[\s\S]*String/.test(mCalls[0]?.rel.targetId ?? ''),
+      'binds m(Integer,String)',
+    ).toBe(true);
   });
 
   it('(iii) leaves a genuinely-undisambiguable assignable overload unresolved AND records it (REQ-008 -> REQ-015)', () => {
@@ -282,7 +291,10 @@ describe.skipIf(!apexAvailable)('Apex conservative resolution (REQ-015)', () => 
   it('resolves a present member but leaves an absent member unresolved (REQ-015 no-match)', () => {
     const calls = getRelationships(result, 'CALLS');
     // anchor (genuinely red until resolution is wired): the present member resolves.
-    expect(calls.find((e) => e.target === 'real'), 't.real() resolves').toBeDefined();
+    expect(
+      calls.find((e) => e.target === 'real'),
+      't.real() resolves',
+    ).toBeDefined();
     // absent member: no edge [conservative-negative; see WI-2-red-gate.md].
     expect(calls.filter((e) => e.target === 'missing').length, 't.missing() unresolved').toBe(0);
   });

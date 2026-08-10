@@ -1,7 +1,9 @@
 import { execSync } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
-import { describe, it, expect } from 'vitest';
+import { pathToFileURL } from 'url';
+import { describe, it, expect, vi } from 'vitest';
+import { resolveAnalyzerRunnerIdentity } from '../../src/core/analyzer-identity.js';
 import {
   deriveEmbeddingMode,
   deriveEmbeddingCap,
@@ -9,12 +11,26 @@ import {
 } from '../../src/core/embedding-mode.js';
 import {
   getStoragePaths,
+  loadMeta,
+  registerRepo,
   saveMeta,
-  INCREMENTAL_SCHEMA_VERSION,
   type RepoMeta,
 } from '../../src/storage/repo-manager.js';
+import { SCHEMA_FINGERPRINT } from '../../src/core/lbug/schema.js';
 import { taintModelVersion } from '../../src/core/ingestion/taint/typescript-model.js';
 import { createTempDir } from '../helpers/test-db.js';
+import { readEmbeddingNodeIds } from '../helpers/embedding-seed.js';
+import { getIndexIncompleteReasons } from '../../src/core/index-freshness.js';
+import { CLASS_FRAMEWORK_ANNOTATIONS_FEATURE } from '../../src/core/analysis-features.js';
+
+const CURRENT_ANALYSIS_FEATURES = {
+  [CLASS_FRAMEWORK_ANNOTATIONS_FEATURE.id]: CLASS_FRAMEWORK_ANNOTATIONS_FEATURE.version,
+};
+
+const currentRunnerIdentity = () =>
+  resolveAnalyzerRunnerIdentity(
+    pathToFileURL(path.resolve(__dirname, '../../src/core/run-analyze.ts')).href,
+  );
 
 describe('run-analyze module', () => {
   it('exports runFullAnalysis as a function', async () => {
@@ -48,7 +64,9 @@ describe('run-analyze module', () => {
         // Stamp current schema version so the run-analyze schema-mismatch
         // guard (#2289 P1) does not force a rebuild and short-circuit the
         // alreadyUpToDate fast path this test exercises.
-        schemaVersion: INCREMENTAL_SCHEMA_VERSION,
+        schemaFingerprint: SCHEMA_FINGERPRINT,
+        analysisFeatures: CURRENT_ANALYSIS_FEATURES,
+        runnerIdentity: currentRunnerIdentity(),
       };
       await saveMeta(storagePath, meta);
 
@@ -72,7 +90,686 @@ describe('run-analyze module', () => {
     }
   });
 
-  it('reports isPrimaryBranch false for an up-to-date non-primary branch (#2106 R2)', async () => {
+  it('resumes a matching embedding checkpoint instead of taking the clean fast path', async () => {
+    const tmpRepo = await createTempDir('gitnexus-run-analyze-embedding-checkpoint-');
+    const tmpHome = await createTempDir('gitnexus-run-analyze-embedding-checkpoint-home-');
+    const saved = {
+      home: process.env.GITNEXUS_HOME,
+      url: process.env.GITNEXUS_EMBEDDING_URL,
+      model: process.env.GITNEXUS_EMBEDDING_MODEL,
+      dims: process.env.GITNEXUS_EMBEDDING_DIMS,
+      extension: process.env.GITNEXUS_LBUG_EXTENSION_INSTALL,
+    };
+    try {
+      process.env.GITNEXUS_HOME = tmpHome.dbPath;
+      process.env.GITNEXUS_EMBEDDING_URL = 'http://test:8080/v1';
+      process.env.GITNEXUS_EMBEDDING_MODEL = 'test-model';
+      process.env.GITNEXUS_EMBEDDING_DIMS = '384';
+      process.env.GITNEXUS_LBUG_EXTENSION_INSTALL = 'never';
+      const vector = Array.from({ length: 384 }, (_, i) => i / 384);
+      const fetchMock = vi.fn().mockImplementation(async (_input, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { input?: unknown[] };
+        const count = Array.isArray(body.input) ? body.input.length : 1;
+        return {
+          ok: true,
+          json: async () => ({
+            data: Array.from({ length: count }, () => ({ embedding: vector })),
+          }),
+        };
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      await fs.writeFile(
+        path.join(tmpRepo.dbPath, 'index.ts'),
+        'export function checkpointResume() { return "ready"; }\n',
+      );
+      execSync('git init', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      execSync('git add index.ts', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      execSync('git -c user.name=test -c user.email=test@test commit -m init', {
+        cwd: tmpRepo.dbPath,
+        stdio: 'pipe',
+      });
+
+      const { runFullAnalysis } = await import('../../src/core/run-analyze.js');
+      await runFullAnalysis(
+        tmpRepo.dbPath,
+        { embeddings: true, skipAgentsMd: true, skipSkills: true },
+        { onProgress: () => {} },
+      );
+      const { storagePath } = getStoragePaths(tmpRepo.dbPath);
+      const completed = await loadMeta(storagePath);
+      expect(completed).not.toBeNull();
+      if (!completed) throw new Error('expected completed metadata');
+      const { resolveEmbeddingIdentity } =
+        await import('../../src/core/embeddings/embedding-identity.js');
+      const embeddingIdentity = resolveEmbeddingIdentity();
+      await saveMeta(storagePath, {
+        ...completed,
+        embeddingCheckpoint: {
+          at: new Date().toISOString(),
+          nodesProcessed: 1,
+          totalNodes: 1,
+          chunksProcessed: 1,
+          model: 'test-model',
+          dimensions: 384,
+          provider: embeddingIdentity.provider,
+        },
+      } as RepoMeta);
+      fetchMock.mockClear();
+      const logs: string[] = [];
+
+      const resumed = await runFullAnalysis(
+        tmpRepo.dbPath,
+        { skipAgentsMd: true, skipSkills: true },
+        { onProgress: () => {}, onLog: (message) => logs.push(message) },
+      );
+
+      expect(resumed.alreadyUpToDate).not.toBe(true);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(logs.some((message) => message.includes('embedding checkpoint'))).toBe(true);
+      expect((await loadMeta(storagePath))?.embeddingCheckpoint).toBeUndefined();
+
+      const finalized = await loadMeta(storagePath);
+      if (!finalized) throw new Error('expected finalized metadata');
+      const [pendingNodeId] = await readEmbeddingNodeIds(tmpRepo.dbPath);
+      if (!pendingNodeId) throw new Error('expected a persisted embedding node');
+      await saveMeta(storagePath, {
+        ...finalized,
+        embeddingCheckpoint: {
+          at: new Date().toISOString(),
+          nodesProcessed: 0,
+          totalNodes: 1,
+          chunksProcessed: 0,
+          model: 'test-model',
+          dimensions: 384,
+          provider: embeddingIdentity.provider,
+          pendingNodeIds: [pendingNodeId],
+        },
+      });
+      fetchMock.mockClear();
+
+      await runFullAnalysis(
+        tmpRepo.dbPath,
+        { skipAgentsMd: true, skipSkills: true },
+        { onProgress: () => {} },
+      );
+
+      expect(fetchMock).toHaveBeenCalled();
+      expect((await loadMeta(storagePath))?.embeddingCheckpoint).toBeUndefined();
+
+      const resumedPending = await loadMeta(storagePath);
+      if (!resumedPending) throw new Error('expected pending-window resume metadata');
+      fetchMock.mockClear();
+      // Both mismatch stages name a pending node. That is what an 'interrupted'
+      // marker means — nodes that may hold a SUBSET of their chunks — and it is
+      // what the fail-closed gate exists to protect: a marker with an empty
+      // pending set has nothing to regenerate, so `decideEmbeddingResume`
+      // (embedding-checkpoint.ts) clears it without consulting the identity.
+      await saveMeta(storagePath, {
+        ...resumedPending,
+        embeddingCheckpoint: {
+          at: new Date().toISOString(),
+          nodesProcessed: 1,
+          totalNodes: 2,
+          chunksProcessed: 1,
+          model: 'test-model',
+          dimensions: 384,
+          provider: 'http:different-provider-fingerprint',
+          pendingNodeIds: [pendingNodeId],
+        },
+      });
+      await expect(
+        runFullAnalysis(
+          tmpRepo.dbPath,
+          { skipAgentsMd: true, skipSkills: true },
+          { onProgress: () => {} },
+        ),
+      ).rejects.toThrow(/provider configuration differs/i);
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      await saveMeta(storagePath, {
+        ...resumedPending,
+        embeddingCheckpoint: {
+          at: new Date().toISOString(),
+          nodesProcessed: 1,
+          totalNodes: 2,
+          chunksProcessed: 1,
+          model: 'different-model',
+          dimensions: 384,
+          provider: embeddingIdentity.provider,
+          pendingNodeIds: [pendingNodeId],
+        },
+      });
+      await expect(
+        runFullAnalysis(
+          tmpRepo.dbPath,
+          { skipAgentsMd: true, skipSkills: true },
+          { onProgress: () => {} },
+        ),
+      ).rejects.toThrow('Cannot resume embedding checkpoint');
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      const restore = (key: string, value: string | undefined) => {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      };
+      restore('GITNEXUS_HOME', saved.home);
+      restore('GITNEXUS_EMBEDDING_URL', saved.url);
+      restore('GITNEXUS_EMBEDDING_MODEL', saved.model);
+      restore('GITNEXUS_EMBEDDING_DIMS', saved.dims);
+      restore('GITNEXUS_LBUG_EXTENSION_INSTALL', saved.extension);
+      await tmpRepo.cleanup();
+      await tmpHome.cleanup();
+    }
+  }, 120_000);
+
+  /**
+   * #2790 regression: an embedding checkpoint must write ONLY the checkpoint.
+   *
+   * `onCheckpointWindowStart` fires at batchIndex 0 — before a single embedding
+   * row exists — and used to persist a full SUCCESS-shaped meta: the new
+   * `lastCommit`, the new `fileHashes`, and `incrementalInProgress: undefined`.
+   * A Phase 4 crash then left a meta vouching for a graph that (on a full
+   * rebuild) had just been thrown away with the staging DB, and the next run
+   * hash-diffed to changed=0/added=0/deleted=0, took the incremental path and
+   * logged "skipping wipe + N unchanged file rows preserved" over the OLD
+   * graph — verbatim the symptom in the issue report — with the crash-recovery
+   * dirty flag it had cleared no longer able to force the healing rebuild.
+   *
+   * Driven through the REAL pipeline rather than by calling the closure
+   * directly: the mid-run meta is captured from inside the fetch mock, which
+   * the embedder only reaches AFTER the window-start save has completed, so
+   * the observation point is ordered by the code under test, not by timing.
+   */
+  it('an embedding checkpoint does not advance lastCommit/fileHashes or clear the dirty flag (#2790)', async () => {
+    const tmpRepo = await createTempDir('gitnexus-run-analyze-2790-checkpoint-');
+    const tmpHome = await createTempDir('gitnexus-run-analyze-2790-home-');
+    const saved = {
+      home: process.env.GITNEXUS_HOME,
+      url: process.env.GITNEXUS_EMBEDDING_URL,
+      model: process.env.GITNEXUS_EMBEDDING_MODEL,
+      dims: process.env.GITNEXUS_EMBEDDING_DIMS,
+      extension: process.env.GITNEXUS_LBUG_EXTENSION_INSTALL,
+    };
+    try {
+      process.env.GITNEXUS_HOME = tmpHome.dbPath;
+      process.env.GITNEXUS_EMBEDDING_URL = 'http://test:8080/v1';
+      process.env.GITNEXUS_EMBEDDING_MODEL = 'test-model';
+      process.env.GITNEXUS_EMBEDDING_DIMS = '384';
+      process.env.GITNEXUS_LBUG_EXTENSION_INSTALL = 'never';
+      const vector = Array.from({ length: 384 }, (_, i) => i / 384);
+      const { storagePath } = getStoragePaths(tmpRepo.dbPath);
+      // Every embed request snapshots the on-disk meta. The checkpoint save is
+      // awaited before the batch that issues these requests, so snapshot[0] is
+      // the state a crash inside the first embedding window would leave behind.
+      const midRunMetas: RepoMeta[] = [];
+      let captureMidRunMeta = false;
+      const fetchMock = vi.fn().mockImplementation(async (_input, init?: RequestInit) => {
+        if (captureMidRunMeta) {
+          const snapshot = await loadMeta(storagePath);
+          if (snapshot) midRunMetas.push(snapshot);
+        }
+        const body = JSON.parse(String(init?.body ?? '{}')) as { input?: unknown[] };
+        const count = Array.isArray(body.input) ? body.input.length : 1;
+        return {
+          ok: true,
+          json: async () => ({
+            data: Array.from({ length: count }, () => ({ embedding: vector })),
+          }),
+        };
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const git = (cmd: string) => execSync(cmd, { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      const headCommit = () =>
+        execSync('git rev-parse HEAD', { cwd: tmpRepo.dbPath, encoding: 'utf-8' }).trim();
+
+      await fs.writeFile(
+        path.join(tmpRepo.dbPath, 'index.ts'),
+        'export function first() { return "one"; }\n',
+      );
+      git('git init');
+      git('git add index.ts');
+      git('git -c user.name=test -c user.email=test@test commit -m init');
+      const commitA = headCommit();
+
+      const { runFullAnalysis } = await import('../../src/core/run-analyze.js');
+      await runFullAnalysis(
+        tmpRepo.dbPath,
+        { embeddings: true, skipAgentsMd: true, skipSkills: true },
+        { onProgress: () => {} },
+      );
+      const baselineMeta = await loadMeta(storagePath);
+      if (!baselineMeta) throw new Error('expected baseline metadata');
+      expect(baselineMeta.lastCommit).toBe(commitA);
+
+      // A second commit gives the next run real incremental work AND a new
+      // embeddable node, so the checkpoint window actually opens.
+      await fs.writeFile(
+        path.join(tmpRepo.dbPath, 'second.ts'),
+        'export function second() { return "two"; }\n',
+      );
+      git('git add second.ts');
+      git('git -c user.name=test -c user.email=test@test commit -m second');
+      const commitB = headCommit();
+      expect(commitB).not.toBe(commitA);
+
+      captureMidRunMeta = true;
+      const incrementalLogs: string[] = [];
+      await runFullAnalysis(
+        tmpRepo.dbPath,
+        { embeddings: true, skipAgentsMd: true, skipSkills: true },
+        { onProgress: () => {}, onLog: (message) => incrementalLogs.push(message) },
+      );
+      captureMidRunMeta = false;
+
+      // Pins the scenario: this run really took the incremental path, so the
+      // pre-write dirty flag below is the incremental one.
+      expect(incrementalLogs).toContainEqual(expect.stringContaining('Incremental: changed='));
+      const [midRunMeta] = midRunMetas;
+      if (!midRunMeta) throw new Error('expected a mid-run metadata snapshot');
+
+      // The checkpoint is persisted…
+      expect(midRunMeta).toMatchObject({
+        embeddingCheckpoint: { model: 'test-model', dimensions: 384 },
+      });
+      // …but NOTHING that certifies freshness moved: the graph is not published
+      // yet, so the next run must still see this repo as changed and dirty.
+      expect(midRunMeta).toMatchObject({
+        lastCommit: commitA,
+        fileHashes: baselineMeta.fileHashes,
+        incrementalInProgress: { startedAt: expect.any(Number) },
+      });
+      expect(midRunMeta.lastCommit).not.toBe(commitB);
+      // The stale-count restatement is gone too: the window-start save leaves
+      // whatever count is already on disk alone.
+      expect(midRunMeta.stats?.embeddings).toBe(baselineMeta.stats?.embeddings);
+
+      // ── The consequence ────────────────────────────────────────────────
+      // Restore exactly what a Phase 4 crash would have left on disk and run
+      // again. The next run must NOT mistake the repo for unchanged.
+      await saveMeta(storagePath, midRunMeta);
+      const recoveryLogs: string[] = [];
+      const recovered = await runFullAnalysis(
+        tmpRepo.dbPath,
+        { skipAgentsMd: true, skipSkills: true },
+        { onProgress: () => {}, onLog: (message) => recoveryLogs.push(message) },
+      );
+
+      expect(recovered.alreadyUpToDate).not.toBe(true);
+      // The #2790 symptom line must NOT appear: pre-fix the advanced hashes
+      // diffed to zero and the run "preserved" every stale row instead.
+      expect(recoveryLogs).not.toContainEqual(expect.stringContaining('skipping wipe'));
+      // The crash-recovery contract survived the checkpoint, so the dirty flag
+      // is what drives the rebuild.
+      expect(recoveryLogs).toContainEqual(
+        expect.stringContaining('forcing full rebuild to restore a known-good index'),
+      );
+      const healed = await loadMeta(storagePath);
+      expect(healed).toMatchObject({ lastCommit: commitB });
+      expect(healed?.embeddingCheckpoint).toBeUndefined();
+      expect(healed?.incrementalInProgress).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+      const restore = (key: string, value: string | undefined) => {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      };
+      restore('GITNEXUS_HOME', saved.home);
+      restore('GITNEXUS_EMBEDDING_URL', saved.url);
+      restore('GITNEXUS_EMBEDDING_MODEL', saved.model);
+      restore('GITNEXUS_EMBEDDING_DIMS', saved.dims);
+      restore('GITNEXUS_LBUG_EXTENSION_INSTALL', saved.extension);
+      await tmpRepo.cleanup();
+      await tmpHome.cleanup();
+    }
+  }, 120_000);
+
+  /**
+   * #2790 regression: a partial embedding run must actually self-heal.
+   *
+   * The pipeline now tolerates a failed sub-batch by DELETING the affected
+   * nodes' rows and naming them in `failedNodeIds`. "Zero rows heals itself" is
+   * false on its own: a plain `gitnexus analyze` over an already-embedded index
+   * derives shouldGenerateEmbeddings = false and never calls the pipeline, so
+   * the dropped nodes stayed missing until someone passed
+   * --embeddings/--force/--drop-embeddings. Retaining the checkpoint restores
+   * the pre-#2790 heal — the resume path forces generation regardless of flags.
+   *
+   * Driven through the REAL pipeline against a stubbed endpoint so the pending
+   * set is produced by the failure path itself, not hand-written.
+   */
+  it('a partially-failed embedding run is healed by the next PLAIN analyze (#2790)', async () => {
+    const tmpRepo = await createTempDir('gitnexus-run-analyze-2790-heal-');
+    const tmpHome = await createTempDir('gitnexus-run-analyze-2790-heal-home-');
+    const saved = {
+      home: process.env.GITNEXUS_HOME,
+      url: process.env.GITNEXUS_EMBEDDING_URL,
+      model: process.env.GITNEXUS_EMBEDDING_MODEL,
+      dims: process.env.GITNEXUS_EMBEDDING_DIMS,
+      extension: process.env.GITNEXUS_LBUG_EXTENSION_INSTALL,
+      batch: process.env.GITNEXUS_EMBEDDING_BATCH_SIZE,
+      subBatch: process.env.GITNEXUS_EMBEDDING_SUB_BATCH_SIZE,
+      attempts: process.env.GITNEXUS_EMBEDDING_MAX_ATTEMPTS,
+    };
+    try {
+      process.env.GITNEXUS_HOME = tmpHome.dbPath;
+      process.env.GITNEXUS_EMBEDDING_URL = 'http://test:8080/v1';
+      process.env.GITNEXUS_EMBEDDING_MODEL = 'test-model';
+      process.env.GITNEXUS_EMBEDDING_DIMS = '384';
+      process.env.GITNEXUS_LBUG_EXTENSION_INSTALL = 'never';
+      // One node per batch, one chunk per request: the failure lands on exactly
+      // one sub-batch. maxAttempts 1 removes the retry loop, so a single stubbed
+      // 503 is terminal without sleeping — and stays one failure, three short of
+      // the shared circuit breaker's threshold, so no later batch is collaterally
+      // failed.
+      process.env.GITNEXUS_EMBEDDING_BATCH_SIZE = '1';
+      process.env.GITNEXUS_EMBEDDING_SUB_BATCH_SIZE = '1';
+      process.env.GITNEXUS_EMBEDDING_MAX_ATTEMPTS = '1';
+
+      const vector = Array.from({ length: 384 }, (_, i) => i / 384);
+      const { storagePath } = getStoragePaths(tmpRepo.dbPath);
+      let failNextEmbedRequest = false;
+      const fetchMock = vi.fn().mockImplementation(async (_input, init?: RequestInit) => {
+        if (failNextEmbedRequest) {
+          failNextEmbedRequest = false;
+          return { ok: false, status: 503, text: async () => 'endpoint unavailable' };
+        }
+        const body = JSON.parse(String(init?.body ?? '{}')) as { input?: unknown[] };
+        const count = Array.isArray(body.input) ? body.input.length : 1;
+        return {
+          ok: true,
+          json: async () => ({
+            data: Array.from({ length: count }, () => ({ embedding: vector })),
+          }),
+        };
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const git = (cmd: string) => execSync(cmd, { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      // Several nodes so the run survives losing one — a run that persists
+      // nothing is the Phase 5 gate's job, not this test's.
+      for (const n of [1, 2, 3, 4, 5]) {
+        await fs.writeFile(
+          path.join(tmpRepo.dbPath, `mod${n}.ts`),
+          `export function handler${n}(input: string): string {\n  return \`${n}:\${input}\`;\n}\n`,
+        );
+      }
+      git('git init');
+      git('git add .');
+      git('git -c user.name=test -c user.email=test@test commit -m init');
+
+      const { runFullAnalysis } = await import('../../src/core/run-analyze.js');
+
+      // ── Run 1: one sub-batch loses the endpoint ───────────────────────
+      failNextEmbedRequest = true;
+      const partialLogs: string[] = [];
+      await runFullAnalysis(
+        tmpRepo.dbPath,
+        { embeddings: true, skipAgentsMd: true, skipSkills: true },
+        { onProgress: () => {}, onLog: (message) => partialLogs.push(message) },
+      );
+      expect(failNextEmbedRequest).toBe(false);
+      expect(partialLogs).toContainEqual(
+        expect.stringContaining('lost their embeddings to embedding-endpoint failures'),
+      );
+
+      const partialMeta = await loadMeta(storagePath);
+      // The checkpoint survived finalize, carrying the dropped nodes…
+      expect(partialMeta).toMatchObject({
+        embeddingCheckpoint: {
+          model: 'test-model',
+          dimensions: 384,
+          pendingNodeIds: [expect.any(String)],
+        },
+      });
+      // The marker a COMPLETED run writes is 'partial' (#2790 review, finding
+      // 5a): its nodes provably hold zero rows, so a later run under a
+      // different embedding identity warns and drops them instead of throwing
+      // at the resume gate before any phase runs.
+      expect(partialMeta).toMatchObject({ embeddingCheckpoint: { kind: 'partial' } });
+      const pendingNodeIds = partialMeta?.embeddingCheckpoint?.pendingNodeIds ?? [];
+      // …and those nodes really hold no rows.
+      const embeddedAfterPartial = await readEmbeddingNodeIds(tmpRepo.dbPath);
+      expect(embeddedAfterPartial).toEqual(expect.not.arrayContaining(pendingNodeIds as string[]));
+
+      // ── The containment claim, asserted EXACTLY ────────────────────────
+      // `toBeGreaterThan(0)` passed with 1 survivor out of 5 — it could not
+      // tell a contained sub-batch failure from a run that lost most of the
+      // index. The whole safety argument for shipping a partial index is the
+      // COLLATERAL-DAMAGE direction: every node that did NOT fail kept its
+      // rows. The fixture is fully determined — five exported functions, one
+      // embeddable Function node each, one node per batch and one chunk per
+      // request — so the surviving set is exactly the five handlers minus the
+      // one whose sub-batch lost the endpoint.
+      const ALL_HANDLERS = ['handler1', 'handler2', 'handler3', 'handler4', 'handler5'];
+      const handlerOf = (nodeId: string): string => /handler\d/.exec(nodeId)?.[0] ?? nodeId;
+      const survivingHandlers = [...new Set(embeddedAfterPartial.map(handlerOf))].sort();
+      const droppedHandlers = [...new Set(pendingNodeIds.map(handlerOf))].sort();
+      expect(droppedHandlers).toHaveLength(1);
+      expect([...survivingHandlers, ...droppedHandlers].sort()).toEqual(ALL_HANDLERS);
+      expect(survivingHandlers).toHaveLength(ALL_HANDLERS.length - 1);
+
+      // ── Run 2: a PLAIN analyze — no --embeddings, no --force ──────────
+      // Pre-fix this early-returned "already up to date" (or derived
+      // shouldGenerateEmbeddings = false) and the dropped nodes never came back.
+      const healLogs: string[] = [];
+      await runFullAnalysis(
+        tmpRepo.dbPath,
+        { skipAgentsMd: true, skipSkills: true },
+        { onProgress: () => {}, onLog: (message) => healLogs.push(message) },
+      );
+
+      // The resume path is what forced generation on a flagless run.
+      expect(healLogs).toContainEqual(
+        expect.stringContaining('Previous analyze ended at an embedding checkpoint'),
+      );
+      expect(healLogs).toContainEqual(
+        expect.stringContaining(`regenerating ${pendingNodeIds.length} pending node(s)`),
+      );
+
+      // The nodes are back, and the index no longer reports itself incomplete.
+      const healedEmbedded = await readEmbeddingNodeIds(tmpRepo.dbPath);
+      expect(healedEmbedded).toEqual(expect.arrayContaining(pendingNodeIds as string[]));
+      const healedMeta = await loadMeta(storagePath);
+      expect(healedMeta?.embeddingCheckpoint).toBeUndefined();
+      expect(getIndexIncompleteReasons(healedMeta)).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+      const restore = (key: string, value: string | undefined) => {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      };
+      restore('GITNEXUS_HOME', saved.home);
+      restore('GITNEXUS_EMBEDDING_URL', saved.url);
+      restore('GITNEXUS_EMBEDDING_MODEL', saved.model);
+      restore('GITNEXUS_EMBEDDING_DIMS', saved.dims);
+      restore('GITNEXUS_LBUG_EXTENSION_INSTALL', saved.extension);
+      restore('GITNEXUS_EMBEDDING_BATCH_SIZE', saved.batch);
+      restore('GITNEXUS_EMBEDDING_SUB_BATCH_SIZE', saved.subBatch);
+      restore('GITNEXUS_EMBEDDING_MAX_ATTEMPTS', saved.attempts);
+      await tmpRepo.cleanup();
+      await tmpHome.cleanup();
+    }
+  }, 180_000);
+
+  it('plain analyze on another branch adopts the flat workspace slot (#2354)', async () => {
+    const tmpRepo = await createTempDir('gitnexus-run-analyze-workspace-');
+    const tmpHome = await createTempDir('gitnexus-run-analyze-workspace-home-');
+    const savedHome = process.env.GITNEXUS_HOME;
+    process.env.GITNEXUS_HOME = tmpHome.dbPath;
+    try {
+      execSync('git init', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      execSync('git -c user.name=t -c user.email=t@t commit --allow-empty -m init', {
+        cwd: tmpRepo.dbPath,
+        stdio: 'pipe',
+      });
+      execSync('git branch -M main', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      execSync('git checkout -b feature/x', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      const commit = execSync('git rev-parse HEAD', {
+        cwd: tmpRepo.dbPath,
+        encoding: 'utf-8',
+      }).trim();
+      const runnerIdentity = currentRunnerIdentity();
+
+      // Flat slot last analyzed on main; feature/x also has a pinned sub-index.
+      // Both metas stamp the current schema version so the run-analyze
+      // schema-mismatch guard (#2289 P1) does not force a rebuild before the
+      // fast path runs.
+      const flat = getStoragePaths(tmpRepo.dbPath);
+      const flatMetaSeed: RepoMeta = {
+        repoPath: tmpRepo.dbPath,
+        lastCommit: commit,
+        indexedAt: new Date().toISOString(),
+        branch: 'main',
+        schemaFingerprint: SCHEMA_FINGERPRINT,
+        analysisFeatures: CURRENT_ANALYSIS_FEATURES,
+        runnerIdentity,
+      };
+      await saveMeta(flat.storagePath, flatMetaSeed);
+      const branch = getStoragePaths(tmpRepo.dbPath, 'feature/x');
+      await saveMeta(path.dirname(branch.metaPath), {
+        repoPath: tmpRepo.dbPath,
+        lastCommit: commit,
+        indexedAt: new Date().toISOString(),
+        branch: 'feature/x',
+        schemaFingerprint: SCHEMA_FINGERPRINT,
+        analysisFeatures: CURRENT_ANALYSIS_FEATURES,
+        runnerIdentity,
+      });
+      // Register the repo in an isolated registry: the shadow cleanup only
+      // runs for registered repos (#2364 review F2 — unregistered repos must
+      // never lose a pinned sub-index).
+      await registerRepo(tmpRepo.dbPath, flatMetaSeed);
+      await registerRepo(
+        tmpRepo.dbPath,
+        { ...flatMetaSeed, branch: 'feature/x' },
+        { branch: 'feature/x' },
+      );
+
+      // A plain analyze ignores the pinned sub-index and serves the flat
+      // workspace slot; the same-commit clean-tree fast path restamps the
+      // slot's branch label and removes the now-shadowed sub-index.
+      const { runFullAnalysis } = await import('../../src/core/run-analyze.js');
+      const result = await runFullAnalysis(tmpRepo.dbPath, {}, { onProgress: () => {} });
+      expect(result.alreadyUpToDate).toBe(true);
+      expect(result.isPrimaryBranch).toBe(true);
+      const flatMeta = await loadMeta(flat.storagePath);
+      expect(flatMeta?.branch).toBe('feature/x');
+      await expect(fs.access(path.dirname(branch.metaPath))).rejects.toThrow();
+    } finally {
+      if (savedHome === undefined) delete process.env.GITNEXUS_HOME;
+      else process.env.GITNEXUS_HOME = savedHome;
+      await tmpHome.cleanup();
+      await tmpRepo.cleanup();
+    }
+  });
+
+  it('the fast-path restamp leaves an unregistered repo pinned sub-index intact (#2364 F2)', async () => {
+    const tmpRepo = await createTempDir('gitnexus-run-analyze-unregistered-');
+    const tmpHome = await createTempDir('gitnexus-run-analyze-unregistered-home-');
+    const savedHome = process.env.GITNEXUS_HOME;
+    process.env.GITNEXUS_HOME = tmpHome.dbPath;
+    try {
+      execSync('git init', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      execSync('git -c user.name=t -c user.email=t@t commit --allow-empty -m init', {
+        cwd: tmpRepo.dbPath,
+        stdio: 'pipe',
+      });
+      execSync('git branch -M main', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      execSync('git checkout -b feature/x', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      const commit = execSync('git rev-parse HEAD', {
+        cwd: tmpRepo.dbPath,
+        encoding: 'utf-8',
+      }).trim();
+      const runnerIdentity = currentRunnerIdentity();
+
+      const flat = getStoragePaths(tmpRepo.dbPath);
+      await saveMeta(flat.storagePath, {
+        repoPath: tmpRepo.dbPath,
+        lastCommit: commit,
+        indexedAt: new Date().toISOString(),
+        branch: 'main',
+        schemaFingerprint: SCHEMA_FINGERPRINT,
+        analysisFeatures: CURRENT_ANALYSIS_FEATURES,
+        runnerIdentity,
+      });
+      const branch = getStoragePaths(tmpRepo.dbPath, 'feature/x');
+      await saveMeta(path.dirname(branch.metaPath), {
+        repoPath: tmpRepo.dbPath,
+        lastCommit: commit,
+        indexedAt: new Date().toISOString(),
+        branch: 'feature/x',
+        schemaFingerprint: SCHEMA_FINGERPRINT,
+        analysisFeatures: CURRENT_ANALYSIS_FEATURES,
+        runnerIdentity,
+      });
+      // Deliberately NO registerRepo: the empty isolated registry makes this
+      // repo unregistered, so the adopt must be a full no-op on disk
+      // (#2264/#1169 no-self-heal, #2364 review F2).
+
+      const { runFullAnalysis } = await import('../../src/core/run-analyze.js');
+      const result = await runFullAnalysis(tmpRepo.dbPath, {}, { onProgress: () => {} });
+      expect(result.alreadyUpToDate).toBe(true);
+      const flatMeta = await loadMeta(flat.storagePath);
+      // The informational flat label still restamps…
+      expect(flatMeta?.branch).toBe('feature/x');
+      // …but the pinned sub-index survives untouched.
+      await expect(fs.access(path.dirname(branch.metaPath))).resolves.toBeUndefined();
+    } finally {
+      if (savedHome === undefined) delete process.env.GITNEXUS_HOME;
+      else process.env.GITNEXUS_HOME = savedHome;
+      await tmpHome.cleanup();
+      await tmpRepo.cleanup();
+    }
+  });
+
+  it('a detached HEAD at the same commit skips the fast-path restamp (#2364 F3 gap 6)', async () => {
+    const tmpRepo = await createTempDir('gitnexus-run-analyze-detached-');
+    const tmpHome = await createTempDir('gitnexus-run-analyze-detached-home-');
+    const savedHome = process.env.GITNEXUS_HOME;
+    process.env.GITNEXUS_HOME = tmpHome.dbPath;
+    try {
+      execSync('git init', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      execSync('git -c user.name=t -c user.email=t@t commit --allow-empty -m init', {
+        cwd: tmpRepo.dbPath,
+        stdio: 'pipe',
+      });
+      execSync('git branch -M main', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      execSync('git checkout --detach', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      const commit = execSync('git rev-parse HEAD', {
+        cwd: tmpRepo.dbPath,
+        encoding: 'utf-8',
+      }).trim();
+      const runnerIdentity = currentRunnerIdentity();
+
+      const flat = getStoragePaths(tmpRepo.dbPath);
+      await saveMeta(flat.storagePath, {
+        repoPath: tmpRepo.dbPath,
+        lastCommit: commit,
+        indexedAt: new Date().toISOString(),
+        branch: 'main',
+        schemaFingerprint: SCHEMA_FINGERPRINT,
+        analysisFeatures: CURRENT_ANALYSIS_FEATURES,
+        runnerIdentity,
+      });
+
+      // Detached HEAD → branchLabel is null → the restamp block must not
+      // fire: the existing stamp survives, mirroring the end-of-run write.
+      const { runFullAnalysis } = await import('../../src/core/run-analyze.js');
+      const result = await runFullAnalysis(tmpRepo.dbPath, {}, { onProgress: () => {} });
+      expect(result.alreadyUpToDate).toBe(true);
+      const flatMeta = await loadMeta(flat.storagePath);
+      expect(flatMeta?.branch).toBe('main');
+    } finally {
+      if (savedHome === undefined) delete process.env.GITNEXUS_HOME;
+      else process.env.GITNEXUS_HOME = savedHome;
+      await tmpHome.cleanup();
+      await tmpRepo.cleanup();
+    }
+  });
+
+  it('reports isPrimaryBranch false for an up-to-date explicit --branch run (#2106 R2)', async () => {
     const tmpRepo = await createTempDir('gitnexus-run-analyze-nonprimary-');
     try {
       execSync('git init', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
@@ -86,18 +783,19 @@ describe('run-analyze module', () => {
         cwd: tmpRepo.dbPath,
         encoding: 'utf-8',
       }).trim();
+      const runnerIdentity = currentRunnerIdentity();
 
-      // Flat slot owned by main; feature/x has its own up-to-date branch index.
-      // Both metas stamp the current schema version so the run-analyze
-      // schema-mismatch guard (#2289 P1) does not force a rebuild before the
-      // fast path runs.
+      // Flat slot recorded for main; feature/x has its own up-to-date pinned
+      // sub-index, so an explicit `--branch feature/x` run routes there.
       const flat = getStoragePaths(tmpRepo.dbPath);
       await saveMeta(flat.storagePath, {
         repoPath: tmpRepo.dbPath,
         lastCommit: commit,
         indexedAt: new Date().toISOString(),
         branch: 'main',
-        schemaVersion: INCREMENTAL_SCHEMA_VERSION,
+        schemaFingerprint: SCHEMA_FINGERPRINT,
+        analysisFeatures: CURRENT_ANALYSIS_FEATURES,
+        runnerIdentity,
       });
       const branch = getStoragePaths(tmpRepo.dbPath, 'feature/x');
       await saveMeta(path.dirname(branch.metaPath), {
@@ -105,13 +803,21 @@ describe('run-analyze module', () => {
         lastCommit: commit,
         indexedAt: new Date().toISOString(),
         branch: 'feature/x',
-        schemaVersion: INCREMENTAL_SCHEMA_VERSION,
+        schemaFingerprint: SCHEMA_FINGERPRINT,
+        analysisFeatures: CURRENT_ANALYSIS_FEATURES,
+        runnerIdentity,
       });
 
       const { runFullAnalysis } = await import('../../src/core/run-analyze.js');
-      const result = await runFullAnalysis(tmpRepo.dbPath, {}, { onProgress: () => {} });
+      const result = await runFullAnalysis(
+        tmpRepo.dbPath,
+        { branch: 'feature/x' },
+        { onProgress: () => {} },
+      );
       expect(result.alreadyUpToDate).toBe(true);
       expect(result.isPrimaryBranch).toBe(false);
+      // The pinned sub-index is untouched by an explicit branch run.
+      await expect(fs.access(path.dirname(branch.metaPath))).resolves.toBeUndefined();
     } finally {
       await tmpRepo.cleanup();
     }
@@ -140,9 +846,9 @@ describe('run-analyze module', () => {
 });
 
 describe('collectBranchCacheKeys (#2106 R6)', () => {
-  const writeMeta = async (dir: string, cacheKeys: unknown) => {
+  const writeMeta = async (dir: string, cacheKeys: unknown, filename = 'gitnexus.json') => {
     await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(path.join(dir, 'meta.json'), JSON.stringify({ cacheKeys }));
+    await fs.writeFile(path.join(dir, filename), JSON.stringify({ cacheKeys }));
   };
 
   it('collects sibling branch keys, excluding the current run dir', async () => {
@@ -188,7 +894,7 @@ describe('collectBranchCacheKeys (#2106 R6)', () => {
       await writeMeta(storagePath, ['a']);
       const branchDir = path.join(storagePath, 'branches', 'feat');
       await fs.mkdir(branchDir, { recursive: true });
-      await fs.writeFile(path.join(branchDir, 'meta.json'), '{ not valid json');
+      await fs.writeFile(path.join(branchDir, 'gitnexus.json'), '{ not valid json');
       const { collectBranchCacheKeys } = await import('../../src/core/run-analyze.js');
       const r = await collectBranchCacheKeys(storagePath, storagePath);
       expect(r.complete).toBe(false);
@@ -196,35 +902,20 @@ describe('collectBranchCacheKeys (#2106 R6)', () => {
       await tmp.cleanup();
     }
   });
-});
 
-describe('primaryInversionWarning (#2106 R8)', () => {
-  it('warns when the default branch is not the flat-slot owner', async () => {
-    const { primaryInversionWarning } = await import('../../src/core/run-analyze.js');
-    const w = primaryInversionWarning('main', 'feature/x');
-    expect(w).toContain('default branch "main"');
-    expect(w).toContain('"feature/x" owns the flat slot');
-    expect(w).toContain('clean --branch feature/x');
-  });
-
-  it('does not warn when the default branch is null (no origin/HEAD)', async () => {
-    const { primaryInversionWarning } = await import('../../src/core/run-analyze.js');
-    expect(primaryInversionWarning(null, 'feature/x')).toBeUndefined();
-  });
-
-  it('does not warn when the default owns the flat slot', async () => {
-    const { primaryInversionWarning } = await import('../../src/core/run-analyze.js');
-    expect(primaryInversionWarning('main', 'main')).toBeUndefined();
-  });
-
-  it('trims both sides so trivial whitespace does not false-warn', async () => {
-    const { primaryInversionWarning } = await import('../../src/core/run-analyze.js');
-    expect(primaryInversionWarning(' main ', 'main')).toBeUndefined();
-  });
-
-  it('does not warn when there is no flat owner yet', async () => {
-    const { primaryInversionWarning } = await import('../../src/core/run-analyze.js');
-    expect(primaryInversionWarning('main', undefined)).toBeUndefined();
+  it('falls back to legacy meta.json sibling keys during migration', async () => {
+    const tmp = await createTempDir('gnx-cachekeys-legacy-');
+    try {
+      const storagePath = path.join(tmp.dbPath, '.gitnexus');
+      await writeMeta(storagePath, ['a']);
+      await writeMeta(path.join(storagePath, 'branches', 'legacy'), ['legacy'], 'meta.json');
+      const { collectBranchCacheKeys } = await import('../../src/core/run-analyze.js');
+      const r = await collectBranchCacheKeys(storagePath, storagePath);
+      expect([...r.keys]).toEqual(['legacy']);
+      expect(r.complete).toBe(true);
+    } finally {
+      await tmp.cleanup();
+    }
   });
 });
 
@@ -305,6 +996,29 @@ describe('deriveEmbeddingMode', () => {
     expect(m.shouldLoadCache).toBe(false);
     expect(m.shouldGenerateEmbeddings).toBe(true);
     expect(m.preserveExistingEmbeddings).toBe(false);
+  });
+
+  // Pure drop-shape derivation pin: `{ embeddings: false, dropEmbeddings:
+  // true }` with existing=0 must force ALL FOUR flags false even against an
+  // explicit `--embeddings` invocation — dropEmbeddings alone still
+  // generates, and zeroing only the existing count would still load the
+  // cache. (Historical note: run-analyze's dirty-recovery block derived this
+  // exact shape between tri-review 4669518496 P2-3 and this shipping
+  // review's FIX 1, which replaced it with a fail-fast LbugWipeError — see
+  // run-analyze-fts-repair.test.ts. The derivation itself remains a real
+  // deriveEmbeddingMode contract worth pinning.)
+  it('drop shape kills an explicit --embeddings recovery invocation (all four flags false)', () => {
+    const recoveryInvocation = { embeddings: true, force: true };
+    const m = deriveEmbeddingMode(
+      { ...recoveryInvocation, embeddings: false, dropEmbeddings: true },
+      0,
+    );
+    expect(m).toEqual({
+      shouldGenerateEmbeddings: false,
+      preserveExistingEmbeddings: false,
+      forceRegenerateEmbeddings: false,
+      shouldLoadCache: false,
+    });
   });
 });
 
@@ -451,3 +1165,9 @@ describe('pdgModeMismatch / resolvePdgConfig (#2099 F1)', () => {
     );
   });
 });
+
+// cjkSegmentationModeMismatch's pure-function tests moved to
+// cjk-segmentation.test.ts (#2339) — it now lives in cjk-segmentation.ts,
+// not here, so callers that only need this comparator (e.g. the MCP query
+// path) don't have to import the full analyze-pipeline module. run-analyze.ts
+// still imports and uses it (see the mismatch check above the early-return).

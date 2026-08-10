@@ -13,10 +13,16 @@ import os from 'os';
 import { spawn } from 'child_process';
 import v8 from 'v8';
 import cliProgress from 'cli-progress';
-import { isLbugReady } from '../core/lbug/lbug-adapter.js';
+import { isLbugReady, LbugWipeError } from '../core/lbug/lbug-adapter.js';
 import { boundedCheckpointBeforeExit } from '../core/lbug/shutdown-helpers.js';
+import { findUndeclaredRelationPairError } from '../core/lbug/rel-pair-routing.js';
+import { causeChain } from '../lib/utils.js';
 import {
+  getOsPageSize,
   isLbugCheckpointIoError,
+  isLbugCheckpointBusyError,
+  isLbugPageSizeFrameError,
+  isPageSizeAwareLadybug,
   isWalCorruptionError,
   parseWalCheckpointThreshold,
   WAL_RECOVERY_SUGGESTION,
@@ -27,8 +33,16 @@ import {
   RegistryNameCollisionError,
   AnalysisNotFinalizedError,
   assertAnalysisFinalized,
+  type AnalyzerRunnerIdentity,
 } from '../storage/repo-manager.js';
-import { getGitRoot, hasGitDir, getDefaultBranch } from '../storage/git.js';
+import {
+  getGitRoot,
+  hasGitDir,
+  getDefaultBranch,
+  selfCommitContextFiles,
+  snapshotSelfCommitSafety,
+} from '../storage/git.js';
+import { IndexLockTimeoutError } from '../storage/index-lock.js';
 import {
   loadAnalyzeConfig,
   mergeAnalyzeOptions,
@@ -37,16 +51,36 @@ import {
   GitNexusRcError,
 } from './analyze-config.js';
 import { runFullAnalysis } from '../core/run-analyze.js';
+import { getRuntimeFingerprint } from '../core/platform/capabilities.js';
 import { getMaxFileSizeBannerMessage } from '../core/ingestion/utils/max-file-size.js';
 import { warnMissingOptionalGrammars, getOptionalGrammarExtensions } from './optional-grammars.js';
 import { glob } from 'glob';
 import fs from 'fs/promises';
-import { cliError } from './cli-message.js';
+import { cliError, cliWarn } from './cli-message.js';
+import { heapCapMbFor, memoryAutopilotDisabled } from '../core/ingestion/utils/effective-ram.js';
 import { EMBEDDING_DIMS_ERROR, normalizeEmbeddingDims } from './embedding-dims.js';
 import { formatElapsed } from './format-elapsed.js';
 import { isHfDownloadFailure } from '../core/embeddings/hf-env.js';
-import { safeUrl } from '../core/embeddings/http-client.js';
-import { isLocalEmbeddingRuntimeBlockerMessage } from '../core/embeddings/runtime-support.js';
+import {
+  isHttpEmbeddingDimsError,
+  isHttpEmbeddingError,
+  isHttpMode,
+  safeUrl,
+} from '../core/embeddings/http-client.js';
+import {
+  isLocalEmbeddingRuntimeBlockerMessage,
+  isMissingLocalEmbeddingStackMessage,
+  localEmbeddingPrefixUnloadableMessage,
+  localEmbeddingStackMissingMessage,
+} from '../core/embeddings/runtime-support.js';
+import {
+  ANALYZE_EMBEDDING_INSTALL_TIMEOUT_MS,
+  getEmbeddingInstallTimeoutMs,
+  getEmbeddingRuntimeDir,
+  installEmbeddingRuntime,
+  isPrefixRuntimeLoadable,
+  resolveEmbeddingRuntime,
+} from '../core/embeddings/runtime-install.js';
 import { warnIfNpm11NpxRisk } from './resolve-invocation.js';
 
 // Capture stderr.write at module load BEFORE anything (LadybugDB native
@@ -69,15 +103,13 @@ const writeFatalToStderr = (label: string, err: unknown): void => {
   // #2068) is only reachable via `.cause`. Without this the user sees the
   // wrapper's main-thread stack and never the real frame. `cause.stack` already
   // begins with the cause's message, so we print the stack alone (not message +
-  // stack) to avoid repeating it. Depth-bounded so a cyclic `cause` can't loop
-  // (the phase runner wraps one level; the bound leaves headroom for future
-  // nesting); uses realStderrWrite so the redirected console.error's ANSI
-  // clear-line wrapping can't erase it (#1169).
-  const MAX_CAUSE_DEPTH = 5;
-  let cause: unknown = isErr ? (err as { cause?: unknown }).cause : undefined;
-  for (let depth = 0; depth < MAX_CAUSE_DEPTH && cause instanceof Error; depth++) {
+  // stack) to avoid repeating it. `causeChain` owns the traversal and the depth
+  // bound that stops a cyclic `cause` looping — this used to be one of four
+  // hand-rolled copies that had already drifted apart on both. Uses
+  // realStderrWrite so the redirected console.error's ANSI clear-line wrapping
+  // can't erase it (#1169). The head is skipped: it was just printed above.
+  for (const cause of causeChain(isErr ? (err as { cause?: unknown }).cause : undefined)) {
     realStderrWrite(`\n  Caused by: ${cause.stack ?? cause.message}\n`);
-    cause = (cause as { cause?: unknown }).cause;
   }
 };
 
@@ -104,25 +136,21 @@ const installFatalHandlers = (): void => {
   });
 };
 
-/** Historical floor for the re-exec heap cap — the auto-sizer never goes below
- *  this, so small boxes / CI never regress. */
-const DEFAULT_HEAP_MB = 16384;
-
 /**
- * RAM-aware re-exec heap cap (MB): `0.75 × effective RAM`, clamped to
- * `>= DEFAULT_HEAP_MB`. Kept BELOW physical RAM on purpose — a cap `>=` RAM makes
- * V8 collect lazily and inflate the heap into swap-thrash (observed analyzing the
- * Linux kernel at a 30GB cap on a 31GB box). `constrainedBytes` is the cgroup
- * limit or `null`; it is honored only as a real, smaller-than-physical cap, because
+ * RAM-aware re-exec heap cap (MB) — the formula itself is single-sourced in
+ * `core/ingestion/utils/effective-ram.ts` (`heapCapMbFor`), shared with the
+ * server's analyze fork. `constrainedBytes` is the cgroup limit or `null`;
+ * it is honored only as a real, smaller-than-physical cap, because
  * `process.constrainedMemory()` returns a huge sentinel when UNCONSTRAINED.
+ * (Observed rationale: a cap ≥ RAM made V8 collect lazily and swap-thrash —
+ * the #2649 worker-timeout cascade on 16 GB boxes.)
  */
 export function computeHeapCapMb(totalBytes: number, constrainedBytes: number | null): number {
   const effectiveBytes =
     constrainedBytes !== null && constrainedBytes > 0 && constrainedBytes < totalBytes
       ? constrainedBytes
       : totalBytes;
-  const effectiveMb = Math.floor(effectiveBytes / (1024 * 1024));
-  return Math.max(DEFAULT_HEAP_MB, Math.floor(0.75 * effectiveMb));
+  return heapCapMbFor(effectiveBytes);
 }
 
 function readConstrainedBytes(): number | null {
@@ -492,21 +520,69 @@ const forceHeapOOMForTestIfEnabled = (): void => {
 // `gitnexus/src/core/lbug/lbug-config.ts` in sync with this value.
 const RECOMMENDED_WAL_CHECKPOINT_THRESHOLD = 64 * 1024 * 1024;
 
-/** Re-exec the process with the RAM-aware auto heap cap + larger semi-space/stack
- *  if we're currently below that. A user-supplied NODE_OPTIONS heap wins (no re-exec). */
-async function ensureHeap(): Promise<boolean> {
-  const nodeOpts = process.env.NODE_OPTIONS || '';
-  if (nodeOpts.includes('--max-old-space-size')) return false;
+/**
+ * Last `--max-old-space-size` value (MB) in a NODE_OPTIONS string, or `null`
+ * when absent/unparseable. Last occurrence wins, matching V8's own
+ * later-flag-wins semantics when NODE_OPTIONS repeats a flag.
+ */
+export function parseMaxOldSpaceMb(nodeOptions: string): number | null {
+  // V8 accepts `-` and `_` interchangeably in flag names, and Node accepts a
+  // space-separated value in NODE_OPTIONS — honor every spelling of the pin
+  // instead of silently overriding it (#2649 review).
+  const matches = [...nodeOptions.matchAll(/--max[-_]old[-_]space[-_]size(?:=|\s+)(\d+)/g)];
+  if (matches.length === 0) return null;
+  const mb = Number(matches[matches.length - 1][1]);
+  return Number.isFinite(mb) && mb > 0 ? mb : null;
+}
 
-  const v8Heap = v8.getHeapStatistics().heap_size_limit;
-  if (v8Heap >= HEAP_MB * 1024 * 1024 * 0.9) return false;
+/** Re-exec the process with the RAM-aware auto heap cap + larger semi-space/stack
+ *  if we're currently below that.
+ *
+ *  Heap-source precedence (#2649):
+ *  - an explicit per-invocation `--max-old-space-size` (execArgv) always wins;
+ *  - `GITNEXUS_MEMORY=off` declines the memory autopilot entirely;
+ *  - an ambient NODE_OPTIONS heap >= the auto cap is honored as-is;
+ *  - an ambient NODE_OPTIONS heap BELOW the auto cap is treated as an
+ *    inherited environment default (devcontainers/CI export one for other
+ *    tooling), not a deliberate per-run choice: warn and respawn with the
+ *    auto cap. Pre-#2649 this returned early and large repos then OOM'd on
+ *    whatever heap the environment happened to specify. */
+async function ensureHeap(): Promise<boolean> {
+  // Explicit opt-out disables auto-sizing ENTIRELY — both the ambient-pin
+  // override and the default v8-limit respawn — and is honored SILENTLY:
+  // the operator already made the call, and stderr-sensitive consumers
+  // (test harnesses, scripts, supervisors that track a single PID) rely on
+  // a quiet, single-process run.
+  if (memoryAutopilotDisabled()) return false;
+  const nodeOpts = process.env.NODE_OPTIONS || '';
+  if (process.execArgv.some((a) => a.startsWith('--max-old-space-size'))) return false;
+
+  const ambientHeapMb = parseMaxOldSpaceMb(nodeOpts);
+  if (ambientHeapMb !== null) {
+    if (ambientHeapMb >= RESPAWN_HEAP_MB) return false;
+    cliWarn(
+      `  NODE_OPTIONS pins the heap to ${ambientHeapMb}MB — below the ${RESPAWN_HEAP_MB}MB this machine's RAM supports.\n` +
+        `  Re-running analyze with the larger auto-sized cap (set GITNEXUS_MEMORY=off to keep the NODE_OPTIONS value).\n`,
+    );
+  } else {
+    const v8Heap = v8.getHeapStatistics().heap_size_limit;
+    if (v8Heap >= HEAP_MB * 1024 * 1024 * 0.9) return false;
+  }
 
   // --stack-size is a V8 flag not allowed in NODE_OPTIONS on Node 24+, so pass it
   // only as a direct CLI argument. --max-semi-space-size IS allowed in NODE_OPTIONS.
   const cliFlags = [HEAP_FLAG, SEMI_FLAG];
   if (!nodeOpts.includes('--stack-size')) cliFlags.push(STACK_FLAG);
 
-  const childArgs = [...cliFlags, ...process.argv.slice(1)];
+  // Preserve the parent's node flags (execArgv) — dropping them breaks any
+  // loader-launched CLI: `node --import tsx src/cli/index.ts` respawned
+  // without `--import tsx` cannot execute TypeScript and dies with a
+  // swallowed exit 1 (#2649 review). Our heap/semi/stack flags come AFTER
+  // execArgv so V8's later-flag-wins semantics resolve duplicates our way.
+  // Inspector flags are the one exception: replaying `--inspect[-brk]` makes
+  // the child fight the parent for the debug port and die with EADDRINUSE.
+  const preservedExecArgv = process.execArgv.filter((a) => !a.startsWith('--inspect'));
+  const childArgs = [...preservedExecArgv, ...cliFlags, ...process.argv.slice(1)];
   const childEnv = {
     ...process.env,
     NODE_OPTIONS: `${nodeOpts} ${HEAP_FLAG} ${SEMI_FLAG}`.trim(),
@@ -624,7 +700,14 @@ export interface AnalyzeOptions {
    * default-on case.
    */
   stats?: boolean;
-  /** Skip installing standard GitNexus skill files to .claude/skills/gitnexus/. */
+  /**
+   * Opt-in auto-commit of any AGENTS.md/CLAUDE.md changes this `analyze` run
+   * makes. Scoped to only those two files (never `git add -A`); no-ops
+   * silently if neither exists, neither changed, or the commit step itself
+   * fails (e.g. no git identity configured). See #2639.
+   */
+  selfCommit?: boolean;
+  /** Skip installing standard GitNexus skill files directly under .claude/skills/. */
   skipSkills?: boolean;
   /**
    * Default branch for the generated regression-compare example (#243). From
@@ -712,7 +795,11 @@ export const shouldGenerateCommunitySkillFiles = (
   pipelineResult: unknown,
 ): boolean => Boolean(options?.skills && pipelineResult && !options?.indexOnly);
 
-export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOptions) => {
+export const analyzeCommand = async (
+  inputPath?: string,
+  options?: AnalyzeOptions,
+  runnerIdentityAtBootstrap?: AnalyzerRunnerIdentity,
+) => {
   if (await ensureHeap()) return;
   forceHeapOOMForTestIfEnabled();
 
@@ -735,7 +822,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
   // pre-call values.
   const envSnap = snapshotAnalyzeEnv();
   try {
-    await analyzeCommandImpl(inputPath, options);
+    await analyzeCommandImpl(inputPath, options, runnerIdentityAtBootstrap);
   } finally {
     restoreAnalyzeEnv(envSnap);
   }
@@ -752,9 +839,17 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
   }
 };
 
+/** Commander entrypoint used only by the capture-before-import lazy bootstrap. */
+export const analyzeCommandWithRunnerIdentity = async (
+  runnerIdentityAtBootstrap: AnalyzerRunnerIdentity,
+  inputPath?: string,
+  options?: AnalyzeOptions,
+): Promise<void> => analyzeCommand(inputPath, options, runnerIdentityAtBootstrap);
+
 const analyzeCommandImpl = async (
   inputPath?: string,
   cliOptions?: AnalyzeOptions,
+  runnerIdentityAtBootstrap?: AnalyzerRunnerIdentity,
 ): Promise<void> => {
   console.log('\n  GitNexus Analyzer\n');
 
@@ -1087,6 +1182,60 @@ const analyzeCommandImpl = async (
     );
   }
 
+  // On-demand embedding runtime (#2370): when the optional stack was pruned at
+  // install time (proxy-blocked NuGet download in onnxruntime-node's
+  // postinstall), heal it here instead of failing later in the pipeline. The
+  // install goes through the user's npm registry config (mirrors/proxies
+  // apply) with --ignore-scripts, so no NuGet download is attempted. Runs
+  // before bar.start() like the sibling validations above.
+  if (embeddingsEnabled && !isHttpMode()) {
+    const resolved = resolveEmbeddingRuntime();
+    // Resolved-but-unloadable (a populated prefix on a Node with no
+    // module.registerHooks), or nothing installed on such a Node: fail fast with
+    // capability guidance instead of dying mid-pipeline over an unusable prefix
+    // or downloading a runtime the loader can't reach. A package-sourced stack
+    // never needs the hook, so it is excluded. --embeddings was explicitly
+    // requested and this failure is deterministic, so fail fast rather than
+    // silently degrading to BM25 (distinct from a transient install timeout).
+    if (!isPrefixRuntimeLoadable() && (resolved === null || resolved.source === 'runtime-prefix')) {
+      cliError(`  ${localEmbeddingPrefixUnloadableMessage().replace(/\n/g, '\n  ')}\n`, {
+        recoveryHint: 'local-embedding-stack-missing',
+      });
+      process.exitCode = 1;
+      return;
+    }
+    // On-demand embedding runtime (#2370): when the optional stack was pruned at
+    // install time (proxy-blocked NuGet download in onnxruntime-node's
+    // postinstall), heal it here instead of failing later in the pipeline. The
+    // install goes through the user's npm registry config (mirrors/proxies
+    // apply) with --ignore-scripts, so no NuGet download is attempted.
+    if (resolved === null) {
+      console.log(
+        `  Local embedding runtime is not installed (optional packages were skipped at install time).\n` +
+          `  Downloading it now from your npm registry into ${getEmbeddingRuntimeDir()} …\n` +
+          `  (one-time; rerun manually anytime with \`gitnexus embeddings install\`)\n`,
+      );
+      try {
+        // Short deadline (env override still wins): analyze is interactive, so a
+        // blackholed proxy must not stall the whole index run for the 10-minute
+        // default — fail over to the guidance below instead.
+        await installEmbeddingRuntime(
+          {},
+          getEmbeddingInstallTimeoutMs(ANALYZE_EMBEDDING_INSTALL_TIMEOUT_MS),
+        );
+        console.log('  Embedding runtime installed.\n');
+      } catch (err) {
+        cliError(
+          `  Could not install the embedding runtime: ${err instanceof Error ? err.message : String(err)}\n\n` +
+            `  ${localEmbeddingStackMissingMessage().replace(/\n/g, '\n  ')}\n`,
+          { recoveryHint: 'local-embedding-stack-missing' },
+        );
+        process.exitCode = 1;
+        return;
+      }
+    }
+  }
+
   if (options.repairFts && options.force) {
     cliError(
       '  Cannot combine `--repair-fts` with `--force`. ' +
@@ -1247,63 +1396,73 @@ const analyzeCommandImpl = async (
     const skipAll = options.indexOnly;
     const skipAgentsMd = skipAll || options.skipAgentsMd;
     const skipSkills = skipAll || options.skipSkills;
-    const result = await runFullAnalysis(
-      repoPath,
-      {
-        // Pipeline re-index — OR'd with --skills because skill generation
-        // needs a fresh pipelineResult. Has no bearing on the registry
-        // collision guard (see allowDuplicateName below).
-        force: options.force || options.skills,
-        repairFts: options.repairFts,
-        embeddings: embeddingsEnabled,
-        embeddingsNodeLimit,
-        dropEmbeddings: options.dropEmbeddings,
-        verbose: options.verbose,
-        skipGit: options.skipGit,
-        skipAgentsMd,
-        skipSkills,
-        // CFG/PDG substrate opt-in (#2081 M1) — threaded to both sinks downstream.
-        pdg: options.pdg === true,
-        // Resolved default branch (CLI > .gitnexusrc > auto-detect > "main")
-        // threaded into the generated regression-compare example (#243).
-        defaultBranch: resolvedDefaultBranch,
-        // Index-branch selector (#2106). Read straight from the CLI flag (not
-        // the .gitnexusrc-merged options) so the cosmetic defaultBranch config
-        // can never change index placement. Undefined → auto-detect in pipeline.
-        branch: cliOptions?.branch,
-        // commander.js `.option('--no-stats', …)` registers the flag as
-        // `options.stats` (boolean, default true; `false` when the user
-        // passed --no-stats). Reading `options.noStats` here returns
-        // undefined every time, so the flag was a no-op on the markdown
-        // rewrite path before this fix. See #1477.
-        noStats: options.stats === false,
-        registryName: options.name,
-        // Registry-collision bypass — its own CLI flag, intentionally NOT
-        // overloading --force. A user who hits the collision guard should
-        // be able to accept the duplicate name without also paying the
-        // cost of a full pipeline re-index. See #829 review round 2.
-        allowDuplicateName: options.allowDuplicateName,
-        // Worker pool size threaded from --workers, replacing the previous
-        // GITNEXUS_WORKER_POOL_SIZE env mutation. `undefined` defers to the
-        // env / auto-formula fallback inside the pipeline.
-        workerPoolSize,
-        // Extra fetch-wrapper names from `.gitnexusrc` (#1589/#1852 residual);
-        // forwarded to the routes phase consumer scan.
-        fetchWrappers: options.fetchWrappers,
-        // The CLI always process.exit()s after this returns (success path at the
-        // end of analyzeCommandImpl, error/interrupt paths via process.exit too),
-        // so the finalize close skips the native conn/db close — it can double-free
-        // in LadybugDB's ClientContext destructor after --pdg writes (#2264). The
-        // CHECKPOINT keeps the index durable; process exit reclaims the handles.
-        skipNativeCloseOnExit: true,
+    const runOptions = {
+      // Pipeline re-index — OR'd with --skills because skill generation
+      // needs a fresh pipelineResult. Has no bearing on the registry
+      // collision guard (see allowDuplicateName below).
+      force: options.force || options.skills,
+      repairFts: options.repairFts,
+      embeddings: embeddingsEnabled,
+      embeddingsNodeLimit,
+      dropEmbeddings: options.dropEmbeddings,
+      verbose: options.verbose,
+      skipGit: options.skipGit,
+      skipAgentsMd,
+      skipSkills,
+      // CFG/PDG substrate opt-in (#2081 M1) — threaded to both sinks downstream.
+      pdg: options.pdg === true,
+      // Resolved default branch (CLI > .gitnexusrc > auto-detect > "main")
+      // threaded into the generated regression-compare example (#243).
+      defaultBranch: resolvedDefaultBranch,
+      // Index-branch selector (#2106). Read straight from the CLI flag (not
+      // the .gitnexusrc-merged options) so the cosmetic defaultBranch config
+      // can never change index placement. Undefined → auto-detect in pipeline.
+      branch: cliOptions?.branch,
+      // commander.js `.option('--no-stats', …)` registers the flag as
+      // `options.stats` (boolean, default true; `false` when the user
+      // passed --no-stats). Reading `options.noStats` here returns
+      // undefined every time, so the flag was a no-op on the markdown
+      // rewrite path before this fix. See #1477.
+      noStats: options.stats === false,
+      registryName: options.name,
+      // Registry-collision bypass — its own CLI flag, intentionally NOT
+      // overloading --force. A user who hits the collision guard should
+      // be able to accept the duplicate name without also paying the
+      // cost of a full pipeline re-index. See #829 review round 2.
+      allowDuplicateName: options.allowDuplicateName,
+      // Worker pool size threaded from --workers, replacing the previous
+      // GITNEXUS_WORKER_POOL_SIZE env mutation. `undefined` defers to the
+      // env / auto-formula fallback inside the pipeline.
+      workerPoolSize,
+      // Extra fetch-wrapper names from `.gitnexusrc` (#1589/#1852 residual);
+      // forwarded to the routes phase consumer scan.
+      fetchWrappers: options.fetchWrappers,
+      // The CLI always process.exit()s after this returns (success path at the
+      // end of analyzeCommandImpl, error/interrupt paths via process.exit too),
+      // so the finalize close skips the native conn/db close — it can double-free
+      // in LadybugDB's ClientContext destructor after --pdg writes (#2264). The
+      // CHECKPOINT keeps the index durable; process exit reclaims the handles.
+      skipNativeCloseOnExit: true,
+    };
+    const runCallbacks = {
+      onProgress: (_phase, percent, message) => {
+        updateBar(percent, message);
       },
-      {
-        onProgress: (_phase, percent, message) => {
-          updateBar(percent, message);
-        },
-        onLog: barLog,
-      },
-    );
+      onLog: barLog,
+    };
+    const bootstrapArgs: [] | [AnalyzerRunnerIdentity] = runnerIdentityAtBootstrap
+      ? [runnerIdentityAtBootstrap]
+      : [];
+    // #2639 review round 2: snapshot which of AGENTS.md/CLAUDE.md are safe to
+    // auto-commit BEFORE runFullAnalysis (and the --skills regeneration
+    // further down) writes to them, so selfCommitContextFiles can tell a
+    // pre-existing unstaged user edit apart from this run's stats refresh
+    // and refuse to sweep the former into the latter's commit.
+    const selfCommitSafety =
+      options.selfCommit === true
+        ? snapshotSelfCommitSafety(repoPath, ['AGENTS.md', 'CLAUDE.md'])
+        : undefined;
+    const result = await runFullAnalysis(repoPath, runOptions, runCallbacks, ...bootstrapArgs);
 
     if (result.alreadyUpToDate) {
       // Even the fast path must prove the repo is discoverable. A prior
@@ -1317,10 +1476,11 @@ const analyzeCommandImpl = async (
       // preserving the rest of the block (incl. --skills community rows). No-op
       // when the value already matches, so a routine up-to-date run is silent
       // (#1996 tri-review P2).
-      // Only refresh the repo-root AGENTS.md/CLAUDE.md base_ref for the
-      // PRIMARY/flat index (#2106 R2). A non-primary branch's up-to-date
-      // analyze must not churn the committed AGENTS.md — this mirrors the
-      // in-pipeline `if (!placement.branch)` gate around generateAIContextFiles.
+      // Only refresh the repo-root AGENTS.md/CLAUDE.md base_ref for the flat
+      // WORKSPACE index (#2106 R2, #2354). A pinned --branch sub-index's
+      // up-to-date analyze must not churn the committed AGENTS.md — this
+      // mirrors the in-pipeline `if (!placement.branch)` gate around
+      // generateAIContextFiles.
       let baseRefRefreshed: string[] = [];
       if (result.isPrimaryBranch !== false) {
         try {
@@ -1345,6 +1505,11 @@ const analyzeCommandImpl = async (
         console.log(
           `  Updated base_ref to "${resolvedDefaultBranch}" in ${baseRefRefreshed.join(', ')}\n`,
         );
+      }
+      // #2639: opt-in self-commit of any AGENTS.md/CLAUDE.md churn from this
+      // fast path (e.g. a base_ref refresh above). Best-effort — never throws.
+      if (options.selfCommit === true && selfCommitSafety) {
+        selfCommitContextFiles(repoPath, ['AGENTS.md', 'CLAUDE.md'], selfCommitSafety);
       }
       // Safe to return without process.exit(0) — the early-return path in
       // runFullAnalysis never opens LadybugDB, so no native handles prevent exit.
@@ -1435,6 +1600,14 @@ const analyzeCommandImpl = async (
       }
     }
 
+    // #2639: opt-in self-commit of any AGENTS.md/CLAUDE.md churn written by
+    // this run (the primary generateAIContextFiles call inside
+    // runFullAnalysis, and/or the --skills regeneration above). Best-effort
+    // — never throws, so a missing git identity etc. can't fail `analyze`.
+    if (options.selfCommit === true && selfCommitSafety) {
+      selfCommitContextFiles(repoPath, ['AGENTS.md', 'CLAUDE.md'], selfCommitSafety);
+    }
+
     const totalTime = ((Date.now() - t0) / 1000).toFixed(1);
 
     clearInterval(elapsedTimer);
@@ -1461,11 +1634,26 @@ const analyzeCommandImpl = async (
     // progress-bar log() that fired mid-run has already scrolled away, so the
     // degraded-search state must also appear in the final summary (#1161).
     if (result.ftsSkipped) {
-      console.log(
-        `\n  Warning: full-text/BM25 search is disabled — the LadybugDB FTS extension was unavailable.\n` +
-          `  Install it once with network access (GITNEXUS_LBUG_EXTENSION_INSTALL=auto) then rerun, or\n` +
-          `  run \`gitnexus analyze --repair-fts\` when connected. Run \`gitnexus doctor\` for details.`,
-      );
+      // #2658 review L2: a build/verify failure is NOT an extension-unavailable
+      // problem — sending the user to install the extension is the wrong remedy.
+      if (result.ftsSkipReason === 'build-failed') {
+        console.log(
+          `\n  Warning: full-text/BM25 search is disabled — the search index build failed this run.\n` +
+            `  The FTS extension is available; rerun \`gitnexus analyze --repair-fts\`. If it persists,\n` +
+            `  check the disk for space or corruption. Run \`gitnexus doctor\` for details.`,
+        );
+      } else {
+        console.log(
+          // NOT "then rerun" (#2841 §5.C): this run stamped `lastCommit`, so a
+          // plain rerun on an unchanged tree takes the up-to-date fast path and
+          // returns before Phase 3 could rebuild anything — the advice would be
+          // ineffective exactly when the user follows it. `--repair-fts` is the
+          // verb that rebuilds the search indexes without re-parsing the repo.
+          `\n  Warning: full-text/BM25 search is disabled — the LadybugDB FTS extension was unavailable.\n` +
+            `  Install it once with network access (GITNEXUS_LBUG_EXTENSION_INSTALL=auto), then run\n` +
+            `  \`gitnexus analyze --repair-fts\` to build the search indexes. Run \`gitnexus doctor\` for details.`,
+        );
+      }
     }
 
     try {
@@ -1502,6 +1690,22 @@ const analyzeCommandImpl = async (
       return;
     }
 
+    // Another analyze held the index lock past the configured wait ceiling
+    // (#2658, GITNEXUS_INDEX_LOCK_TIMEOUT_MS). The on-disk index is being
+    // refreshed by the holder — this is a clean, expected condition, not a
+    // crash, so render the message without a stack trace.
+    if (err instanceof IndexLockTimeoutError) {
+      cliError(
+        `  Another gitnexus analyze (pid ${err.holder.pid} on ${err.holder.hostname}) is ` +
+          `already refreshing this index and did not finish within the wait window.\n` +
+          `  The on-disk index is being updated by that run. Retry later, or raise\n` +
+          `  GITNEXUS_INDEX_LOCK_TIMEOUT_MS to wait longer.\n`,
+        { recoveryHint: 'index-lock-timeout', holderPid: err.holder.pid },
+      );
+      process.exitCode = 1;
+      return;
+    }
+
     // Finalize invariant failure (#1169) — keep the rich actionable
     // message intact and write through realStderrWrite so it can't be
     // erased by a leftover bar refresh on slow terminals.
@@ -1514,6 +1718,36 @@ const analyzeCommandImpl = async (
           `    3. If the failure persists, run with NODE_OPTIONS="--max-old-space-size=8192 --trace-exit"\n` +
           `       and attach the trace to the GitNexus issue tracker.\n\n`,
       );
+      process.exitCode = 1;
+      return;
+    }
+
+    // An extracted edge whose FROM→TO label pair is missing from GitNexus's own
+    // relation DDL (#2789). `assertDeclaredPair` aborts the run rather than let
+    // the bulk COPY fail late and silently drop the edge, so the user sees a
+    // mid-run crash inside GitNexus internals with nothing to act on. Name the
+    // pair, the relationship and the file that produced it, and say plainly that
+    // a re-run cannot help — this is deterministic for the same input.
+    // Checked by TYPE (repo norm, #2385) BEFORE the message-text heuristics
+    // below, and through the `cause` chain because the ingestion phase runner
+    // rewraps every phase failure as `Phase 'X' failed: …`.
+    const undeclaredPair = findUndeclaredRelationPairError(err);
+    if (undeclaredPair !== undefined) {
+      // Render the error's OWN message indented — same idiom as the
+      // `LbugWipeError` and page-size branches below. `UndeclaredRelationPairError`
+      // builds a fully self-contained message (pair, relationship type, both node
+      // ids, source file, issue URL, `.gitnexusignore` workaround) precisely
+      // because `gitnexus serve` forwards only `err.message` over worker IPC.
+      // Re-rendering those fields here would be a second copy of one string, free
+      // to drift from the first — and the actionable half would reach CLI users
+      // only. `undeclaredPair.message`, not the outer `msg`: the real error may be
+      // several `cause` levels below the phase wrapper `msg` came from.
+      cliError(`  ${undeclaredPair.message.replace(/\n/g, '\n  ')}\n`, {
+        recoveryHint: 'undeclared-relation-pair',
+        labelPair: undeclaredPair.pairKey,
+        relationType: undeclaredPair.relationType,
+        sourceFile: undeclaredPair.sourceFile,
+      });
       process.exitCode = 1;
       return;
     }
@@ -1533,14 +1767,86 @@ const analyzeCommandImpl = async (
     }
 
     if (isLbugCheckpointIoError(err)) {
+      // #2599: when the checkpoint IO error also looks busy/locked, another
+      // handle holds the store open — name that actionable cause alongside the
+      // threshold hint (the original error is preserved so the hint still fires).
+      const heldOpen = isLbugCheckpointBusyError(err)
+        ? `  Another process may hold the store open (a running \`gitnexus mcp\` server, or a\n` +
+          `  stale reader) — close other GitNexus processes on this repo, then retry.\n`
+        : '';
       cliError(
         `  LadybugDB failed while rotating/removing WAL checkpoint files.\n` +
+          heldOpen +
           `  This can happen when auto-checkpoint runs at the default threshold (~16MB).\n` +
           `  Retry with a larger checkpoint threshold to reduce checkpoint frequency:\n` +
           `    gitnexus analyze --wal-checkpoint-threshold ${RECOMMENDED_WAL_CHECKPOINT_THRESHOLD}\n` +
           `    (or set GITNEXUS_WAL_CHECKPOINT_THRESHOLD=${RECOMMENDED_WAL_CHECKPOINT_THRESHOLD})\n` +
           `    (Try 33554432 = 32 MiB on small-disk / CI runners.)\n`,
         { recoveryHint: 'wal-checkpoint-threshold' },
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    // DB-family wipe failure (#2409, tri-review 4669518496 P2-4): the rebuild
+    // could not verify the LadybugDB file family was removed — usually another
+    // process (MCP server, serve worker, antivirus) holding the index open.
+    // Keyed on the error *type* (repo norm from #2385), never message text.
+    // The message itself is fully self-contained (survivor paths + stop-MCP /
+    // AV-exclusion / re-run guidance) because the serve worker forwards only
+    // `err.message` over IPC — this branch just renders it without the
+    // raw-stack fallback below.
+    if (err instanceof LbugWipeError) {
+      cliError(`  ${msg.replace(/\n/g, '\n  ')}\n`, {
+        recoveryHint: 'lbug-wipe-failed',
+      });
+      process.exitCode = 1;
+      return;
+    }
+
+    // Buffer-manager frame-release failure on non-4K-page kernels (#1231).
+    // LadybugDB <= 0.17.x assumed 4 KiB OS pages when releasing evicted
+    // frames; Raspberry Pi 5 (16 KiB kernel pages) and other arm64 systems
+    // crash mid-COPY with a raw native message. 0.18.0 detects the page size
+    // at runtime, so the actionable fix depends on which side of that
+    // boundary the installed @ladybugdb/core is.
+    if (isLbugPageSizeFrameError(err)) {
+      const pageSize = getOsPageSize();
+      const ladybug = getRuntimeFingerprint().ladybugdb;
+      const pageLine =
+        pageSize !== undefined && pageSize !== 4096
+          ? `  Detected OS page size: ${pageSize} bytes (non-4K — e.g. Raspberry Pi 5 16K kernel, Asahi Linux).\n`
+          : '';
+      // The upgrade variant must not assert version facts about an unknown
+      // version — mirror the doctor-side wording rule (#2424 review R2).
+      const upgradeIntro =
+        ladybug === undefined
+          ? `  The installed @ladybugdb/core version is unknown — it may predate the\n` +
+            `  runtime OS-page-size detection added in 0.18.0.\n`
+          : `  The installed @ladybugdb/core (${ladybug}) assumes 4 KiB pages in its buffer\n` +
+            `  manager.\n`;
+      const guidance = isPageSizeAwareLadybug(ladybug)
+        ? `  The installed @ladybugdb/core (${ladybug}) already detects the OS page size at runtime,\n` +
+          `  so this configuration was expected to work. Please report it:\n` +
+          `    https://github.com/abhigyanpatwari/GitNexus/issues/1231\n` +
+          `  and include: gitnexus --version, node --version, getconf PAGE_SIZE, uname -a,\n` +
+          `  and the full error message above.\n`
+        : upgradeIntro +
+          `  Upgrade GitNexus to a release that bundles @ladybugdb/core >= 0.18.0\n` +
+          `  (gitnexus >= 1.6.9), which detects the OS page size at runtime:\n` +
+          `    npm install -g gitnexus@latest\n` +
+          `  Last-resort workaround on Raspberry Pi 5: boot the 4 KiB-page kernel\n` +
+          `  (config.txt: kernel=kernel8.img), at the cost of Pi 5 optimizations.\n`;
+      // Embed the raw native text (indented, no stack) so "the full error
+      // message above" is fulfillable — same idiom as the LbugWipeError
+      // branch. The errno suffix and the 0.18.0 guard's frame/granule numbers
+      // are the discriminating triage content (#2424 review P2).
+      cliError(
+        `  LadybugDB's buffer manager failed to release frame memory.\n` +
+          `    ${msg.replace(/\n/g, '\n    ')}\n` +
+          pageLine +
+          guidance,
+        { recoveryHint: 'lbug-page-size', pageSize, ladybugVersion: ladybug },
       );
       process.exitCode = 1;
       return;
@@ -1560,10 +1866,75 @@ const analyzeCommandImpl = async (
       return;
     }
 
+    // The optional embedding stack (@huggingface/transformers → onnxruntime-node)
+    // was pruned at install time — usually a proxy-blocked NuGet download during
+    // onnxruntime-node's postinstall (#2370). Checked before the generic
+    // module-not-found "installation may be corrupt" hint below, which would
+    // otherwise misdiagnose a deliberate optional-dependency skip.
+    if (isMissingLocalEmbeddingStackMessage(msg)) {
+      cliError(`  ${msg.replace(/\n/g, '\n  ')}\n`, {
+        recoveryHint: 'local-embedding-stack-missing',
+      });
+      process.exitCode = 1;
+      return;
+    }
+
+    // Malformed GITNEXUS_EMBEDDING_DIMS env var (#2385). readConfig() throws a
+    // plain Error (a config mistake, not an endpoint failure), surfacing here from
+    // httpEmbed()->readConfig() inside the analysis run. Show a clean config
+    // message rather than a raw stack dump. The --embedding-dims CLI flag is
+    // validated up front (EMBEDDING_DIMS_ERROR); this covers the env-var path.
+    // Checked before the endpoint/HF branches: it is a plain Error, so
+    // isHttpEmbeddingError() is false and the HF network heuristic must not claim it.
+    if (isHttpEmbeddingDimsError(msg)) {
+      cliError(`  ${msg.replace(/\n/g, '\n  ')}\n`, {
+        recoveryHint: 'embedding-dims-invalid',
+      });
+      process.exitCode = 1;
+      return;
+    }
+
+    // Custom HTTP embedding endpoint failure (#2385). When a `--embedding-base-url`
+    // is configured, HTTP mode never downloads a model — so a failure talking to
+    // that endpoint must NOT show the huggingface-download guidance. Keyed on the
+    // error *type* (HttpEmbeddingError), not its message text, so it stays correct
+    // regardless of locale or wording. Checked before the HF branch, whose network
+    // heuristic (`fetch failed` / `ECONNREFUSED`) would otherwise also match a
+    // wrapped endpoint-connection error. The header is deliberately neutral: this
+    // type covers both never-reached failures (connection/timeout/DNS) and
+    // reached-but-failed ones (4xx/5xx, dimension/shape mismatch), so it must not
+    // assert "unreachable". The thrown `msg` carries the specific reason (and the
+    // masked URL where one applies), so it is surfaced verbatim.
+    if (isHttpEmbeddingError(err)) {
+      cliError(
+        `  The custom embedding endpoint request failed.\n` +
+          `  ${msg.replace(/\n/g, '\n  ')}\n` +
+          `  Suggestions:\n` +
+          `    1. Verify the endpoint URL is reachable and running ` +
+          `(--embedding-base-url / GITNEXUS_EMBEDDING_URL: host, port, /v1 path).\n` +
+          `    2. Confirm the model name and embedding dimensions match what the endpoint serves.\n` +
+          `    3. Re-run without --embeddings to index without vectors.\n`,
+        { recoveryHint: 'http-embedding-endpoint-error' },
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    // isHttpMode() is a pure presence probe (URL+MODEL) that never throws — a
+    // malformed GITNEXUS_EMBEDDING_DIMS is handled by the dims branch above — so
+    // no defensive try/catch is needed here (#2385).
+    const inHttpMode = isHttpMode();
+
     // HF download failure — show clean guidance without the raw stack trace.
     // Checked before writeFatalToStderr so the user sees one focused message
     // rather than a stack-trace dump followed by a second remediation block.
-    if (isHfDownloadFailure(msg) || msg.includes('Failed to download embedding model')) {
+    // Gated on !inHttpMode: with a custom endpoint configured no model download
+    // is ever attempted, so a network error there is the endpoint's, handled by
+    // the HttpEmbeddingError branch above — never HF's (#2385).
+    if (
+      (isHfDownloadFailure(msg) || msg.includes('Failed to download embedding model')) &&
+      !inHttpMode
+    ) {
       cliError(
         `  The embedding model could not be downloaded.\n` +
           `  huggingface.co may be unreachable from your network\n` +

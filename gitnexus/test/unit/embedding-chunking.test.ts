@@ -22,7 +22,10 @@ const { getLanguageFromFilename } = vi.hoisted(() => ({
   getLanguageFromFilename: vi.fn().mockReturnValue('typescript'),
 }));
 
-vi.mock('gitnexus-shared', () => ({
+// Partial mock: `ast-utils` now resolves the LanguageProvider registry to apply
+// `preprocessSource`, and that graph needs the real shared exports (#2771).
+vi.mock('gitnexus-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('gitnexus-shared')>()),
   getLanguageFromFilename,
 }));
 
@@ -105,10 +108,11 @@ describe('embedding-chunking integration', () => {
 
     const text = generateEmbeddingText(node, chunks[0].text);
     expect(text).toContain('Function: test');
-    expect(text).toContain('Repo: my-project');
-    expect(text).toContain('Server: my-service');
-    expect(text).toContain('Export: true');
     expect(text).toContain('function hello()');
+    // #2333: verbose metadata is no longer part of embedding text.
+    expect(text).not.toContain('Repo: my-project');
+    expect(text).not.toContain('Server: my-service');
+    expect(text).not.toContain('Export: true');
   });
 
   it('long function produces multiple chunks', () => {
@@ -282,7 +286,7 @@ describe('embedding-chunking integration', () => {
     expect(secondText).toContain('age: u32,');
   });
 
-  it('metadata is present in every chunk', () => {
+  it('header is present in every chunk', () => {
     const longContent = 'x'.repeat(3000);
     const node = makeNode({
       content: longContent,
@@ -294,9 +298,11 @@ describe('embedding-chunking integration', () => {
 
     for (const chunk of chunks) {
       const text = generateEmbeddingText(node, chunk.text);
+      // The compact header (name, + description when present) repeats on every
+      // chunk so each chunk keeps its identity; #2333 dropped the metadata lines.
       expect(text).toContain('Function: test');
-      expect(text).toContain('Repo: test-repo');
-      expect(text).toContain('Path: src/test.ts');
+      expect(text).not.toContain('Repo: test-repo');
+      expect(text).not.toContain('Path: src/test.ts');
     }
   });
 });

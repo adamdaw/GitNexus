@@ -14,7 +14,11 @@
  */
 import type { AnalyzeOptions } from '../core/run-analyze.js';
 import type { WorkerMessage } from './analyze-worker.js';
+import type { AnalyzerRunnerIdentity } from '../storage/repo-manager.js';
 import { projectAnalyzeResultForIpc } from './analyze-worker-ipc.js';
+// Value import (instanceof): index-lock is a lightweight storage primitive
+// (node:fs/net/crypto only), so this does NOT pull in run-analyze/repo-manager.
+import { IndexLockTimeoutError } from '../storage/index-lock.js';
 
 export interface WorkerAnalysisDeps {
   runFullAnalysis: typeof import('../core/run-analyze.js').runFullAnalysis;
@@ -39,9 +43,13 @@ export async function runWorkerAnalysis(
   repoPath: string,
   options: AnalyzeOptions,
   deps: WorkerAnalysisDeps,
+  runnerIdentityAtBootstrap?: AnalyzerRunnerIdentity,
 ): Promise<void> {
   let terminal: WorkerMessage;
   try {
+    const bootstrapArgs: [] | [AnalyzerRunnerIdentity] = runnerIdentityAtBootstrap
+      ? [runnerIdentityAtBootstrap]
+      : [];
     const result = await deps.runFullAnalysis(
       repoPath,
       // This worker force-exits right after reporting, so skip the native close
@@ -53,6 +61,7 @@ export async function runWorkerAnalysis(
           deps.send({ type: 'progress', phase, percent, message }),
         onLog: (message) => deps.send({ type: 'progress', phase: 'log', percent: -1, message }),
       },
+      ...bootstrapArgs,
     );
     // P2 (#2264): a half-finalized repo — meta.json written but the global
     // registry entry missing (e.g. a prior collision-aborted run, or a wiped
@@ -68,7 +77,13 @@ export async function runWorkerAnalysis(
   } catch (err: unknown) {
     // Report the failure to the parent over IPC (the parent surfaces the message).
     const message = err instanceof Error ? err.message : 'Analysis failed';
-    terminal = { type: 'error', message };
+    // #2658 review M2: a lock-wait timeout is transient contention (another
+    // analyze held the single-writer lock), not a broken build — tag it so the
+    // parent can surface a retry signal instead of an opaque hard failure.
+    terminal =
+      err instanceof IndexLockTimeoutError
+        ? { type: 'error', message, code: 'index-lock-timeout', retryable: true }
+        : { type: 'error', message };
   }
 
   // P3 (#2264): only report if a SIGTERM cancellation hasn't already claimed the

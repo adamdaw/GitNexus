@@ -13,7 +13,7 @@ import {
 } from '../../../src/core/group/service.js';
 
 function makeTmpGroup(): { tmpDir: string; cleanup: () => void } {
-  const tmpDir = path.join(os.tmpdir(), `gitnexus-gmode-${Date.now()}`);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitnexus-gmode-'));
   const groupDir = path.join(tmpDir, 'groups', 'test-group');
   fs.mkdirSync(groupDir, { recursive: true });
   fs.writeFileSync(

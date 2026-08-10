@@ -8,7 +8,7 @@
  *  3. Copy gitnexus-shared/dist → dist/_shared
  *  4. Rewrite bare 'gitnexus-shared' specifiers → relative paths
  */
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,16 +55,18 @@ if (!fs.existsSync(SHARED_ROOT)) {
 // Anchor tsc to gitnexus/node_modules (ROOT) rather than a bare
 // relative path: gitnexus-shared has no node_modules of its own, so a
 // relative 'node_modules/.bin/tsc' run with cwd=SHARED_ROOT resolves to
-// a non-existent binary and fails with status 127. Quote for paths with
-// spaces.
+// a non-existent binary and fails with status 127. Invoking tsc's entry
+// module through the current node binary skips the .bin shims entirely, so
+// there is no shell, no .cmd/POSIX split, and no quoting to get wrong on an
+// install path containing spaces.
 console.log('[build] compiling gitnexus-shared…');
-const tscBin = process.platform === 'win32' ? 'tsc.cmd' : 'tsc';
-const tscCmd = JSON.stringify(path.join(ROOT, 'node_modules', '.bin', tscBin));
-execSync(tscCmd, { cwd: SHARED_ROOT, stdio: 'inherit', timeout: BUILD_TIMEOUT_MS });
+const tscEntry = path.join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
+const tscOpts = { stdio: 'inherit', timeout: BUILD_TIMEOUT_MS };
+execFileSync(process.execPath, [tscEntry], { ...tscOpts, cwd: SHARED_ROOT });
 
 // ── 2. Build gitnexus ──────────────────────────────────────────────
 console.log('[build] compiling gitnexus…');
-execSync(tscCmd, { cwd: ROOT, stdio: 'inherit', timeout: BUILD_TIMEOUT_MS });
+execFileSync(process.execPath, [tscEntry], { ...tscOpts, cwd: ROOT });
 
 // ── 3. Copy shared dist ────────────────────────────────────────────
 console.log('[build] copying shared module into dist/_shared…');

@@ -14,10 +14,10 @@ import {
 import type { ContractRegistry } from '../../../src/core/group/types.js';
 
 describe('Group storage', () => {
-  const tmpDir = path.join(os.tmpdir(), `gitnexus-test-storage-${Date.now()}`);
+  let tmpDir: string;
 
   beforeEach(() => {
-    fs.mkdirSync(tmpDir, { recursive: true });
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitnexus-test-storage-'));
   });
 
   afterEach(() => {
