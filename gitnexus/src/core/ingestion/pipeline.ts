@@ -27,6 +27,7 @@ import {
   markdownPhase,
   cobolPhase,
   parsePhase,
+  salesforceMetadataPhase,
   routesPhase,
   toolsPhase,
   ormPhase,
@@ -294,6 +295,9 @@ export function buildPhaseList(options?: PipelineOptions): PipelinePhase[] {
       .register(markdownPhase)
       .register(cobolPhase)
       .register(parsePhase)
+      // After `parse`: the flow→Apex edge resolves against Class nodes, which
+      // do not exist until the Apex files are parsed.
+      .register(salesforceMetadataPhase)
       .register(routesPhase)
       .register(toolsPhase)
       .register(ormPhase)
