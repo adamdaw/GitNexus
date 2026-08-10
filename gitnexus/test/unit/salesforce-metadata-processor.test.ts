@@ -310,6 +310,96 @@ describe('processSalesforceMetadata', () => {
     expect(edgesFrom(graph, flowId).filter((r) => r.type === 'CALLS')).toEqual([]);
   });
 
+  it('does not bind a cross-object formula reference to the local same-named field', () => {
+    const graph = createKnowledgeGraph();
+    const LOCAL_STATUS =
+      'pkgs/vacatia/main/default/objects/Contact/fields/Status__c.field-meta.xml';
+    const CROSS_RULE =
+      'pkgs/vacatia/main/default/objects/Contact/validationRules/Cross.validationRule-meta.xml';
+    const crossRuleXml = `<?xml version="1.0" encoding="UTF-8" ?>
+<ValidationRule xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Cross</fullName>
+    <errorConditionFormula>ISPICKVAL(Account__r.Status__c, "x")</errorConditionFormula>
+</ValidationRule>`;
+    withFiles(graph, [OBJ, LOCAL_STATUS, CROSS_RULE]);
+
+    processSalesforceMetadata(graph, [
+      { path: OBJ, content: objectXml },
+      { path: LOCAL_STATUS, content: fieldXml },
+      { path: CROSS_RULE, content: crossRuleXml },
+    ]);
+
+    // Account__r.Status__c is Account's field, not Contact's. Qualifying the
+    // bare token with the rule's own object would point at the wrong record.
+    const uses = [...graph.iterRelationships()].filter((r) => r.type === 'USES');
+    expect(uses).toEqual([]);
+  });
+
+  it('ignores references and actions that are commented out', () => {
+    const graph = createKnowledgeGraph();
+    const COMMENTED_RULE =
+      'pkgs/vacatia/main/default/objects/Contact/validationRules/Commented.validationRule-meta.xml';
+    const commentedRuleXml = `<?xml version="1.0" encoding="UTF-8" ?>
+<ValidationRule xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Commented</fullName>
+    <errorConditionFormula><!-- ISBLANK(VDM_Id__c) --> TRUE</errorConditionFormula>
+</ValidationRule>`;
+    const commentedFlowXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <!-- <actionCalls>
+        <actionName>FlowLogEntry</actionName>
+        <actionType>apex</actionType>
+    </actionCalls> -->
+</Flow>`;
+    withFiles(graph, [OBJ, FIELD, COMMENTED_RULE, FLOW]);
+    addApexClass(graph, 'FlowLogEntry', 'pkgs/x/classes/FlowLogEntry.cls');
+
+    processSalesforceMetadata(graph, [
+      { path: OBJ, content: objectXml },
+      { path: FIELD, content: fieldXml },
+      { path: COMMENTED_RULE, content: commentedRuleXml },
+      { path: FLOW, content: commentedFlowXml },
+    ]);
+
+    // Commenting a clause out is how a rule or action gets disabled during
+    // maintenance; it must not keep its blast radius.
+    const rels = [...graph.iterRelationships()];
+    expect(rels.filter((r) => r.type === 'USES')).toEqual([]);
+    expect(rels.filter((r) => r.type === 'CALLS')).toEqual([]);
+  });
+
+  it('points each Record at its declaring line, not at the XML prolog', () => {
+    const graph = createKnowledgeGraph();
+    withFiles(graph, [FIELD]);
+    processSalesforceMetadata(graph, [{ path: FIELD, content: fieldXml }]);
+
+    // The FTS snippet is the exact source span (`csv-generator`), so 0,0 would
+    // index `<?xml version="1.0" ...?>` for every metadata node in the repo.
+    const node = [...graph.iterNodes()].find((n) => n.label === 'Record')!;
+    const declLine = fieldXml.split('\n').findIndex((l) => l.includes('<fullName>'));
+    expect(node.properties.startLine).toBe(declLine);
+    expect(node.properties.endLine).toBe(declLine);
+  });
+
+  it('keeps line numbers aligned with the real file when comments are stripped', () => {
+    const graph = createKnowledgeGraph();
+    const MULTILINE = 'pkgs/vacatia/main/default/objects/Contact/fields/X__c.field-meta.xml';
+    const withComment = `<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <!-- a comment
+         spanning
+         three lines -->
+    <fullName>X__c</fullName>
+</CustomField>`;
+    withFiles(graph, [MULTILINE]);
+    processSalesforceMetadata(graph, [{ path: MULTILINE, content: withComment }]);
+
+    // FTS reads the real file off disk, so a stripped comment must not shift
+    // the line the node points at.
+    const node = [...graph.iterNodes()].find((n) => n.label === 'Record')!;
+    expect(withComment.split('\n')[node.properties.startLine as number]).toContain('<fullName>');
+  });
+
   it('ignores files that are not Salesforce metadata', () => {
     const graph = createKnowledgeGraph();
     withFiles(graph, ['src/index.ts', 'pom.xml']);
