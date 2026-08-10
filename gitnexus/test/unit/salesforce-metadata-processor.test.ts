@@ -121,10 +121,11 @@ describe('processSalesforceMetadata', () => {
       { path: FIELD, content: fieldXml },
     ]);
 
-    const fieldId = generateId('Record', '<sf-field>:Contact.VDM_Id__c');
-    const refs = edgesFrom(graph, fieldId).filter((r) => r.type === 'MEMBER_OF');
-    expect(refs).toHaveLength(1);
-    expect(graph.getNode(refs[0].targetId)?.properties.name).toBe('Contact');
+    const objId = generateId('Record', '<sf-object>:Contact');
+    const owned = edgesFrom(graph, objId)
+      .filter((r) => r.type === 'CONTAINS')
+      .map((r) => graph.getNode(r.targetId)?.properties.name);
+    expect(owned).toEqual(['Contact.VDM_Id__c']);
   });
 
   it('links a validation rule to the fields its formula names', () => {
@@ -143,11 +144,45 @@ describe('processSalesforceMetadata', () => {
         .map((r) => graph.getNode(r.targetId)?.properties.name)
         .sort();
 
-    // MEMBER_OF: the object the rule is defined on.
-    expect(byType('MEMBER_OF')).toEqual(['Contact']);
-    // ACCESSES: the custom field its formula reads. FirstName is standard, has
-    // no -meta.xml, and so has no node to point at — it is absent, not dangling.
-    expect(byType('ACCESSES')).toEqual(['Contact.VDM_Id__c']);
+    // USES, not ACCESSES: impact()'s default traversal set excludes ACCESSES,
+    // so an ACCESSES edge here is real in Cypher and invisible to impact().
+    // The custom field its formula reads. FirstName is standard, has no
+    // -meta.xml, and so has no node to point at — absent, not dangling.
+    expect(byType('USES')).toEqual(['Contact.VDM_Id__c']);
+
+    // and the object owns the rule, in the container->member direction
+    const objId = generateId('Record', '<sf-object>:Contact');
+    const owned = edgesFrom(graph, objId)
+      .filter((r) => r.type === 'CONTAINS')
+      .map((r) => graph.getNode(r.targetId)?.properties.name)
+      .sort();
+    expect(owned).toEqual(['Contact.First_Name_is_Required', 'Contact.VDM_Id__c']);
+  });
+
+  it('emits only edge types impact() traverses by default', () => {
+    const graph = createKnowledgeGraph();
+    withFiles(graph, [OBJ, FIELD, RULE, FLOW]);
+    addApexClass(graph, 'FlowLogEntry', 'pkgs/x/classes/FlowLogEntry.cls');
+    processSalesforceMetadata(graph, allFiles());
+
+    // The blast-radius edges must be inside impact()'s default relation set or
+    // they are invisible to it — the defect the first live reindex exposed.
+    // CONTAINS is exempt: containment is structure, not blast radius.
+    const IMPACT_DEFAULT = new Set([
+      'CALLS',
+      'IMPORTS',
+      'EXTENDS',
+      'IMPLEMENTS',
+      'USES',
+      'METHOD_OVERRIDES',
+      'OVERRIDES',
+      'METHOD_IMPLEMENTS',
+    ]);
+    const emitted = new Set([...graph.iterRelationships()].map((r) => r.type));
+    for (const t of emitted) {
+      if (t === 'CONTAINS') continue;
+      expect(IMPACT_DEFAULT.has(t), `${t} is outside impact()'s default traversal`).toBe(true);
+    }
   });
 
   it('links a flow to the Apex class an apex action invokes, matching case-insensitively', () => {

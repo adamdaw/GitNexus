@@ -177,14 +177,27 @@ export const processSalesforceMetadata = (
     result.edges++;
   }
 
+  /**
+   * Edge types are chosen for what `impact` actually TRAVERSES, not only for
+   * what reads best. Its default relation set is CALLS / IMPORTS / EXTENDS /
+   * IMPLEMENTS / USES / METHOD_OVERRIDES / OVERRIDES / METHOD_IMPLEMENTS
+   * (`local-backend.ts`). `ACCESSES` is a legal type but sits OUTSIDE that
+   * default, so edges emitted as ACCESSES are real, queryable in Cypher, and
+   * invisible to `impact` — measured on the live index, not assumed. `USES`
+   * carries the same meaning here and is traversed.
+   *
+   * `MEMBER_OF` is likewise avoided: it already means Community membership
+   * (`(n)-[MEMBER_OF]->(c:Community)`), so reusing it for field-of-object would
+   * overload a type with an unrelated established meaning.
+   */
   const link = (
-    sourceId: string,
+    sourceId: string | undefined,
     targetId: string | undefined,
-    type: 'MEMBER_OF' | 'ACCESSES' | 'CALLS',
+    type: 'CONTAINS' | 'USES' | 'CALLS',
     reason: string,
     confidence: number,
   ): void => {
-    if (!targetId || targetId === sourceId) return;
+    if (!sourceId || !targetId || targetId === sourceId) return;
     const id = generateId(type, `${sourceId}->${targetId}`);
     if (graph.getNode(sourceId) === undefined || graph.getNode(targetId) === undefined) return;
     graph.addRelationship({ id, type, sourceId, targetId, confidence, reason });
@@ -202,12 +215,14 @@ export const processSalesforceMetadata = (
     if (!sourceId) continue;
 
     if (entity.kind === 'field') {
-      link(sourceId, objectId(entity.object), 'MEMBER_OF', 'salesforce-field-of-object', 1.0);
+      // Object CONTAINS field, matching the direction Class CONTAINS Method
+      // rather than pointing the member back at its container.
+      link(objectId(entity.object), sourceId, 'CONTAINS', 'salesforce-field-of-object', 1.0);
       continue;
     }
 
     if (entity.kind === 'validationrule') {
-      link(sourceId, objectId(entity.object), 'MEMBER_OF', 'salesforce-rule-guards-object', 1.0);
+      link(objectId(entity.object), sourceId, 'CONTAINS', 'salesforce-rule-guards-object', 1.0);
       // Formulas name fields bare (`VDM_Id__c`), so qualify with the object the
       // rule already lives under. A standard field (`FirstName`) has no
       // `-meta.xml`, hence no node, and simply finds nothing here.
@@ -215,7 +230,7 @@ export const processSalesforceMetadata = (
         link(
           sourceId,
           byName.get(`field:${`${entity.object}.${name}`.toLowerCase()}`),
-          'ACCESSES',
+          'USES',
           'salesforce-rule-references-field',
           0.9,
         );
