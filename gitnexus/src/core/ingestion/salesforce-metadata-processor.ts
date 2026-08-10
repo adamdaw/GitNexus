@@ -66,8 +66,37 @@ interface Entity {
   content: string;
 }
 
-const nodeIdFor = (kind: EntityKind, name: string): string =>
-  generateId('Record', `<sf-${kind}>:${name}`);
+/**
+ * Path-qualified, matching `cobol-processor.ts` and the `Label:filePath:name`
+ * convention the rest of the graph uses. A repo is not an org: an SFDX tree
+ * vendors packages, so the same API name legitimately appears in several
+ * package directories and a name-only id silently collapses them onto the
+ * first file scanned — taking that file's `filePath` with it, which is what
+ * incremental writeback keys on. The bare `<sf-kind>:` sentinel form is
+ * reserved in the COBOL precedent for genuinely global externals; a field
+ * defined in a package is not one.
+ */
+const nodeIdFor = (kind: EntityKind, name: string, filePath: string): string =>
+  generateId('Record', `${filePath}:<sf-${kind}>:${name}`);
+
+/**
+ * Tombstone for a name claimed by two entities, following
+ * `graph-bridge/node-lookup.ts`. A second write marks the key ambiguous rather
+ * than letting scan order pick a winner, and an ambiguous lookup yields no
+ * edge: emitting nothing beats minting a binding that points at the wrong
+ * package's field.
+ */
+const AMBIGUOUS = '';
+
+/** Record a name, marking it ambiguous if something already claimed it. */
+const claim = (index: Map<string, string>, key: string, id: string): void => {
+  index.set(key, index.has(key) ? AMBIGUOUS : id);
+};
+
+const resolved = (index: Map<string, string>, key: string): string | undefined => {
+  const hit = index.get(key);
+  return hit === undefined || hit === AMBIGUOUS ? undefined : hit;
+};
 
 /**
  * Classify by PATH, never by file content. Salesforce puts the owning object in
@@ -98,18 +127,28 @@ function classify(file: SalesforceMetadataFile): Entity | undefined {
   return undefined;
 }
 
-/** Apex is case-insensitive, so the flow's `<actionName>` need not match class casing. */
+/**
+ * Apex is case-insensitive, so the flow's `<actionName>` need not match class
+ * casing.
+ *
+ * Restricted to `.cls`: a `Class` node can come from any language the walker
+ * parsed, and a Salesforce repo routinely carries LWC and Node tooling beside
+ * `force-app/`. Without the extension check a flow action named `Logger` binds
+ * to a TypeScript `Logger`, minting a fabricated `CALLS` edge into `impact`.
+ *
+ * Ambiguous names are tombstoned rather than resolved first-wins. A repo can
+ * hold two same-named classes — a vendored package and a local test double,
+ * for instance — and picking by scan order can point every caller at the
+ * double.
+ */
 function buildApexClassIndex(graph: KnowledgeGraph): Map<string, string> {
   const index = new Map<string, string>();
   for (const node of graph.iterNodes()) {
     if (node.label !== 'Class') continue;
-    const name = node.properties.name;
+    const { name, filePath } = node.properties;
     if (typeof name !== 'string') continue;
-    const key = name.toLowerCase();
-    // ponytail: first definition wins. Two Apex classes can share a name across
-    // packages; picking arbitrarily beats fanning out to both, and the org
-    // forbids the collision anyway. Revisit if cross-package dupes show up.
-    if (!index.has(key)) index.set(key, node.id);
+    if (typeof filePath !== 'string' || !filePath.endsWith('.cls')) continue;
+    claim(index, name.toLowerCase(), node.id);
   }
   return index;
 }
@@ -145,12 +184,14 @@ export const processSalesforceMetadata = (
   // Every node lands before any edge, so a reference can resolve to an entity
   // declared in a file processed later.
   const byName = new Map<string, string>();
+  /** Entities that produced a node, paired with it — the edge pass reads this. */
+  const created: { entity: Entity; id: string }[] = [];
   for (const entity of entities) {
     const fileNodeId = generateId('File', entity.filePath);
     // structure-processor owns File nodes; without one there is nothing to anchor to.
     if (!graph.getNode(fileNodeId)) continue;
 
-    const id = nodeIdFor(entity.kind, entity.name);
+    const id = nodeIdFor(entity.kind, entity.name, entity.filePath);
     const node: GraphNode = {
       id,
       label: 'Record',
@@ -163,7 +204,8 @@ export const processSalesforceMetadata = (
       },
     };
     graph.addNode(node);
-    byName.set(`${entity.kind}:${entity.name.toLowerCase()}`, id);
+    created.push({ entity, id });
+    claim(byName, `${entity.kind}:${entity.name.toLowerCase()}`, id);
     result[countKey[entity.kind]]++;
 
     graph.addRelationship({
@@ -205,15 +247,12 @@ export const processSalesforceMetadata = (
   };
 
   const objectId = (name?: string): string | undefined =>
-    name ? byName.get(`object:${name.toLowerCase()}`) : undefined;
+    name ? resolved(byName, `object:${name.toLowerCase()}`) : undefined;
 
   let apexIndex: Map<string, string> | undefined;
 
   // ── Edges ────────────────────────────────────────────────────────
-  for (const entity of entities) {
-    const sourceId = byName.get(`${entity.kind}:${entity.name.toLowerCase()}`);
-    if (!sourceId) continue;
-
+  for (const { entity, id: sourceId } of created) {
     if (entity.kind === 'field') {
       // Object CONTAINS field, matching the direction Class CONTAINS Method
       // rather than pointing the member back at its container.
@@ -229,7 +268,7 @@ export const processSalesforceMetadata = (
       for (const name of customNamesIn(entity.content)) {
         link(
           sourceId,
-          byName.get(`field:${`${entity.object}.${name}`.toLowerCase()}`),
+          resolved(byName, `field:${`${entity.object}.${name}`.toLowerCase()}`),
           'USES',
           'salesforce-rule-references-field',
           0.9,
@@ -243,7 +282,7 @@ export const processSalesforceMetadata = (
       for (const actionName of apexActionNames(entity.content)) {
         link(
           sourceId,
-          apexIndex.get(actionName.toLowerCase()),
+          resolved(apexIndex, actionName.toLowerCase()),
           'CALLS',
           'salesforce-flow-invokes-apex',
           0.9,

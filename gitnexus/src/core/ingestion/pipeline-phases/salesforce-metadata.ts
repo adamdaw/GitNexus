@@ -6,7 +6,7 @@
  *
  * @deps    structure, parse
  * @reads   scannedFiles (from structure phase)
- * @writes  graph (Record nodes + CONTAINS/REFERENCES/CALLS edges)
+ * @writes  graph (Record nodes + CONTAINS/USES/CALLS edges)
  *
  * Depends on `parse` — not just `structure` — because the flow→Apex edge
  * resolves against `Class` nodes, which only exist once the Apex files have

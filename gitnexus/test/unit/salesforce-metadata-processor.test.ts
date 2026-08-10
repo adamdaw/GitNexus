@@ -80,6 +80,15 @@ function edgesFrom(graph: KnowledgeGraph, sourceId: string) {
   return [...graph.iterRelationships()].filter((r) => r.sourceId === sourceId);
 }
 
+/** Node ids are path-qualified, so look entities up by their display name. */
+function recordId(graph: KnowledgeGraph, name: string): string {
+  const hit = [...graph.iterNodes()].find(
+    (n) => n.label === 'Record' && n.properties.name === name,
+  );
+  if (!hit) throw new Error(`no Record node named ${name}`);
+  return hit.id;
+}
+
 describe('processSalesforceMetadata', () => {
   it('creates a Record node per declarative entity, keyed by object where the path qualifies it', () => {
     const graph = createKnowledgeGraph();
@@ -121,7 +130,7 @@ describe('processSalesforceMetadata', () => {
       { path: FIELD, content: fieldXml },
     ]);
 
-    const objId = generateId('Record', '<sf-object>:Contact');
+    const objId = recordId(graph, 'Contact');
     const owned = edgesFrom(graph, objId)
       .filter((r) => r.type === 'CONTAINS')
       .map((r) => graph.getNode(r.targetId)?.properties.name);
@@ -137,7 +146,7 @@ describe('processSalesforceMetadata', () => {
       { path: RULE, content: ruleXml },
     ]);
 
-    const ruleId = generateId('Record', '<sf-validationrule>:Contact.First_Name_is_Required');
+    const ruleId = recordId(graph, 'Contact.First_Name_is_Required');
     const byType = (t: string) =>
       edgesFrom(graph, ruleId)
         .filter((r) => r.type === t)
@@ -151,7 +160,7 @@ describe('processSalesforceMetadata', () => {
     expect(byType('USES')).toEqual(['Contact.VDM_Id__c']);
 
     // and the object owns the rule, in the container->member direction
-    const objId = generateId('Record', '<sf-object>:Contact');
+    const objId = recordId(graph, 'Contact');
     const owned = edgesFrom(graph, objId)
       .filter((r) => r.type === 'CONTAINS')
       .map((r) => graph.getNode(r.targetId)?.properties.name)
@@ -188,11 +197,13 @@ describe('processSalesforceMetadata', () => {
   it('links a flow to the Apex class an apex action invokes, matching case-insensitively', () => {
     const graph = createKnowledgeGraph();
     withFiles(graph, [FLOW]);
-    const classId = addApexClass(graph, 'FlowLogEntry', 'pkgs/x/classes/FlowLogEntry.cls');
+    // Class casing deliberately differs from the flow's <actionName>FlowLogEntry:
+    // identical strings on both sides would pass without any fold at all.
+    const classId = addApexClass(graph, 'flowlogentry', 'pkgs/x/classes/flowlogentry.cls');
 
     processSalesforceMetadata(graph, [{ path: FLOW, content: flowXml }]);
 
-    const flowId = generateId('Record', '<sf-flow>:Update_Case_Records');
+    const flowId = recordId(graph, 'Update_Case_Records');
     const calls = edgesFrom(graph, flowId).filter((r) => r.type === 'CALLS');
     expect(calls).toHaveLength(1);
     expect(calls[0].targetId).toBe(classId);
@@ -205,7 +216,7 @@ describe('processSalesforceMetadata', () => {
 
     processSalesforceMetadata(graph, [{ path: FLOW, content: flowXml }]);
 
-    const flowId = generateId('Record', '<sf-flow>:Update_Case_Records');
+    const flowId = recordId(graph, 'Update_Case_Records');
     expect(edgesFrom(graph, flowId).filter((r) => r.type === 'CALLS')).toEqual([]);
   });
 
@@ -215,7 +226,7 @@ describe('processSalesforceMetadata', () => {
 
     processSalesforceMetadata(graph, [{ path: FLOW, content: flowXml }]);
 
-    const flowId = generateId('Record', '<sf-flow>:Update_Case_Records');
+    const flowId = recordId(graph, 'Update_Case_Records');
     expect(edgesFrom(graph, flowId)).toEqual([]);
     // and every edge that IS emitted must resolve to a real node
     for (const r of graph.iterRelationships()) {
@@ -239,6 +250,64 @@ describe('processSalesforceMetadata', () => {
     for (const pair of emitted) {
       expect(declared.has(pair), `undeclared pair ${pair}`).toBe(true);
     }
+  });
+
+  it('gives same-named entities in different packages their own nodes', () => {
+    const graph = createKnowledgeGraph();
+    const FIELD_B = 'pkgs/vendored/main/default/objects/Contact/fields/VDM_Id__c.field-meta.xml';
+    withFiles(graph, [FIELD, FIELD_B]);
+
+    const result = processSalesforceMetadata(graph, [
+      { path: FIELD, content: fieldXml },
+      { path: FIELD_B, content: fieldXml },
+    ]);
+
+    const records = [...graph.iterNodes()].filter((n) => n.label === 'Record');
+    expect(records).toHaveLength(2);
+    expect(records.map((n) => n.properties.filePath).sort()).toEqual([FIELD_B, FIELD].sort());
+    // the counter reports nodes created, not files seen
+    expect(result.fields).toBe(records.length);
+  });
+
+  it('refuses to bind a formula reference when two packages define the field', () => {
+    const graph = createKnowledgeGraph();
+    const FIELD_B = 'pkgs/vendored/main/default/objects/Contact/fields/VDM_Id__c.field-meta.xml';
+    withFiles(graph, [OBJ, FIELD, FIELD_B, RULE]);
+
+    processSalesforceMetadata(graph, [
+      { path: OBJ, content: objectXml },
+      { path: FIELD, content: fieldXml },
+      { path: FIELD_B, content: fieldXml },
+      { path: RULE, content: ruleXml },
+    ]);
+
+    // Ambiguous target: emitting no edge beats picking one arbitrarily and
+    // minting a binding that points at the wrong package's field.
+    const uses = [...graph.iterRelationships()].filter((r) => r.type === 'USES');
+    expect(uses).toEqual([]);
+  });
+
+  it('refuses to bind a flow action when two classes share the name', () => {
+    const graph = createKnowledgeGraph();
+    withFiles(graph, [FLOW]);
+    addApexClass(graph, 'FlowLogEntry', 'pkgs/a/classes/FlowLogEntry.cls');
+    addApexClass(graph, 'FlowLogEntry', 'pkgs/b/classes/FlowLogEntry.cls');
+
+    processSalesforceMetadata(graph, [{ path: FLOW, content: flowXml }]);
+
+    const flowId = recordId(graph, 'Update_Case_Records');
+    expect(edgesFrom(graph, flowId).filter((r) => r.type === 'CALLS')).toEqual([]);
+  });
+
+  it('never binds a flow action to a non-Apex class of the same name', () => {
+    const graph = createKnowledgeGraph();
+    withFiles(graph, [FLOW]);
+    addApexClass(graph, 'FlowLogEntry', 'src/logging/FlowLogEntry.ts');
+
+    processSalesforceMetadata(graph, [{ path: FLOW, content: flowXml }]);
+
+    const flowId = recordId(graph, 'Update_Case_Records');
+    expect(edgesFrom(graph, flowId).filter((r) => r.type === 'CALLS')).toEqual([]);
   });
 
   it('ignores files that are not Salesforce metadata', () => {
