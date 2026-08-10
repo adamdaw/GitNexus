@@ -11,7 +11,7 @@ import { writeContractRegistry } from '../../../src/core/group/storage.js';
 import type { ContractRegistry, StoredContract, CrossLink } from '../../../src/core/group/types.js';
 
 function makeTmpGroup(): { tmpDir: string; groupDir: string; cleanup: () => void } {
-  const tmpDir = path.join(os.tmpdir(), `gitnexus-svc-${Date.now()}`);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitnexus-svc-'));
   const groupDir = path.join(tmpDir, 'groups', 'test-group');
   fs.mkdirSync(groupDir, { recursive: true });
 
@@ -374,7 +374,7 @@ describe('GroupService', () => {
     });
 
     it('test_groupQuery_subgroupExact_skips_descendant_member_paths', async () => {
-      const tmpDir = path.join(os.tmpdir(), `gitnexus-svc-nest-${Date.now()}`);
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitnexus-svc-nest-'));
       const groupDir = path.join(tmpDir, 'groups', 'nest-group');
       fs.mkdirSync(groupDir, { recursive: true });
       fs.writeFileSync(
@@ -450,7 +450,7 @@ repos:
     });
 
     it('test_groupContext_subgroupExact_skips_descendant_member_paths', async () => {
-      const tmpDir = path.join(os.tmpdir(), `gitnexus-ctx-nest-${Date.now()}`);
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitnexus-ctx-nest-'));
       const groupDir = path.join(tmpDir, 'groups', 'nest-group');
       fs.mkdirSync(groupDir, { recursive: true });
       fs.writeFileSync(

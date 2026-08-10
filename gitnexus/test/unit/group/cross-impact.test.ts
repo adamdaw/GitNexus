@@ -15,7 +15,7 @@ import { writeBridgeMeta } from '../../../src/core/group/bridge-db.js';
 import { BRIDGE_SCHEMA_VERSION } from '../../../src/core/group/bridge-schema.js';
 
 function tmpGroup(): { tmpDir: string; groupDir: string; cleanup: () => void } {
-  const tmpDir = path.join(os.tmpdir(), `gitnexus-ci-${Date.now()}-${Math.random()}`);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitnexus-ci-'));
   const groupDir = path.join(tmpDir, 'groups', 'g1');
   fs.mkdirSync(groupDir, { recursive: true });
   fs.writeFileSync(
