@@ -4,6 +4,15 @@ import os from 'os';
 import path from 'path';
 import { createRequire } from 'module';
 
+// The MCP fallback when no `gitnexus` launcher is on PATH. This build is not
+// published to npm, so upstream's `npx -y gitnexus@<version> mcp` fallback would
+// persist an upstream-pointing server into the user's editor config — silently, and
+// on every MCP connect. `gitnexus setup` runs from this build, so its own
+// entrypoint is always a valid launch path. Platform-independent: there is no cmd
+// wrapper to add, because there is no npx shim to wrap.
+const SELF_MCP = { command: process.execPath, args: [path.resolve(process.argv[1]!), 'mcp'] };
+const SELF_MCP_ARRAY = [process.execPath, path.resolve(process.argv[1]!), 'mcp'];
+
 const PKG_VERSION = (createRequire(import.meta.url)('../../package.json') as { version: string })
   .version;
 const NPX_REF = `gitnexus@${PKG_VERSION}`;
@@ -73,7 +82,7 @@ describe('setupCommand codex execution', () => {
 
     expect(execFileMock).toHaveBeenCalledWith(
       'codex',
-      ['mcp', 'add', 'gitnexus', '--', 'cmd', '/c', 'npx', '-y', NPX_REF, 'mcp'],
+      ['mcp', 'add', 'gitnexus', '--', ...SELF_MCP_ARRAY],
       { shell: true, windowsHide: true },
       expect.any(Function),
     );
@@ -88,7 +97,7 @@ describe('setupCommand codex execution', () => {
 
     expect(execFileMock).toHaveBeenCalledWith(
       'codex',
-      ['mcp', 'add', 'gitnexus', '--', 'cmd', '/c', 'npx', '-y', NPX_REF, 'mcp'],
+      ['mcp', 'add', 'gitnexus', '--', ...SELF_MCP_ARRAY],
       { shell: true, windowsHide: true },
       expect.any(Function),
     );
@@ -103,7 +112,7 @@ describe('setupCommand codex execution', () => {
 
     expect(execFileMock).toHaveBeenCalledWith(
       'codex',
-      ['mcp', 'add', 'gitnexus', '--', 'npx', '-y', NPX_REF, 'mcp'],
+      ['mcp', 'add', 'gitnexus', '--', ...SELF_MCP_ARRAY],
       { shell: false, windowsHide: true },
       expect.any(Function),
     );

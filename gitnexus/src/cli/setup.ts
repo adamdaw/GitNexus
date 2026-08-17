@@ -29,25 +29,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const execFileAsync = promisify(execFile);
 
-// Pin the npx fallback to the installed version. Reason: setup.ts writes
-// a config that persists in the user's editor and is invoked on every MCP
-// connect. Pinning to the installed version means subsequent invocations
-// skip the npm-registry metadata roundtrip (and stay reproducible until
-// the user upgrades). The plugin skill mcp.json are likewise pinned and
-// re-stamped every release by scripts/sync-plugin-manifests.mjs (#2445),
-// since they too execute `gitnexus@<version>` on connect. Only the READMEs
-// stay on `gitnexus@latest` — they're quickstart docs, not executed state.
-const _require = createRequire(import.meta.url);
-const _pkg = _require('../../package.json') as { version?: unknown };
-if (typeof _pkg.version !== 'string' || !_pkg.version) {
-  throw new Error(
-    'gitnexus/package.json#version is missing or not a string — cannot generate MCP fallback config.',
-  );
-}
-// Version-pinned ref for the persisted MCP entry — deliberately distinct from
-// the cjs's exported `gitnexus@latest` hint ref (resolve-analyze-cmd.cjs); the
-// two are not unified (see the comment above and that file's MCP_PINNED_REF).
-const MCP_PINNED_REF = `gitnexus@${_pkg.version}`;
+// There is no npx fallback. Upstream persisted `npx -y gitnexus@<version> mcp`
+// into the user's editor config when the binary was not yet on PATH, which is a
+// silent-wrong-tool trap here: this build is not published to npm, so that entry
+// resolves to the published package — no Apex support, and it returns nothing
+// rather than erroring. The config persists and runs on every MCP connect, so the
+// user would keep talking to the wrong server after installing the right one.
+//
+// Setup therefore requires the binary and fails loud without it (see
+// requireGitnexusBin). Same reasoning removed the launch args from the plugin
+// skill mcp.json, which is why sync-plugin-manifests.mjs no longer stamps them.
+const MISSING_BIN_MESSAGE =
+  'gitnexus setup needs the `gitnexus` binary on PATH, and this build is not ' +
+  'published to npm — there is no registry fallback to write into your editor ' +
+  'config. Build from source and `npm link`, then re-run `gitnexus setup`.';
 
 /**
  * Build the `command` string written into an editor's hook settings, which the
@@ -158,35 +153,32 @@ function resolveGitnexusBin(): string | null {
 }
 
 /**
- * The MCP server entry for all editors.
+ * The command to launch this build's MCP server. Every MCP entry below goes
+ * through this, so no editor config can point anywhere but this build.
  *
- * Prefers the globally-installed `gitnexus` binary (starts in ~1 s) over
- * `npx -y gitnexus@<version>` (cold-cache install of native deps can take
- * >60 s, exceeding Claude Code's 30 s MCP connection timeout). The fallback
- * version is read from gitnexus/package.json#version at module load so the
- * persisted user config matches the installed package.
- *
- * Falls back to npx when the binary isn't on PATH — e.g. first-time
- * users who ran `npx gitnexus analyze` but haven't done `npm i -g`.
+ * PATH lookup first, because a `gitnexus` launcher is what a user expects to see
+ * in their config. When it is absent, fall back to *this* process's own CLI
+ * entrypoint rather than to a registry fetch: `gitnexus setup` is itself running
+ * from this build, so a runnable path to it always exists. That keeps setup
+ * working before `npm link` while making an upstream-pointing entry impossible.
+ */
+function resolveMcpLaunch(): { command: string; args: string[] } {
+  const bin = resolveGitnexusBin();
+  if (bin) return { command: bin, args: [] };
+
+  const selfEntry = process.argv[1];
+  if (selfEntry) return { command: process.execPath, args: [path.resolve(selfEntry)] };
+
+  throw new Error(MISSING_BIN_MESSAGE);
+}
+
+/**
+ * The MCP server entry for all editors: the resolved `gitnexus` binary, which
+ * starts in ~1 s (well inside Claude Code's 30 s MCP connection timeout).
  */
 function getMcpEntry() {
-  const bin = resolveGitnexusBin();
-
-  if (bin) {
-    return { command: bin, args: ['mcp'] };
-  }
-
-  // Fallback: npx (works without a global install, but slow cold-start)
-  if (process.platform === 'win32') {
-    return {
-      command: 'cmd',
-      args: ['/c', 'npx', '-y', MCP_PINNED_REF, 'mcp'],
-    };
-  }
-  return {
-    command: 'npx',
-    args: ['-y', MCP_PINNED_REF, 'mcp'],
-  };
+  const { command, args } = resolveMcpLaunch();
+  return { command, args: [...args, 'mcp'] };
 }
 
 /**
@@ -194,16 +186,8 @@ function getMcpEntry() {
  * where command is a flat array (command + args combined).
  */
 function getOpenCodeMcpEntry() {
-  const bin = resolveGitnexusBin();
-
-  if (bin) {
-    return { type: 'local', command: [bin, 'mcp'] };
-  }
-
-  if (process.platform === 'win32') {
-    return { type: 'local', command: ['cmd', '/c', 'npx', '-y', MCP_PINNED_REF, 'mcp'] };
-  }
-  return { type: 'local', command: ['npx', '-y', MCP_PINNED_REF, 'mcp'] };
+  const { command, args } = resolveMcpLaunch();
+  return { type: 'local', command: [command, ...args, 'mcp'] };
 }
 
 /**

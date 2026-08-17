@@ -153,27 +153,24 @@ describe('skill-file steering (#1939, #1945)', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('documents the not-analyzed-yet / npm-11 bootstrap fallback in the cli skill (#1939)', () => {
+  it('documents the not-analyzed-yet bootstrap as a source build in the cli skill', () => {
     // The runner only exists after the first analyze, so the cli skill must
-    // document the bootstrap path (and the npm-11 npx install crash escape
-    // hatch): the issue reference plus at least one fallback mechanism.
+    // document how to get one. This build is not published to npm, so that path
+    // is a source build + `npm link`: upstream's npm one-shots (and the npm-11
+    // npx-crash escape hatches around them, #1939) all resolve to the published
+    // package, which has no Apex support and returns nothing rather than erroring.
     const cli = cliSkillFiles(files);
     const offenders = cli.filter((f) => {
       const text = readFileSync(f, 'utf-8');
-      const refsIssue = /1939/.test(text);
-      const hasFallback =
-        /install -g gitnexus/.test(text) || /--allow-build.*dlx gitnexus/.test(text);
-      return !(refsIssue && hasFallback);
+      const documentsSourceBuild = /not published to npm/.test(text) && /npm link/.test(text);
+      const namesAnNpmOneShot =
+        /(?:npx|bunx|dlx) gitnexus/.test(text) || /npm i(?:nstall)? -g gitnexus/.test(text);
+      return !documentsSourceBuild || namesAnNpmOneShot;
     });
     expect(offenders.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
 
-    // Positive vacuity guard: at least one cli skill must still carry the pnpm
-    // pre-`dlx` fallback form, so the npm-11 pnpm path can't silently vanish
-    // from every skill while the OR above is satisfied by `install -g` alone.
-    const withPnpmFallback = cli.filter((f) =>
-      /--allow-build.*dlx gitnexus/.test(readFileSync(f, 'utf-8')),
-    );
-    expect(withPnpmFallback.length).toBeGreaterThan(0);
+    // Vacuity guard: the assertion above is only meaningful if it ran over files.
+    expect(cli.length).toBeGreaterThan(0);
   });
 
   it('routes every stale-index reanalyze hint through the runner, not a raw package manager', () => {

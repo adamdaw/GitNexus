@@ -180,27 +180,26 @@ export function generateGitNexusContent(
 ${tableBody}`
     : '';
   // Docs reference the project-local runner `gitnexus analyze` writes (#1945):
-  // a single, CLI-neutral, machine-independent command (no per-machine churn,
-  // #1706) that auto-selects the available runner at call time. Kept terse to
-  // stay under the CLAUDE.md block token budget (#856); the cli skill carries the
-  // full bootstrap + npm-11 fallback (`node.target is null` npx install crash).
+  // a single, machine-independent command (no per-machine churn, #1706). Kept
+  // terse to stay under the CLAUDE.md block token budget (#856); the cli skill
+  // carries the full bootstrap.
   const runner = `node ${runnerPath}`;
-  // Bootstrap names every install-free one-shot rather than the one this machine
-  // resolves to: the block is committed, so a host-specific command would make
-  // two contributors on different package managers rewrite it at each other on
-  // every analyze (the per-machine churn of #1706). `bunx` is listed because a
-  // bun-only machine has no npm, npx or pnpm at all, and the npx-only note left
-  // it with a bootstrap command it could not run.
+  // This build is not published to npm, so there is no install-free one-shot to
+  // name: `npx`/`bunx`/`pnpm dlx gitnexus` all resolve to the published package,
+  // which has no Apex support and returns nothing rather than erroring. Upstream's
+  // reason for naming every runner (avoid per-machine churn on a committed block,
+  // #1706) does not apply when each named runner is the wrong build, and the block
+  // is written into indexed repos — so a wrong command here propagates outward.
   const bootstrapNote =
-    `No \`${runnerPath}\` yet? Bootstrap with \`npx\`, \`bunx\`, or \`pnpm dlx\` — ` +
-    'e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).';
+    `No \`${runnerPath}\` yet? Build from source and re-run — ` +
+    'the npm-published build has no Apex support and reports no error.';
 
   return `${GITNEXUS_START_MARKER}
 # GitNexus — Code Intelligence
 
 This project is indexed by GitNexus as **${projectName}**${noStats ? '' : ` (${stats.nodes || 0} symbols, ${stats.edges || 0} relationships, ${stats.processes || 0} execution flows)`}. Use GitNexus graph tools to understand code, assess impact, and navigate safely.
 
-> Index stale? Run \`${runner} analyze\` from the project root — it auto-selects an available runner. ${bootstrapNote}
+> Index stale? Run \`${runner} analyze\` from the project root — it runs the \`gitnexus\` binary on PATH. ${bootstrapNote}
 
 ## Always Do
 
