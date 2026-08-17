@@ -24,7 +24,7 @@ description: "Use when the user wants to know what will break if they change som
 ```
 
 > If "Index is stale" → run `node .gitnexus/run.cjs analyze` in terminal.
-> If `.gitnexus/run.cjs` is missing, replace `node .gitnexus/run.cjs` with `npx gitnexus` in the fallback commands.
+> If `.gitnexus/run.cjs` is missing, replace `node .gitnexus/run.cjs` with the `gitnexus` CLI on PATH in the fallback commands. This build is not published to npm — never fetch the package to get a runner; the published one has no Apex support and returns nothing rather than erroring.
 
 ## Checklist
 

@@ -1,5 +1,11 @@
 # GitNexus
 
+> **This fork is not published to npm.** Every `npx` / `bunx` / `pnpm dlx` /
+> `npm install -g gitnexus` command below fetches the **upstream** package, which has
+> no Apex support and returns nothing rather than erroring — a silent wrong answer, not
+> a failure you would notice. Build from source and `npm link` instead, then use the
+> `gitnexus` binary on PATH. See the Apex setup guide.
+
 **⚠️ Important Notice:** GitNexus has NO official cryptocurrency, token, or coin. Any token/coin using the GitNexus name on Pump.fun or any other platform is **not affiliated with, endorsed by, or created by** this project or its maintainers. Do not purchase any cryptocurrency claiming association with GitNexus.
 
 <div align="center">

@@ -1,5 +1,11 @@
 # Guardrails — GitNexus
 
+> **This fork is not published to npm.** Every `npx` / `bunx` / `pnpm dlx` /
+> `npm install -g gitnexus` command below fetches the **upstream** package, which has
+> no Apex support and returns nothing rather than erroring — a silent wrong answer, not
+> a failure you would notice. Build from source and `npm link` instead, then use the
+> `gitnexus` binary on PATH. See the Apex setup guide.
+
 Rules for **human contributors** and **AI agents**. Complements `AGENTS.md` (workflows) and `CONTRIBUTING.md` (PR process).
 
 ## Scope (least privilege)

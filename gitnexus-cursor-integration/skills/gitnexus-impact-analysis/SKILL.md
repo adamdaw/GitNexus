@@ -1,11 +1,12 @@
 ---
 name: gitnexus-impact-analysis
-description: Analyze blast radius before making code changes
+description: "Use when the user wants to know what will break if they change something, or needs safety analysis before editing code. Examples: \"Is it safe to change X?\", \"What depends on this?\", \"What will break?\""
 ---
 
 # Impact Analysis with GitNexus
 
 ## When to Use
+
 - "Is it safe to change this function?"
 - "What will break if I modify X?"
 - "Show me the blast radius"
@@ -23,7 +24,7 @@ description: Analyze blast radius before making code changes
 ```
 
 > If "Index is stale" → run `node .gitnexus/run.cjs analyze` in terminal.
-> If `.gitnexus/run.cjs` is missing, replace `node .gitnexus/run.cjs` with `npx gitnexus` in the fallback commands.
+> If `.gitnexus/run.cjs` is missing, replace `node .gitnexus/run.cjs` with the `gitnexus` CLI on PATH in the fallback commands. This build is not published to npm — never fetch the package to get a runner; the published one has no Apex support and returns nothing rather than erroring.
 
 ## Checklist
 
@@ -38,24 +39,25 @@ description: Analyze blast radius before making code changes
 
 ## Understanding Output
 
-| Depth | Risk Level | Meaning |
-|-------|-----------|---------|
-| d=1 | **WILL BREAK** | Direct callers/importers |
-| d=2 | LIKELY AFFECTED | Indirect dependencies |
-| d=3 | MAY NEED TESTING | Transitive effects |
+| Depth | Risk Level       | Meaning                  |
+| ----- | ---------------- | ------------------------ |
+| d=1   | **WILL BREAK**   | Direct callers/importers |
+| d=2   | LIKELY AFFECTED  | Indirect dependencies    |
+| d=3   | MAY NEED TESTING | Transitive effects       |
 
 ## Risk Assessment
 
-| Affected | Risk |
-|----------|------|
-| <5 symbols, few processes | LOW |
-| 5-15 symbols, 2-5 processes | MEDIUM |
-| >15 symbols or many processes | HIGH |
+| Affected                       | Risk     |
+| ------------------------------ | -------- |
+| <5 symbols, few processes      | LOW      |
+| 5-15 symbols, 2-5 processes    | MEDIUM   |
+| >15 symbols or many processes  | HIGH     |
 | Critical path (auth, payments) | CRITICAL |
 
 ## Tools
 
 **impact** — the primary tool for symbol blast radius. If MCP is unavailable, use `node .gitnexus/run.cjs impact <symbol> --direction upstream --repo .` instead:
+
 ```
 impact({
   target: "validateUser",
@@ -73,6 +75,7 @@ impact({
 ```
 
 **detect_changes** — git-diff based impact analysis. If MCP is unavailable, use `node .gitnexus/run.cjs detect-changes --scope all --repo .` instead:
+
 ```
 detect_changes({scope: "all"})
 

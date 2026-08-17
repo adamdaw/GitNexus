@@ -7,7 +7,7 @@ description: "Use when the user needs to run GitNexus CLI commands like analyze/
 
 Commands below use `node .gitnexus/run.cjs <command>` — the project-local runner `gitnexus analyze` drops next to the index. It auto-selects an available runner at call time (global `gitnexus`, else `pnpm dlx`, else `bunx`, else `npx`), so no package-manager assumption and no global install is required — including on a bun-only machine, which has no npm, npx or pnpm at all.
 
-> **Not analyzed yet, or `node .gitnexus/run.cjs` reports `Cannot find module`** (the gitignored runner is absent — e.g. a fresh clone or `git clean`)? (Re)generate it with `npx gitnexus analyze` from the project root, or `bunx gitnexus@latest analyze` on a bun-only machine. On **npm 11.x**, if `npx` crashes during install (`node.target is null`), install once with `npm i -g gitnexus` (then `gitnexus analyze`), or use `bunx gitnexus@latest analyze`, or `pnpm --allow-build=@ladybugdb/core --allow-build=gitnexus --allow-build=tree-sitter dlx gitnexus@latest analyze`. See [#1939](https://github.com/abhigyanpatwari/GitNexus/issues/1939).
+> **Not analyzed yet, or `node .gitnexus/run.cjs` reports `Cannot find module`** (the gitignored runner is absent — e.g. a fresh clone or `git clean`)? (Re)generate it by running `gitnexus analyze` from the project root with the CLI on PATH. This build is not published to npm, so there is no install-free one-shot: get the CLI by cloning this repo, building it, and `npm link`. Fetching the published package instead gives you a build with no Apex support, which returns nothing rather than erroring.
 
 ## Commands
 
@@ -19,14 +19,14 @@ node .gitnexus/run.cjs analyze
 
 Run from the project root. This parses all source files, builds the knowledge graph, writes it to `.gitnexus/`, and generates CLAUDE.md / AGENTS.md context files.
 
-| Flag | Effect |
-|------|--------|
-| `--force` | Force full re-index even if up to date |
+| Flag           | Effect                                                           |
+| -------------- | ---------------------------------------------------------------- |
+| `--force`      | Force full re-index even if up to date                           |
 | `--embeddings` | Enable embedding generation for semantic search (off by default) |
 | `--drop-embeddings` | Drop existing embeddings on rebuild. By default, an `analyze` without `--embeddings` preserves them. |
 | `--pdg` | Build the program-dependence layers used by `explain` and `pdg_query` (taint, CDG, and REACHING_DEF). |
 
-**When to run:** First time in a project, after major code changes, or when `gitnexus://repo/{name}/context` reports the index is stale.
+**When to run:** First time in a project, after major code changes, or when `gitnexus://repo/{name}/context` reports the index is stale. In Claude Code, a PostToolUse hook detects staleness after `git commit` and `git merge` and notifies the agent to run `analyze` — the hook does not run analyze itself, to avoid blocking the agent for up to 120s and risking KuzuDB corruption on timeout.
 
 ### status — Check index freshness
 
@@ -44,10 +44,10 @@ node .gitnexus/run.cjs clean
 
 Deletes the `.gitnexus/` directory and unregisters the repo from the global registry. Use before re-indexing if the index is corrupt or after removing GitNexus from a project.
 
-| Flag | Effect |
-|------|--------|
-| `--force` | Skip confirmation prompt |
-| `--all` | Clean all indexed repos, not just the current one |
+| Flag      | Effect                                            |
+| --------- | ------------------------------------------------- |
+| `--force` | Skip confirmation prompt                          |
+| `--all`   | Clean all indexed repos, not just the current one |
 
 ### wiki — Generate documentation from the graph
 
@@ -57,17 +57,15 @@ node .gitnexus/run.cjs wiki
 
 Generates repository documentation from the knowledge graph using an LLM. Requires an API key (saved to `~/.gitnexus/config.json` on first use).
 
-| Flag | Effect |
-|------|--------|
-| `--force` | Force full regeneration, also required to re-gerenate an existing wiki in a different language |
-| `--model <model>` | LLM model (default: minimax/minimax-m2.5) |
-| `--base-url <url>` | LLM API base URL |
-| `--api-key <key>` | LLM API key |
-| `--concurrency <n>` | Parallel LLM calls (default: 3) |
-| `--gist` | Publish wiki as a public GitHub Gist |
-| `--timeout <seconds>` | LLM request timeout in seconds (default: disabled) |
-| `--retries <n>` | Max LLM retry attempts per request (default: 3) |
-| `--lang <lang>`  | Output language for generated documentation (e.g. english, chinese, spanish, japanese)|
+| Flag                | Effect                                    |
+| ------------------- | ----------------------------------------- |
+| `--force`           | Force full regeneration                   |
+| `--model <model>`   | LLM model (default: minimax/minimax-m2.5) |
+| `--base-url <url>`  | LLM API base URL                          |
+| `--api-key <key>`   | LLM API key                               |
+| `--concurrency <n>` | Parallel LLM calls (default: 3)           |
+| `--gist`            | Publish wiki as a public GitHub Gist      |
+
 ### list — Show all indexed repos
 
 ```bash

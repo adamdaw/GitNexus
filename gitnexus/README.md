@@ -1,5 +1,11 @@
 # GitNexus
 
+> **This fork is not published to npm.** Every `npx` / `bunx` / `pnpm dlx` /
+> `npm install -g gitnexus` command below fetches the **upstream** package, which has
+> no Apex support and returns nothing rather than erroring — a silent wrong answer, not
+> a failure you would notice. Build from source and `npm link` instead, then use the
+> `gitnexus` binary on PATH. See the Apex setup guide.
+
 **Graph-powered code intelligence for AI agents.** Index any codebase into a knowledge graph, then query it via MCP or CLI.
 
 Works with **Cursor**, **Claude Code**, **Antigravity** (Google), **Codex**, **Windsurf**, **Cline**, **OpenCode**, **CodeBuddy** (Tencent), **Qoder** (Alibaba), and any MCP-compatible tool.

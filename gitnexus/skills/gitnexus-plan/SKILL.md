@@ -131,8 +131,9 @@ budget; when the budget runs out with questions still open, record them in
 3. **Resolve and record the analyzer runner** (used by every `analyze`
    command in this skill): `node .gitnexus/run.cjs analyze …` when the
    project has a runner (a previous analyze dropped it next to the index),
-   else `gitnexus analyze …` (installed CLI — `npm install -g gitnexus`),
-   else `npx gitnexus analyze …`. Record its path/version and any available
+   else `gitnexus analyze …` (the CLI on PATH — this build is not published to
+   npm, so it is installed by building from source and `npm link`, never by
+   fetching the package). Record its path/version and any available
    source/build identity; do not manufacture provenance from timestamps.
 4. Read `gitnexus://repo/{name}/context` — codebase overview + staleness check.
    **Freshness gate.** Plans built on a stale graph make stale blast-radius
@@ -338,8 +339,8 @@ skill-config file mechanism; invocation args are the mechanism):
 3. Label every such finding **source-derived** in the plan — never present it
    as graph-derived, and never fabricate statement-level edges.
 4. Recommend `analyze --index-only` (add `--pdg` for the PDG layers) via
-   the resolved runner — `node .gitnexus/run.cjs`, installed `gitnexus`, or
-   `npx gitnexus` — when it would materially raise confidence.
+   the resolved runner — `node .gitnexus/run.cjs`, else `gitnexus` on PATH —
+   when it would materially raise confidence.
 
 ## Skill feedback
 
