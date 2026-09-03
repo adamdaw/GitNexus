@@ -480,6 +480,7 @@ import { kotlinScopeResolver } from '../../src/core/ingestion/languages/kotlin/s
 import { resolvePhpImportTargetInternal } from '../../src/core/ingestion/languages/php/import-target.ts';
 import { javaScopeResolver } from '../../src/core/ingestion/languages/java/scope-resolver.ts';
 import { cobolScopeResolver } from '../../src/core/ingestion/languages/cobol/scope-resolver.ts';
+import { apexScopeResolver } from '../../src/core/ingestion/languages/apex/scope-resolver.ts';
 import { resolveSwiftImportTarget } from '../../src/core/ingestion/languages/swift/import-target.ts';
 import { resolveRustImportTarget } from '../../src/core/ingestion/languages/rust/import-target.ts';
 import { resolveZigImportInternal } from '../../src/core/ingestion/import-resolvers/zig.ts';
@@ -748,6 +749,7 @@ const EXTENSION = {
   php: '.php',
   java: '.java',
   cobol: '.cbl',
+  apex: '.cls',
   swift: '.swift',
   rust: '.rs',
   python: '.py',
@@ -861,6 +863,17 @@ function uniqueDir(lang, d, i) {
   // COBOL resolves on the BASENAME alone (`path.basename(fp, ext)`), so its
   // directories are pure realism — a copybook library beside the programs.
   if (lang === 'cobol') return d % 3 === 0 ? `copybooks/grp${d}` : `src/prog${d}`;
+  // SFDX. Apex classes sit flat in a per-package `classes/` directory, and the
+  // slice carries the two spellings a real multi-package repo mixes — the full
+  // `main/default` path and the short one. Neither can change what this arm
+  // measures: `apexScopeResolver.resolveImportTarget` is a constant `null`
+  // because Apex has no import statement, so every probe misses whatever the
+  // layout is. What the arm pins is exactly that — zero resolved, and a cost
+  // independent of file count — which is the assertion that would break first
+  // if Apex ever grew a suffix match over `allFilePaths`.
+  if (lang === 'apex') {
+    return d % 3 === 0 ? `pkgs/pkg${d}/main/default/classes` : `pkgs/pkg${d}/classes`;
+  }
   // SPM. The nested slice makes one file's interior segments repeat
   // (`Sources/Mod7/Internal/Mod7/File7.swift`), and `getSwiftModuleIndex`
   // pushes once per segment, so that file appears TWICE in module `Mod7`'s
@@ -957,6 +970,9 @@ function collideDir(lang, d, i) {
       : `svc${d}/src/main/java/com/example/model`;
   }
   if (lang === 'cobol') return `svc${d}/copybooks`;
+  // The shared `classes` leaf every package dir ends in, which is the only
+  // collision axis SFDX offers. Inert here for the reason `uniqueDir` gives.
+  if (lang === 'apex') return `pkgs/svc${d}/classes`;
   // Swift's collision axis is neither a shared directory name nor a shared
   // basename: `byModule` is KEYED on the module name, so what grows a bucket is
   // FEWER modules holding MORE files. `SWIFT_COLLIDE_MODULES` of them, so the
@@ -1319,6 +1335,20 @@ function uniqueTarget(lang, { local, r, d, j, dirs }) {
           ]
         : `com.google.common.vendor${(r >>> 4) % 97}.Missing`;
   }
+  // Apex names a type, never a file or a module path: a local class by its bare
+  // name, a platform type by its dotted namespace. Both spellings are minted so
+  // the pinned outcome covers the two shapes a real callsite carries, even
+  // though the resolver refuses both.
+  if (lang === 'apex') {
+    return local
+      ? `Class${j}`
+      : [
+          'System.Database',
+          'Schema.SObjectType',
+          'Messaging.SingleEmailMessage',
+          'ConnectApi.ChatterFeeds',
+        ][(r >>> 4) % 4];
+  }
   if (lang === 'cobol') {
     // `COPY` takes a bare bookname. A share of the local ones is spelled in
     // lower case: COBOL is case-insensitive and the resolver upper-cases the
@@ -1538,6 +1568,19 @@ function collideTarget(lang, { local, r, d, j, dirs }) {
             (r >>> 4) % 3
           ]
         : `com.google.common.vendor${(r >>> 4) % 97}.Missing`;
+  }
+  // The repeated class name across package dirs — the shape a multi-package repo
+  // produces and the one a suffix matcher would resolve ambiguously. Inert while
+  // the resolver is a constant `null`, which is what makes pinning it worthwhile.
+  if (lang === 'apex') {
+    return local
+      ? `Class${Math.floor(j / dirs)}`
+      : [
+          'System.Database',
+          'Schema.SObjectType',
+          'Messaging.SingleEmailMessage',
+          'ConnectApi.ChatterFeeds',
+        ][(r >>> 4) % 4];
   }
   if (lang === 'cobol') {
     // The repeated basename is COBOL's ONLY collision axis, and its index is a
@@ -1855,6 +1898,10 @@ function resolveOne(lang, from, target, pass) {
   }
   // The `ScopeResolver` hook itself — COBOL's copy index has no other export.
   if (lang === 'cobol') return cobolScopeResolver.resolveImportTarget(target, from, allFilePaths);
+  // The registered hook, not an inner resolver: Apex has none. The hook is
+  // `() => null`, and calling it through the same path as every other language
+  // is what makes the null a measured result rather than an assumption.
+  if (lang === 'apex') return apexScopeResolver.resolveImportTarget(target, from, allFilePaths);
   if (lang === 'swift') {
     return resolveSwiftImportTarget(
       { kind: 'namespace', localName: 'X', importedName: 'X', targetRaw: target },
@@ -2125,6 +2172,11 @@ const HEAP_PROBE_TARGET = {
   // (`getFilesInDir`) before answering null — the three-map read pattern.
   csharp_csproj: 'App.Missing0',
   ruby: 'gem0/missing/thing',
+  // Every Apex spelling misses, so the probe is chosen for shape rather than
+  // for how far it reaches: a dotted platform type `uniqueTarget` already
+  // mints. The reading is the constant it has to be — Apex retains no
+  // per-pass structure, because it builds none.
+  apex: 'System.Database',
   // A mapped-but-missing class forces the Composer mapping and suffix-index
   // read paths. The separate external probe below keeps the fast gate visible.
   php: 'App\\HeapGhost0\\AbsentHeapProbe',
@@ -2386,6 +2438,7 @@ const LANG_REGISTRY = {
   php: SupportedLanguages.PHP,
   java: SupportedLanguages.Java,
   cobol: SupportedLanguages.Cobol,
+  apex: SupportedLanguages.Apex,
   swift: SupportedLanguages.Swift,
   rust: SupportedLanguages.Rust,
   python: SupportedLanguages.Python,
