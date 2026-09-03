@@ -497,22 +497,19 @@ describe('external imports never resolve into the repository (#2953)', () => {
     [...CASES.keys()].filter(
       (language) => !KNOWN_GAPS.has(language) && CASES.get(language)!.noImportMechanism !== true,
     ),
-  )(
-    '%s: the decoy is reachable, so the arm below means something',
-    (language) => {
-      const testCase = CASES.get(language)!;
-      const reached = filesOf(resolveWith(language, testCase, testCase.reachesDecoy!));
+  )('%s: the decoy is reachable, so the arm below means something', (language) => {
+    const testCase = CASES.get(language)!;
+    const reached = filesOf(resolveWith(language, testCase, testCase.reachesDecoy!));
 
-      // The DECOY specifically, not merely something. Asserting non-empty let a
-      // case pair `reachesDecoy` with a different file than `decoy` and still
-      // pass, which proves the resolver can reach SOME file and says nothing
-      // about whether the tempting wrong answer below was ever reachable.
-      expect(
-        reached,
-        `${language}: '${testCase.reachesDecoy}' did not reach the decoy '${testCase.decoy}', so this workspace proves nothing about '${testCase.external}'`,
-      ).toContain(testCase.decoy);
-    },
-  );
+    // The DECOY specifically, not merely something. Asserting non-empty let a
+    // case pair `reachesDecoy` with a different file than `decoy` and still
+    // pass, which proves the resolver can reach SOME file and says nothing
+    // about whether the tempting wrong answer below was ever reachable.
+    expect(
+      reached,
+      `${language}: '${testCase.reachesDecoy}' did not reach the decoy '${testCase.decoy}', so this workspace proves nothing about '${testCase.external}'`,
+    ).toContain(testCase.decoy);
+  });
 
   it.each([...CASES.keys()])('%s: an external specifier resolves to nothing', (language) => {
     const testCase = CASES.get(language)!;

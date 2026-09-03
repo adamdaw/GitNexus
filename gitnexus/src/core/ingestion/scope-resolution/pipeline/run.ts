@@ -766,12 +766,7 @@ export function runScopeResolution(
   const runHeritageAndMro = (scopesForHeritage: typeof finalized) => {
     const preEmittedInheritanceSites = callableFlowOnly
       ? new Set<string>()
-      : preEmitInheritanceEdges(
-          graph,
-          scopesForHeritage,
-          nodeLookup,
-          recordHeritageTypeArguments,
-        );
+      : preEmitInheritanceEdges(graph, scopesForHeritage, nodeLookup, recordHeritageTypeArguments);
     // Call-based heritage hook (e.g., Ruby include/extend/prepend) — emits
     // IMPLEMENTS edges `preEmitInheritanceEdges` cannot produce (syntactic
     // method calls, not grammar-level heritage clauses). Before `buildMro`.
