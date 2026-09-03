@@ -1209,17 +1209,23 @@ export function runScopeResolution(
   // several functions returning the same field name. Sites it resolves are
   // added to the skip set, so the fallback below never second-guesses them.
   const sharedPropertyIndex = input.prebuiltPropertyNameIndex ?? buildPropertyNameIndex(graph);
-  const returnShapeMembers = callableFlowOnly
-    ? { emitted: 0, memberNotOnShape: 0 }
-    : emitReturnShapeMemberAccesses(
-        graph,
-        indexes,
-        emitParsedFiles,
-        postHeritageNodeLookup,
-        uniqueNameSkipSites,
-        sharedPropertyIndex,
-        uniqueNameSkipSites,
-      );
+  // Called for its side effects: the ACCESSES edges it emits and the sites it
+  // adds to `uniqueNameSkipSites`. It also returns `{ emitted, memberNotOnShape }`,
+  // and nothing reads either — there is no stat field for them on
+  // `ScopeResolutionResult`, so binding the result only declares a variable no
+  // one uses (`js/unused-local-variable`). The `callableFlowOnly` arm is now the
+  // absence of the call rather than a zeroed stand-in for its counts.
+  if (!callableFlowOnly) {
+    emitReturnShapeMemberAccesses(
+      graph,
+      indexes,
+      emitParsedFiles,
+      postHeritageNodeLookup,
+      uniqueNameSkipSites,
+      sharedPropertyIndex,
+      uniqueNameSkipSites,
+    );
+  }
 
   const nameFallbackDisabled = provider.fieldFallbackOnMethodLookup === false;
   const uniqueNameProperties = callableFlowOnly
