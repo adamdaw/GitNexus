@@ -24,4 +24,5 @@ export enum SupportedLanguages {
   Cobol = 'cobol',
   /** Salesforce Apex — `.cls`/`.trigger`; Java-derived tree-sitter grammar. */
   Apex = 'apex',
+  Zig = 'zig',
 }

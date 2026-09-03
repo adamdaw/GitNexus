@@ -6,10 +6,11 @@
  * `DEFINITION_ANCHOR_LABELS × ATTACHMENT_TARGET_LABELS` for the framework and
  * pipeline-phase overlays — so both generated halves are covered there. What
  * neither rule can reach is `STRUCTURAL_PAIR_DDL`: the containment, inheritance
- * and import pairs BETWEEN TWO DEFINITION LABELS. Eleven node tables are absent
+ * and import pairs BETWEEN TWO DEFINITION LABELS. Ten node tables are absent
  * from every rule's target side (`CodeElement`, `Impl`, `Namespace`,
- * `Template`, `TypeAlias`, `Typedef`, `Union`, `Static`, `Section`, `Folder`,
- * and the PDG-only `BasicBlock`), so a pair pointing at one is hand-declared or
+ * `Template`, `TypeAlias`, `Typedef`, `Static`, `Section`, `Folder`, and the
+ * PDG-only `BasicBlock` — `Union` left this set when Zig made it a linkable
+ * member container), so a pair pointing at one is hand-declared or
  * it does not exist. No predicate describes that surface — any container can
  * hold any definition — so this asks the emitters directly: run the real
  * pipeline and require every FROM/TO pair it produces to be declared.
@@ -36,6 +37,8 @@ import { FIXTURES, runPipelineFromRepo } from './resolvers/helpers.js';
 import { RELATION_SCHEMA } from '../../src/core/lbug/schema.js';
 import { parseRelationSchemaPairs, relPairKeyFor } from '../../src/core/lbug/rel-pair-routing.js';
 import { DIST_WORKER_URL, distWorkerExists } from '../helpers/worker-parse.js';
+import { isLanguageAvailable } from '../../src/core/tree-sitter/parser-loader.js';
+import { SupportedLanguages } from '../../src/config/supported-languages.js';
 
 vi.setConfig({ testTimeout: 180_000 });
 
@@ -109,7 +112,75 @@ const NON_BRIDGE_CORPUS = [
     emitter: 'tools-phase HANDLES_TOOL',
     sentinels: ['Class|Tool'],
   },
+  {
+    // A TypeScript object-type alias owns its members, so it emits
+    // HAS_PROPERTY from a `TypeAlias` — a label on the ELEVEN-table list this
+    // suite exists for, and one no rule reaches. Shipped once without the pair
+    // declared: emit threw `UndeclaredRelationPairError` and the whole analyze
+    // died on any repo containing `type X = { ... }`. Every resolver test still
+    // passed, because they build an in-memory graph and never write to the DB —
+    // this suite is the only place that difference shows up.
+    // `TypeAlias` USED to be off the generated grid, which is why round 1 hand-
+    // declared its pairs. It is now in `LINKABLE_LABELS` (the def→graph-node
+    // bridge needs it), which makes it a SCOPE_BRIDGE source and target, so the
+    // cross-product generates these pairs and the hand declarations were
+    // removed as redundant.
+    //
+    // The sentinel is still load-bearing, for a different reason than before:
+    // it now depends on `TypeAlias` being in `LINKABLE_LABELS`. Take it out and
+    // the pair stops being generated AND the hand declaration is gone, so this
+    // fails — which is exactly the state that also silently breaks alias
+    // consumer edges. `Interface|Property` was dropped from this entry because
+    // it is tautological in the ordinary way: both labels were always in the
+    // cross-product, so nothing about it could ever fail.
+    fixture: 'typescript-alias-fields',
+    emitter: 'object-type alias HAS_PROPERTY',
+    sentinels: ['TypeAlias|Property'],
+  },
+  {
+    // Nothing in the corpus contained a method-shaped alias member, so nothing
+    // proved `TypeAlias|Method` was the right pair for what is actually
+    // emitted — a pair no emitter exercises is indistinguishable from a missing
+    // one until an analyze aborts on a real repo.
+    fixture: 'typescript-alias-methods',
+    emitter: 'object-type alias HAS_METHOD',
+    sentinels: ['TypeAlias|Method'],
+  },
+  {
+    // The other direction on the same fixture (R2-2): an annotation naming a
+    // declared type emits USES INTO a `TypeAlias`, so the pair is
+    // `Function|TypeAlias` rather than the `TypeAlias|Property` above. Same
+    // eleven-table label, a different table, and a separate way for the same
+    // class of failure to reach a released build — the entry above would stay
+    // green with this one undeclared.
+    fixture: 'typescript-alias-fields',
+    emitter: 'type-annotation USES',
+    sentinels: ['Function|TypeAlias', 'Function|Interface'],
+  },
 ] as const satisfies readonly CorpusEntry[];
+
+/**
+ * Same contract, for fixtures whose grammar is an npm optionalDependency and
+ * may be absent on the runner. Gated per language rather than per case so a
+ * missing grammar SKIPS (the pipeline drops the files by contract, and an
+ * empty emit would otherwise fail every sentinel for a reason that has
+ * nothing to do with the schema).
+ */
+const OPTIONAL_GRAMMAR_CORPUS = [
+  {
+    // Zig `union(enum)` is a member container: `union_declaration` sits in
+    // MEMBER_OWNER_NODE_TYPES, so the definition phase emits HAS_PROPERTY /
+    // HAS_METHOD FROM a `Union` node. Shipped once with `Union` off the
+    // generated grid — every resolver test passed on the in-memory graph while
+    // a real `analyze` of THIS fixture aborted at `assertDeclaredPair`
+    // (`Union|Property`). `Union` is now in `LINKABLE_LABELS`; take it out and
+    // both sentinels vanish from the DDL and this fails.
+    fixture: 'zig-basic',
+    language: SupportedLanguages.Zig,
+    emitter: 'zig union HAS_PROPERTY / HAS_METHOD',
+    sentinels: ['Union|Property', 'Union|Method'],
+  },
+] as const satisfies readonly (CorpusEntry & { readonly language: SupportedLanguages })[];
 
 /*
  * NOTE — why this suite runs its own pipelines instead of reusing the resolver
@@ -171,6 +242,21 @@ describeIfWorkerBuilt('RELATION_SCHEMA covers the non-bridge emitters', () => {
     async ({ fixture, sentinels }) => {
       const emitted = await pairsEmittedBy(fixture);
       // Sorted so a failure is stable and names the pair to declare.
+      expect({
+        undeclaredPairs: [...emitted].filter((pair) => !DECLARED.has(pair)).sort(),
+        missingSentinelPairs: sentinels.filter((pair) => !emitted.has(pair)),
+      }).toEqual({ undeclaredPairs: [], missingSentinelPairs: [] });
+    },
+  );
+
+  // `.for`, not `.each`: only `for` passes the test context as a second
+  // argument (`each`'s callback is `(...args: T[])`), and the context is what
+  // carries the dynamic `skip()` this per-language gate needs.
+  it.concurrent.for(OPTIONAL_GRAMMAR_CORPUS)(
+    '$fixture emits only declared FROM/TO pairs, and still reaches $emitter',
+    async ({ fixture, language, sentinels }, ctx) => {
+      if (!isLanguageAvailable(language)) ctx.skip();
+      const emitted = await pairsEmittedBy(fixture);
       expect({
         undeclaredPairs: [...emitted].filter((pair) => !DECLARED.has(pair)).sort(),
         missingSentinelPairs: sentinels.filter((pair) => !emitted.has(pair)),

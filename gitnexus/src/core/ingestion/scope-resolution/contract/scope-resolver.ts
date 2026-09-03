@@ -300,6 +300,7 @@ import {
 } from '../../model/scope-resolution-indexes.js';
 import type { SemanticModel } from '../../model/semantic-model.js';
 import type { ConversionRankFn } from '../passes/overload-narrowing.js';
+import type { HeritageTypeArgumentSink } from '../utils/generic-instantiation.js';
 import type { WorkspaceResolutionIndex } from '../workspace-index.js';
 
 /** A LinearizeStrategy receives the full ancestor map so C3-style
@@ -338,6 +339,41 @@ export type ElementAccessRoute =
 export interface StructuralImplementor {
   readonly structDefId: string;
   readonly receiverForm: 'value' | 'pointer';
+}
+
+/**
+ * One interface whose satisfaction check could not be COMPLETED for at least
+ * one candidate type — not one that was checked and came out negative.
+ *
+ * The distinction is the whole point (#2873): a detector that reports only
+ * positives makes "nobody implements this" and "we could not tell whether
+ * anybody implements this" byte-identical, and the second one silently becomes
+ * a confident zero in `impact`. Consumers must not turn these into edges; they
+ * exist so a query can say it is answering with a lower bound.
+ */
+export interface UndecidedSatisfaction {
+  readonly interfaceDefId: string;
+  readonly interfaceName: string;
+  readonly filePath: string;
+  /** How many candidate types went unjudged for this interface. */
+  readonly undecidedCandidates: number;
+  /**
+   * The candidate types themselves, by name.
+   *
+   * Both sides are recorded because a query arrives from either one. Asking
+   * `impact` about the IMPLEMENTATION — the case #2873 reports — never touches
+   * the interface node at all: the walk starts at a method whose owner has no
+   * heritage edge precisely because the check was undecided, so an
+   * interface-keyed record alone would leave that query unhedged.
+   */
+  readonly candidateNames: readonly string[];
+}
+
+/** What `detectInterfaceImplementations` answers: the positives, plus the
+ *  questions it could not answer. */
+export interface StructuralImplementationResult {
+  readonly implementations: Map<string, readonly StructuralImplementor[]>;
+  readonly undecided: readonly UndecidedSatisfaction[];
 }
 
 export interface ScopeResolver {
@@ -554,6 +590,16 @@ export interface ScopeResolver {
    * shape. Must be idempotent (the orchestrator may call it more than once
    * during re-resolution).
    *
+   * `recordTypeArguments` is the same sink `preEmitInheritanceEdges` writes to:
+   * the generic INSTANTIATION a heritage clause was written with, so
+   * interface-dispatch fan-out can refuse an implementor of an incompatible one
+   * (#2912). An implementation that emits an edge for a generic base
+   * (`impl Validator<String> for V`, `class V implements Validator<String>`)
+   * should call it with the same (source, target) graph ids it just used;
+   * anything not recorded reads as "unknown" and keeps the pre-#2912 fan-out.
+   * Ignoring it entirely is correct for a language whose heritage carries no
+   * type arguments (Ruby `include`).
+   *
    * Default: undefined (no extra heritage edges needed).
    */
   readonly emitHeritageEdges?: (
@@ -561,6 +607,7 @@ export interface ScopeResolver {
     parsedFiles: readonly ParsedFile[],
     nodeLookup: GraphNodeLookup,
     scopes?: ScopeResolutionIndexes,
+    recordTypeArguments?: HeritageTypeArgumentSink,
   ) => void;
 
   /**
@@ -871,6 +918,71 @@ export interface ScopeResolver {
   readonly constructorCallTargetsClass?: boolean;
 
   /**
+   * When true, the CALLS edge emitted for a constructor-form site
+   * (`callForm === 'constructor'`) carries ` (constructor)` appended to its
+   * `reason` — `local-call (constructor)`, `import-resolved (constructor)`,
+   * `scope-resolution: call (constructor)` — so a consumer can tell
+   * "constructs an instance of" apart from "invokes" on the edge alone.
+   *
+   * Opt-in because the unsuffixed strings are a pinned contract: the legacy
+   * DAG vocabulary (`'import-resolved' | 'local-call' | …`, see the
+   * same-graph guarantee above) is asserted verbatim by consumers and by the
+   * per-language resolver suites, constructor sites included. A language
+   * that links a construction site to the TYPE node itself — a struct
+   * literal `T{…}` in Zig, where nothing but the marker distinguishes the
+   * edge from an invocation in the schema (PR #1432 review) — opts in; the
+   * default leaves every existing edge byte-identical.
+   *
+   * The marker rides in `reason` because relationships carry no arbitrary
+   * properties (adding one moves SCHEMA_FINGERPRINT — the IMPLEMENTS
+   * `-pointer` precedent in `pipeline/run.ts`). Applies to the free-call
+   * fallback, the reference bridge and the receiver-bound paths — a
+   * namespace-qualified literal (`mod.T{…}`, Case 1), a type nested in the
+   * receiver's class (`A.Item{}`, Case 2) and a dotted type binding (Case 3)
+   * all go through `constructionSiteReason` — so an opted-in provider sees
+   * one vocabulary whichever path resolved the site.
+   */
+  readonly markConstructionSites?: boolean;
+
+  /**
+   * When true, a namespace's exported member may also be a name the target
+   * module IMPORTED and publishes as its own — the hub-module shape, a file
+   * made only of re-exports (`pub const Terminal = @import("Terminal.zig");`,
+   * `pub const Thing = @import("thing.zig").Thing;`). Such a file owns no
+   * local binding, so the default local-only export lookup
+   * (`findExportedDef`) finds nothing for `terminal.Terminal.init()`,
+   * `t: stdx.Thing`, `var p = stdx.PRNG.from_seed()` or `var a:
+   * stdx.BoundedArrayType(u8, 4)`, and the receiver-bound namespace paths
+   * (Case 1, Case 3, the compound resolver's namespace branch) fall through.
+   * With the flag those paths use `findExportedDefIncludingImportedNames`,
+   * which reads the finalized channel where the published names live.
+   *
+   * Off by default: in most languages a module's imports are not its exports
+   * (TypeScript `import { X }` publishes nothing), and the finalized edge does
+   * not record whether the import was written `pub`. Zig opts in — a hub
+   * member a consumer can name through the hub is public by construction.
+   */
+  readonly namespaceExportsIncludeImportedNames?: boolean;
+
+  /**
+   * When true, a qualified receiver is walked SEGMENT BY SEGMENT from its
+   * verified namespace root instead of being split once at the last dot:
+   * `hub.sub.Thing{}` (a namespace republished by a hub — `pub const sub =
+   * @import("sub.zig");`), `mod.Outer.Inner{}` (a type nested in a type),
+   * `opmod.Op.lookup` (an enum variant reached through the module), and the
+   * typed forms `x: mod.Outer.Inner`. Each hop is either a class-like member
+   * of the current module(s) / the current class, or a namespace import
+   * edge the current module's scope binds under that name; a hop that is
+   * ambiguous — two files behind one handle disagree, or a name is both a
+   * type and a republished module — resolves nothing rather than picking a
+   * first match. Off, the receiver-bound paths (Case 1, Case 2's
+   * namespace-qualified class, Case 3) keep their one-hop lookups exactly
+   * as they are, so no existing edge moves; Zig opts in (PR #1432 review,
+   * 8.10), whose module system is nothing but nested `const` handles.
+   */
+  readonly resolveNamespaceChains?: boolean;
+
+  /**
    * How this language spells a construction expression, so the compound
    * receiver resolver can type an INLINE constructor receiver — the
    * `Service(db).do_work()` shape, where the receiver is the constructed
@@ -1009,6 +1121,25 @@ export interface ScopeResolver {
    * receiver class is a dispatch candidate).
    */
   readonly isStaticOnly?: (def: SymbolDefinition) => boolean;
+
+  /**
+   * Optional canonicalizer for a written GENERIC TYPE ARGUMENT, so two
+   * spellings of one type compare equal during interface-dispatch
+   * instantiation matching (#2912).
+   *
+   * The case it exists for is a language with predefined ALIASES: C# `string`
+   * and `String` are the same type, so `IValidator<string>` must still fan out
+   * to `class V : IValidator<String>`. Without the hook the two spellings look
+   * like two instantiations and the implementor is pruned — a missing edge,
+   * which is the failure direction #2912 is most concerned to avoid.
+   *
+   * Called ONLY on the two sides of one argument comparison, never on a name
+   * used for lookup, so it may map to whatever canonical form the language
+   * prefers (`string` → `String`, or the reverse) as long as it is consistent.
+   * Languages whose types have one spelling each leave it undefined and the
+   * comparison stays exact.
+   */
+  readonly normalizeTypeArgument?: (name: string) => string;
 
   /**
    * Optional predicate to gate free-call fallback emission by caller-side
@@ -1383,7 +1514,7 @@ export interface ScopeResolver {
     parsedFiles: readonly ParsedFile[],
     indexes: ScopeResolutionIndexes,
     model: SemanticModel,
-  ) => Map<string, readonly StructuralImplementor[]>;
+  ) => StructuralImplementationResult;
 
   /**
    * Optional: mirror typeBindings from namespace-import target modules

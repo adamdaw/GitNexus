@@ -59,7 +59,7 @@
  * resolved to a wrong target.
  */
 
-import type { ParsedFile, SymbolDefinition } from 'gitnexus-shared';
+import type { ParsedFile, ScopeId, SymbolDefinition } from 'gitnexus-shared';
 import type { KnowledgeGraph } from '../../../graph/types.js';
 import type { ScopeResolutionIndexes } from '../../model/scope-resolution-indexes.js';
 import type { SemanticModel } from '../../model/semantic-model.js';
@@ -68,10 +68,12 @@ import type { GraphNodeLookup } from '../graph-bridge/node-lookup.js';
 import type { WorkspaceResolutionIndex } from '../workspace-index.js';
 import { collectNamespaceTargets } from '../scope/namespace-targets.js';
 import {
+  bindsTypeParameter,
   findClassBindingInScope,
   findEnclosingClassDef,
   isReceiverOwnedButUnbound,
   findExportedDef,
+  findExportedDefIncludingImportedNames,
   findOwnedMember,
   findReceiverTypeBinding,
   findValueBindingInScope,
@@ -85,9 +87,19 @@ import {
   tryEmitEdgeWithExplicitTargetId,
   type CalleeIdCaptureCtx,
 } from '../graph-bridge/edges.js';
+import { constructionSiteReason } from './free-call-fallback.js';
 import type { CalleeIdSink } from '../graph-bridge/callee-id-sink.js';
-import { resolveCompoundReceiverClass } from '../passes/compound-receiver.js';
-import { erasedTypeApplication } from '../../utils/template-arguments.js';
+import {
+  resolveCompoundReceiverClass,
+  resolveCompoundReceiverTyped,
+} from '../passes/compound-receiver.js';
+import { erasedTypeApplication, typeApplicationArguments } from '../../utils/template-arguments.js';
+import {
+  heritageTypeArgumentsKey,
+  stepHeritageInstantiation,
+  type GroundedTypeArgument,
+  type HeritageTypeArguments,
+} from '../utils/generic-instantiation.js';
 import { resolveDefGraphId } from '../graph-bridge/ids.js';
 import {
   narrowOverloadCandidates,
@@ -105,6 +117,53 @@ import type { DecodedReceiverChain } from '../../utils/receiver-chain-codec.js';
 /** Subset of `ScopeResolver` consumed by this pass. Accepting the
  *  subset rather than the full provider keeps tests and partial
  *  refactors lighter — callers only need to populate what we read. */
+/** Split `text` at the dots that sit at nesting depth 0 and outside string
+ *  literals — `@import("a.zig").Outer.Inner` → three segments, not four;
+ *  `List(u8).Node` → two. The chain walk's segmenter. */
+function splitTopLevelDots(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let inString = false;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inString) {
+      if (ch === '\\') i++;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '(' || ch === '[' || ch === '<') depth++;
+    else if (ch === ')' || ch === ']' || ch === '>') depth--;
+    else if (ch === '.' && depth === 0) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out.filter((s) => s.length > 0);
+}
+
+/** Index of the last depth-0, outside-string dot of `text`, or -1. */
+function lastTopLevelDot(text: string): number {
+  let depth = 0;
+  let inString = false;
+  let last = -1;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inString) {
+      if (ch === '\\') i++;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '(' || ch === '[' || ch === '<') depth++;
+    else if (ch === ')' || ch === ']' || ch === '>') depth--;
+    else if (ch === '.' && depth === 0) last = i;
+  }
+  return last;
+}
+
 type ReceiverBoundProviderSubset = Pick<
   ScopeResolver,
   | 'languageProvider'
@@ -127,6 +186,10 @@ type ReceiverBoundProviderSubset = Pick<
   | 'constraintCompatibility'
   | 'isStaticOnly'
   | 'emitInterfaceDispatch'
+  | 'normalizeTypeArgument'
+  | 'markConstructionSites'
+  | 'namespaceExportsIncludeImportedNames'
+  | 'resolveNamespaceChains'
 >;
 
 /** A bare, undecorated identifier and nothing else — see {@link isBareTypeName}. */
@@ -301,6 +364,14 @@ export function emitReceiverBoundCalls(
      *  degrades a drop's label to `unknown` (the safe direction) and changes no
      *  edge. */
     readonly isBuiltInName?: (name: string) => boolean;
+    /** The generic arguments each heritage clause instantiated its base with,
+     *  from the passes that emitted those heritage edges — the inheritance
+     *  pre-pass, and the language resolvers that emit their own (Rust `impl T
+     *  for S`, Dart `implements` / `with`) (#2912). Read
+     *  ONLY by the interface-dispatch fan-out, to refuse an implementor of an
+     *  incompatible instantiation. Absent ⇒ every heritage instantiation reads
+     *  as unknown ⇒ the pre-#2912 fan-out, unchanged. */
+    readonly heritageTypeArguments?: HeritageTypeArguments;
   } = {},
 ): ReceiverBoundResult {
   let emitted = 0;
@@ -313,9 +384,145 @@ export function emitReceiverBoundCalls(
   const fieldFallback = provider.fieldFallbackOnMethodLookup ?? true;
   const collapse = provider.collapseMemberCallsByCallerTarget === true;
   const hoistTypeBindingsToModule = provider.hoistTypeBindingsToModule === true;
+  // Namespace-member lookup for Case 1 / Case 3: local exports only, unless
+  // the provider publishes imported names too (hub modules — see
+  // `ScopeResolver.namespaceExportsIncludeImportedNames`).
+  const lookupNamespaceMember = (targetFile: string, name: string): SymbolDefinition | undefined =>
+    provider.namespaceExportsIncludeImportedNames === true
+      ? findExportedDefIncludingImportedNames(targetFile, name, index, scopes)
+      : findExportedDef(targetFile, name, index);
+  // A class-like member `name` unique across `files`, or nothing — two
+  // same-named classes behind one handle would mint a confident wrong edge.
+  const uniqueClassAcross = (
+    files: readonly string[],
+    name: string,
+  ): SymbolDefinition | undefined => {
+    let picked: SymbolDefinition | undefined;
+    for (const file of files) {
+      const def = lookupNamespaceMember(file, name);
+      if (def === undefined || !isClassLike(def.type)) continue;
+      if (picked !== undefined && picked.nodeId !== def.nodeId) return undefined;
+      picked = def;
+    }
+    return picked;
+  };
+  // A class-like def NESTED in `owner` (`A.Item` inside `A`): its qualified
+  // name is the owner's plus the segment — the identity the structure phase
+  // and `populateClassOwnedMembers` agree on — so the qualified-name index
+  // answers directly; same file as the owner, unique or nothing. Only the
+  // chain walk reads this: `findOwnedMember` knows methods and fields, and a
+  // nested type is neither.
+  const findNestedClass = (owner: SymbolDefinition, name: string): SymbolDefinition | undefined => {
+    if (owner.qualifiedName === undefined || owner.qualifiedName.length === 0) return undefined;
+    let picked: SymbolDefinition | undefined;
+    for (const id of scopes.qualifiedNames.get(`${owner.qualifiedName}.${name}`)) {
+      const def = scopes.defs.get(id);
+      if (def === undefined || !isClassLike(def.type) || def.filePath !== owner.filePath) continue;
+      if (picked !== undefined && picked.nodeId !== def.nodeId) return undefined;
+      picked = def;
+    }
+    return picked;
+  };
+  // Namespace CHAIN walk (`ScopeResolver.resolveNamespaceChains`): resolve
+  // every segment of a qualified prefix from its verified namespace root —
+  // or, failing a namespace, from a class binding in scope (`Outer.Inner`).
+  // The cursor is either "these module files" or "this class"; a hop from a
+  // module is a class-like member of it (→ class) or a namespace-import edge
+  // its module scope binds under the segment — a republished module,
+  // `pub const sub = @import("sub.zig");` (→ files); a hop from a class is a
+  // nested class-like. Anything ambiguous resolves nothing.
+  const walkChains = provider.resolveNamespaceChains === true;
+  const namespaceImportTargetsOf = (file: string, name: string): readonly string[] => {
+    const moduleScope = index.moduleScopeByFile.get(file);
+    if (moduleScope === undefined) return [];
+    const out: string[] = [];
+    for (const edge of scopes.imports.get(moduleScope.id) ?? []) {
+      if (edge.kind !== 'namespace' || edge.localName !== name || edge.targetFile === null)
+        continue;
+      if (!out.includes(edge.targetFile)) out.push(edge.targetFile);
+    }
+    return out;
+  };
+  type ChainCursor =
+    | { readonly files: readonly string[] }
+    | { readonly classDef: SymbolDefinition };
+  const resolveNamespaceChain = (
+    prefix: string,
+    inScope: ScopeId,
+    namespaceTargets: ReadonlyMap<string, readonly string[]>,
+  ): ChainCursor | undefined => {
+    const segments = splitTopLevelDots(prefix);
+    if (segments.length === 0) return undefined;
+    let cursor: ChainCursor | undefined;
+    let rest: readonly string[] = [];
+    // The LONGEST namespace key wins: a provider may bind dotted handles
+    // (`namespaceReceiverPaths`) and an inline `@import("x.zig")` handle
+    // carries a dot of its own inside the quotes.
+    for (let k = segments.length; k >= 1; k--) {
+      const key = segments.slice(0, k).join('.');
+      const files = namespaceTargets.get(key);
+      if (files === undefined) continue;
+      if (isNamespaceNameShadowed(key, inScope, scopes)) return undefined;
+      cursor = { files };
+      rest = segments.slice(k);
+      break;
+    }
+    if (cursor === undefined) {
+      const head = findClassBindingInScope(inScope, segments[0]!, scopes);
+      if (head === undefined || !isClassLike(head.type)) return undefined;
+      cursor = { classDef: head };
+      rest = segments.slice(1);
+    }
+    for (const segment of rest) {
+      if (segment.includes('(') || segment.includes('[')) return undefined;
+      if ('files' in cursor) {
+        const asClass = uniqueClassAcross(cursor.files, segment);
+        const asModule: string[] = [];
+        for (const file of cursor.files) {
+          for (const target of namespaceImportTargetsOf(file, segment)) {
+            if (!asModule.includes(target)) asModule.push(target);
+          }
+        }
+        if (asClass !== undefined && asModule.length > 0) return undefined; // both — refuse
+        if (asClass !== undefined) cursor = { classDef: asClass };
+        else if (asModule.length > 0) cursor = { files: asModule };
+        else return undefined;
+      } else {
+        const nested = findNestedClass(cursor.classDef, segment);
+        if (nested === undefined) return undefined;
+        cursor = { classDef: nested };
+      }
+    }
+    return cursor;
+  };
+  // `ns.Type` as a receiver, where `ns` is a verified namespace of the current
+  // file and `Type` a class-like member of it — or, with the chain walk, any
+  // `a.b.c.Type` whose prefix resolves. Unique or nothing.
+  const resolveNamespaceQualifiedClass = (
+    receiverName: string,
+    inScope: ScopeId,
+    namespaceTargets: ReadonlyMap<string, readonly string[]>,
+  ): SymbolDefinition | undefined => {
+    const dot = walkChains ? lastTopLevelDot(receiverName) : receiverName.lastIndexOf('.');
+    if (dot <= 0 || dot === receiverName.length - 1) return undefined;
+    const head = receiverName.slice(0, dot);
+    const tail = receiverName.slice(dot + 1);
+    if (tail.includes('(') || tail.includes('[')) return undefined;
+    if (walkChains) {
+      const cursor = resolveNamespaceChain(head, inScope, namespaceTargets);
+      if (cursor === undefined) return undefined;
+      return 'classDef' in cursor
+        ? findNestedClass(cursor.classDef, tail)
+        : uniqueClassAcross(cursor.files, tail);
+    }
+    const files = namespaceTargets.get(head);
+    if (files === undefined || isNamespaceNameShadowed(head, inScope, scopes)) return undefined;
+    return uniqueClassAcross(files, tail);
+  };
   const compoundOpts = {
     fieldFallback,
     elementTypeOf: provider.elementTypeOf,
+    namespaceExportsIncludeImportedNames: provider.namespaceExportsIncludeImportedNames === true,
     hoistTypeBindingsToModule,
     stripReceiverCastExpressions: provider.stripReceiverCastExpressions === true,
     constructionSyntax: provider.constructionSyntax,
@@ -329,17 +536,46 @@ export function emitReceiverBoundCalls(
     isBuiltInName: options.isBuiltInName,
   };
 
-  // Build an interface → implementors map from IMPLEMENTS edges.
-  // Maps Interface graph-id → list of implementor class scope-def-ids.
-  // We translate graph-ids back to scope-resolution DefIds via
-  // `parsedFiles.localDefs` lookup so downstream `findOwnedMember`
-  // (which keys by DefId) can find the implementor's members.
-  const graphIdToClassDef = new Map<string, SymbolDefinition>();
+  // Maps class-like graph ids back to ALL scope definitions that resolved to
+  // them. Same-file partial declarations share one graph id but keep distinct
+  // DefIds, and `pickOverload` keys member lookup by those DefIds. Preserving
+  // every part makes dispatch independent of declaration order.
+  const graphIdToClassDefs = new Map<string, SymbolDefinition[]>();
+  // The same correspondence read the other way, so the dispatch walk can name a
+  // heritage EDGE (which is keyed by graph ids) from the two DEFS it holds.
+  const classGraphIdByDefId = new Map<string, string>();
+  /**
+   * Does THIS language record generic type parameters (#2912)?
+   *
+   * `SymbolDefinition.typeParameters` is absent both for a non-generic
+   * declaration and for every declaration in a language whose captures do not
+   * emit `@declaration.type-parameters`, and instantiation filtering needs the
+   * two told apart: in the second case a heritage argument `T` is a type
+   * VARIABLE that would otherwise read as a concrete type named "T", and
+   * `class Box<T> : IValidator<T>` would be pruned out of every instantiation.
+   *
+   * Evidence rather than a declared capability, because the evidence is exactly
+   * as good and costs nothing: one run resolves one language (`phase.ts` loops
+   * per language), so a single generic declaration anywhere in it proves the
+   * captures record parameters. A run where none exists cannot be harmed by the
+   * answer — with no generic declaration there is no type variable to mistake.
+   */
+  let languageCapturesTypeParameters = false;
   for (const parsed of parsedFiles) {
     for (const def of parsed.localDefs) {
-      if (def.type !== 'Class' && def.type !== 'Struct' && def.type !== 'Interface') continue;
+      if (!isClassLike(def.type)) continue;
       const graphId = resolveDefGraphId(parsed.filePath, def, nodeLookup);
-      if (graphId !== undefined) graphIdToClassDef.set(graphId, def);
+      if (graphId === undefined) continue;
+      let defs = graphIdToClassDefs.get(graphId);
+      if (defs === undefined) {
+        defs = [];
+        graphIdToClassDefs.set(graphId, defs);
+      }
+      defs.push(def);
+      classGraphIdByDefId.set(def.nodeId, graphId);
+      if (def.typeParameters !== undefined && def.typeParameters.length > 0) {
+        languageCapturesTypeParameters = true;
+      }
     }
   }
   // Direct subtypes of a type, keyed by the SUPERtype's def id.
@@ -363,10 +599,12 @@ export function emitReceiverBoundCalls(
   };
   for (const relType of ['IMPLEMENTS', 'EXTENDS'] as const) {
     for (const rel of graph.iterRelationshipsByType(relType)) {
-      const superDef = graphIdToClassDef.get(rel.targetId);
-      const subDef = graphIdToClassDef.get(rel.sourceId);
-      if (superDef === undefined || subDef === undefined) continue;
-      addSubtype(superDef.nodeId, subDef);
+      const superDefs = graphIdToClassDefs.get(rel.targetId);
+      const subDefs = graphIdToClassDefs.get(rel.sourceId);
+      if (superDefs === undefined || subDefs === undefined) continue;
+      for (const superDef of superDefs) {
+        for (const subDef of subDefs) addSubtype(superDef.nodeId, subDef);
+      }
     }
   }
 
@@ -430,6 +668,34 @@ export function emitReceiverBoundCalls(
   };
 
   /**
+   * What does this written type argument NAME, as seen from `scopeId` (#2912)?
+   *
+   * The scope is load-bearing: a heritage argument is resolved from the
+   * declaring class's own scope and a receiver argument from the call site's,
+   * because a name means what it means where it was WRITTEN. Resolving both
+   * makes `Models.User` and an imported `User` one type, which a string
+   * comparison could only get wrong.
+   *
+   * Neither answer is an error: a name that binds nothing and is not built in
+   * comes back ungrounded, which the matcher reads as "unknown" and keeps.
+   *
+   * A TYPE PARAMETER is reported as such rather than left to the ungrounded
+   * path, because `resolveClassBindingForName` answers a bounded one with its
+   * BOUND's declaration — grounded, and the wrong thing to compare.
+   */
+  const groundTypeArgument = (name: string, scopeId: string | undefined): GroundedTypeArgument => {
+    const def =
+      scopeId === undefined ? undefined : resolveClassBindingForName(scopeId, name, scopes);
+    return {
+      ...(def !== undefined ? { definitionId: def.nodeId } : {}),
+      builtIn: options.isBuiltInName?.(name) === true,
+      ...(scopeId !== undefined && bindsTypeParameter(scopeId, name, scopes)
+        ? { typeVariable: true }
+        : {}),
+    };
+  };
+
+  /**
    * Emit secondary CALLS edges with reason='interface-dispatch' when the primary
    * receiver-typed edge targeted an Interface's method.
    *
@@ -450,6 +716,17 @@ export function emitReceiverBoundCalls(
    * override further down is an equally real runtime target — dispatch is an
    * over-approximation by design, and stopping early would silently prefer the
    * base.
+   *
+   * The closure is walked carrying the receiver's generic INSTANTIATION (#2912).
+   * `IValidator<string>` and `IValidator<int>` are one declaration and therefore
+   * one subtype list, so without the substitution a `IValidator<string>` call
+   * reaches `IntValidator.Check(int)` — a target no dispatch can produce. Each
+   * hop unifies the arguments the subtype wrote against the ones the supertype
+   * is known to hold; an incompatible hop is skipped BEFORE the visit is
+   * recorded, so a type reachable by a second, compatible path still gets its
+   * edge, and skipped WITHOUT descending, because its own subtypes inherit the
+   * mismatch.
+   * Every uncertainty keeps the target — see `generic-instantiation.ts`.
    */
   const emitInterfaceDispatchFor = (
     ownerDef: SymbolDefinition,
@@ -458,39 +735,158 @@ export function emitReceiverBoundCalls(
     site: ParsedFile['referenceSites'][number],
     confidence: number,
     calleeCapture: CalleeIdCaptureCtx | undefined,
+    /** The receiver's declared type AS WRITTEN (`IValidator<string>`), or
+     *  `undefined` where the case could not recover it — which restores the
+     *  unfiltered fan-out for that site rather than guessing.
+     *
+     *  The SPELLING rather than the parsed arguments, so the parse happens after
+     *  the two gates below rather than at every resolved receiver site: all five
+     *  cases call this unconditionally, and the overwhelming majority of
+     *  receivers are concrete classes that return at the first line. */
+    receiverTypeSpelling: string | undefined,
   ): number => {
     if (ownerDef.type !== 'Interface') return 0;
     if (subtypesBySupertypeDefId.get(ownerDef.nodeId) === undefined) return 0;
+    const receiverTypeArguments =
+      receiverTypeSpelling === undefined
+        ? undefined
+        : typeApplicationArguments(receiverTypeSpelling);
+    // Captures only `site`, so it is built once per SITE rather than once per
+    // subtype visited. Its partner below cannot be: it is keyed by the subtype.
+    const resolveSupertypeArgument = (name: string): GroundedTypeArgument =>
+      groundTypeArgument(name, site.inScope);
 
     // Collect concrete targets across the closure first, so the cap below counts
-    // real dispatch targets rather than types visited.
-    const targets: SymbolDefinition[] = [];
-    const seenTypes = new Set<string>([ownerDef.nodeId]);
-    const queue: string[] = [ownerDef.nodeId];
-    while (queue.length > 0) {
-      const superId = queue.shift() as string;
-      for (const subDef of subtypesBySupertypeDefId.get(superId) ?? []) {
-        if (seenTypes.has(subDef.nodeId)) continue;
-        seenTypes.add(subDef.nodeId);
-        queue.push(subDef.nodeId);
-        const implMember = pickOverload(subDef.nodeId, memberName, site, model, provider);
+    // real dispatch targets rather than types visited. Source-written owners
+    // rank ahead of synthesized owners so a large anonymous implementation
+    // family cannot consume the whole budget. Within each group, the priority
+    // counts concrete implementations already encountered on the path: the
+    // first implementation under an abstract branch ranks ahead of deeper
+    // overrides. Carrying that count through this existing walk avoids a reverse
+    // traversal per target at every call site.
+    type DispatchTarget = {
+      readonly member: SymbolDefinition;
+      readonly syntheticOwnerPriority: number;
+      readonly ancestorImplementationCount: number;
+      readonly discoveryOrder: number;
+    };
+    type DispatchTraversal = {
+      readonly typeId: string;
+      readonly ancestorImplementationCount: number;
+      /** The instantiation this type is known to hold ON THIS PATH (#2912), or
+       *  `undefined` where it is not known — which restores the unfiltered
+       *  fan-out for the subtree below it rather than guessing. */
+      readonly typeArguments: readonly string[] | undefined;
+    };
+    const targetByMemberId = new Map<string, DispatchTarget>();
+    const bestIncomingCount = new Map<string, number>([[ownerDef.nodeId, 0]]);
+    const queue: DispatchTraversal[] = [
+      {
+        typeId: ownerDef.nodeId,
+        ancestorImplementationCount: 0,
+        typeArguments: receiverTypeArguments,
+      },
+    ];
+    let head = 0;
+    let discoveryOrder = 0;
+    while (head < queue.length) {
+      const current = queue[head++]!;
+      // The whole instantiation apparatus hangs off ONE question: is the
+      // supertype's own instantiation known? It is not for a non-generic
+      // receiver, nor for any language that captures no heritage arguments, so
+      // those walks skip every lookup below and emit exactly what they did
+      // before #2912.
+      const superGraphId =
+        current.typeArguments === undefined ? undefined : classGraphIdByDefId.get(current.typeId);
+      for (const subDef of subtypesBySupertypeDefId.get(current.typeId) ?? []) {
+        const previousIncomingCount = bestIncomingCount.get(subDef.nodeId);
         if (
-          implMember === undefined ||
-          implMember === OVERLOAD_AMBIGUOUS ||
-          implMember.isDeleted === true
+          previousIncomingCount !== undefined &&
+          previousIncomingCount <= current.ancestorImplementationCount
         ) {
           continue;
         }
-        if (implMember.nodeId === primaryMemberDef.nodeId) continue;
-        // A re-declared interface method or an `abstract` override is not an
-        // implementation — keep descending past it rather than emitting to it.
-        if (isDeclarationOnly(implMember)) continue;
-        // Nor is a static member: no instance-typed receiver can reach one, so
-        // an edge to it is a target dispatch cannot produce (#2842 review).
-        if (isUnreachableByInstanceDispatch(implMember)) continue;
-        targets.push(implMember);
+
+        // What THIS heritage clause instantiated its base with. `superGraphId`
+        // already answers "is the supertype's instantiation known?", so it gates
+        // the whole lookup once instead of being re-asked at each step below.
+        let subtypeArguments: readonly string[] | undefined;
+        if (superGraphId !== undefined) {
+          const subGraphId = classGraphIdByDefId.get(subDef.nodeId);
+          const heritageArguments =
+            subGraphId === undefined
+              ? undefined
+              : options.heritageTypeArguments?.get(
+                  heritageTypeArgumentsKey(subGraphId, superGraphId),
+                );
+          if (heritageArguments !== undefined) {
+            const subtypeScopeId = index.classScopeByDefId.get(subDef.nodeId)?.id;
+            const step = stepHeritageInstantiation({
+              supertypeArguments: current.typeArguments,
+              heritageArguments,
+              subtypeParameters: subDef.typeParameters,
+              // The "this subtype declares parameters" disjunct an earlier
+              // revision carried here could never decide: `subDef` comes out of
+              // the same loop that sets this flag, from exactly these defs, so a
+              // subtype with parameters has already set it.
+              subtypeParametersComplete: languageCapturesTypeParameters,
+              resolveSupertypeArgument,
+              resolveHeritageArgument: (name) => groundTypeArgument(name, subtypeScopeId),
+              normalize: provider.normalizeTypeArgument,
+            });
+            // Skipped BEFORE the visit is recorded, so a type reachable by a
+            // second, compatible path still gets its edge; and without
+            // descending, because its own subtypes inherit the mismatch.
+            if (!step.compatible) continue;
+            subtypeArguments = step.subtypeArguments;
+          }
+        }
+
+        bestIncomingCount.set(subDef.nodeId, current.ancestorImplementationCount);
+
+        const implMember = pickOverload(subDef.nodeId, memberName, site, model, provider);
+        let descendantImplementationCount = current.ancestorImplementationCount;
+        if (
+          implMember !== undefined &&
+          implMember !== OVERLOAD_AMBIGUOUS &&
+          implMember.isDeleted !== true &&
+          implMember.nodeId !== primaryMemberDef.nodeId &&
+          !isDeclarationOnly(implMember) &&
+          !isUnreachableByInstanceDispatch(implMember)
+        ) {
+          const existing = targetByMemberId.get(implMember.nodeId);
+          const syntheticOwnerPriority = subDef.isSynthetic === true ? 1 : 0;
+          if (
+            existing === undefined ||
+            syntheticOwnerPriority < existing.syntheticOwnerPriority ||
+            (syntheticOwnerPriority === existing.syntheticOwnerPriority &&
+              current.ancestorImplementationCount < existing.ancestorImplementationCount)
+          ) {
+            targetByMemberId.set(implMember.nodeId, {
+              member: implMember,
+              syntheticOwnerPriority,
+              ancestorImplementationCount: current.ancestorImplementationCount,
+              discoveryOrder: existing?.discoveryOrder ?? discoveryOrder++,
+            });
+          }
+          descendantImplementationCount++;
+        }
+        queue.push({
+          typeId: subDef.nodeId,
+          ancestorImplementationCount: descendantImplementationCount,
+          typeArguments: subtypeArguments,
+        });
       }
     }
+
+    const targets = [...targetByMemberId.values()]
+      .sort(
+        (left, right) =>
+          left.syntheticOwnerPriority - right.syntheticOwnerPriority ||
+          left.ancestorImplementationCount - right.ancestorImplementationCount ||
+          left.discoveryOrder - right.discoveryOrder,
+      )
+      .map((target) => target.member);
 
     // Bounded, and NEVER silently (#2829). An interface with a very large
     // implementor set multiplies edges by every call site — Go, TypeScript and
@@ -501,8 +897,13 @@ export function emitReceiverBoundCalls(
     if (targets.length > MAX_INTERFACE_DISPATCH_FANOUT) {
       dispatchFanoutSkipped += targets.length - MAX_INTERFACE_DISPATCH_FANOUT;
       if (dispatchFanoutSkippedNames.length < MAX_REPORTED_SKIPPED_INTERFACES) {
+        const dropped = targets
+          .slice(MAX_INTERFACE_DISPATCH_FANOUT, MAX_INTERFACE_DISPATCH_FANOUT + 5)
+          .map((target) => target.qualifiedName ?? target.nodeId);
+        const omitted = targets.length - MAX_INTERFACE_DISPATCH_FANOUT - dropped.length;
         dispatchFanoutSkippedNames.push(
-          `${ownerDef.qualifiedName ?? ownerDef.nodeId}.${memberName} (${targets.length} targets)`,
+          `${ownerDef.qualifiedName ?? ownerDef.nodeId}.${memberName} (${targets.length} targets; ` +
+            `dropped: ${dropped.join(', ')}${omitted > 0 ? `, +${omitted} more` : ''})`,
         );
       }
       targets.length = MAX_INTERFACE_DISPATCH_FANOUT;
@@ -568,7 +969,16 @@ export function emitReceiverBoundCalls(
       receiverPaths: provider.namespaceReceiverPaths,
       moduleFileExists: (filePath) => index.moduleScopeByFile.has(filePath),
     });
-    const fileCompoundOpts = { ...compoundOpts, namespaceTargets };
+    const fileCompoundOpts = {
+      ...compoundOpts,
+      namespaceTargets,
+      ...(walkChains
+        ? {
+            resolveQualifiedClass: (qualifiedName: string, inScope: ScopeId) =>
+              resolveNamespaceQualifiedClass(qualifiedName, inScope, namespaceTargets),
+          }
+        : {}),
+    };
     // Per-file resolved-callee-id capture context (#2227 U2). Built once per
     // file; `undefined` when the sink is absent (pdg off) so the `tryEmitEdge`
     // capture is a no-op and emission stays byte-identical (R4).
@@ -734,7 +1144,7 @@ export function emitReceiverBoundCalls(
         receiverName.includes('(') ||
         site.receiverChain !== undefined
       ) {
-        const currentClass = resolveCompoundReceiverClass(
+        const resolved = resolveCompoundReceiverTyped(
           receiverName,
           site.inScope,
           scopes,
@@ -743,8 +1153,9 @@ export function emitReceiverBoundCalls(
           // captured chain describes it and the structural fold applies.
           { ...fileCompoundOpts, receiverChain: site.receiverChain },
         );
+        const currentClass = resolved?.def;
         compoundReceiverUnresolved = currentClass === undefined;
-        if (currentClass !== undefined) {
+        if (resolved !== undefined && currentClass !== undefined) {
           const chain = [currentClass.nodeId, ...scopes.methodDispatch.mroFor(currentClass.nodeId)];
           let memberDef: SymbolDefinition | undefined;
           let ambiguousOwnerId: string | undefined;
@@ -847,6 +1258,10 @@ export function emitReceiverBoundCalls(
             // Deliberately not "fixed" here: changing Case 0's primary
             // confidence is a separate behavioural change affecting every
             // language, and is out of scope for #2813.
+            //
+            // The instantiation the FOLD typed this receiver from — the
+            // declared spelling of `this.repo` / `svc.get().repo`, which the
+            // folded class alone no longer carries (#2912).
             emitted += emitInterfaceDispatchFor(
               currentClass,
               memberName,
@@ -854,6 +1269,7 @@ export function emitReceiverBoundCalls(
               site,
               0.85,
               calleeCapture,
+              resolved.declaredSpelling,
             );
             // Always mark handled when the site was resolved, even
             // if the edge was deduplicated (collapse mode), so
@@ -1053,15 +1469,22 @@ export function emitReceiverBoundCalls(
       // that is usually empty. Mirrors the order the compound-receiver
       // construction path already uses.
       const namespaceCandidates = namespaceTargets.get(receiverName);
-      const targetFiles =
+      let targetFiles: readonly string[] | undefined =
         namespaceCandidates !== undefined &&
         !isNamespaceNameShadowed(receiverName, site.inScope, scopes)
           ? namespaceCandidates
           : undefined;
+      // Chain walk: `hub.sub.helper()` / `hub.sub.Thing{}` — the receiver is
+      // no handle of this file, but its segments reach a module (see
+      // `resolveNamespaceChain`). A prefix that ends in a CLASS is Case 2's.
+      if (targetFiles === undefined && walkChains && lastTopLevelDot(receiverName) > 0) {
+        const cursor = resolveNamespaceChain(receiverName, site.inScope, namespaceTargets);
+        if (cursor !== undefined && 'files' in cursor) targetFiles = cursor.files;
+      }
       if (targetFiles !== undefined && provider.resolveQualifiedReceiverMember === undefined) {
         let found = false;
         for (const targetFile of targetFiles) {
-          const memberDef = findExportedDef(targetFile, memberName, index);
+          const memberDef = lookupNamespaceMember(targetFile, memberName);
           if (memberDef !== undefined) {
             if (
               suppressDeletedCallTarget(
@@ -1081,7 +1504,15 @@ export function emitReceiverBoundCalls(
               nodeLookup,
               site,
               memberDef,
-              memberDef.filePath !== parsed.filePath ? 'import-resolved' : 'global',
+              // A namespace-qualified construction site (`mod.T{…}`) resolves
+              // here like `mod.fn()` does; the provider's opt-in marker keeps
+              // it distinguishable from an invocation (see
+              // `ScopeResolver.markConstructionSites`).
+              constructionSiteReason(
+                memberDef.filePath !== parsed.filePath ? 'import-resolved' : 'global',
+                site,
+                provider.markConstructionSites,
+              ),
               seen,
               0.85,
               collapse,
@@ -1157,7 +1588,16 @@ export function emitReceiverBoundCalls(
       }
 
       // ── Case 2: class-name receiver ──────────────────────────────
-      const classDef = findClassBindingInScope(site.inScope, receiverName, scopes);
+      // A namespace-qualified class (`stdx.PRNG.from_seed()`, `terminal
+      // .Terminal.init()`) binds nothing in the caller's scope chain; when the
+      // head names a verified namespace, the tail is looked up as that
+      // module's member — through the same lookup Case 1 / Case 3 use, so a
+      // hub module (a file made only of re-exports) answers when the provider
+      // opted in. Only a bare tail is walked here; `ns.Type.field.m()` is the
+      // compound resolver's shape.
+      const classDef =
+        findClassBindingInScope(site.inScope, receiverName, scopes) ??
+        resolveNamespaceQualifiedClass(receiverName, site.inScope, namespaceTargets);
       if (classDef !== undefined) {
         const chain = [classDef.nodeId, ...scopes.methodDispatch.mroFor(classDef.nodeId)];
         let memberDef: SymbolDefinition | undefined;
@@ -1201,6 +1641,45 @@ export function emitReceiverBoundCalls(
           handledSites.add(siteKey);
           continue;
         }
+        // `A.Item{}` / `mod.Outer.Inner{}` — a construction whose member is a
+        // type NESTED in the class the receiver names. Neither a method nor a
+        // field, so the owner walk above cannot see it; the chain walk's
+        // nested-class lookup can (`resolveNamespaceChains`).
+        if (memberDef === undefined && walkChains && site.callForm === 'constructor') {
+          const nested = findNestedClass(classDef, memberName);
+          if (nested !== undefined) {
+            if (
+              suppressDeletedCallTarget(
+                options.recordResolutionOutcome,
+                parsed.filePath,
+                site,
+                nested,
+              )
+            ) {
+              handledSites.add(siteKey);
+              continue;
+            }
+            const ok = tryEmitEdge(
+              graph,
+              scopes,
+              nodeLookup,
+              site,
+              nested,
+              constructionSiteReason(
+                nested.filePath !== parsed.filePath ? 'import-resolved' : 'global',
+                site,
+                provider.markConstructionSites,
+              ),
+              seen,
+              0.85,
+              collapse,
+              calleeCapture,
+            );
+            if (ok) emitted++;
+            handledSites.add(siteKey);
+            continue;
+          }
+        }
         if (memberDef !== undefined) {
           if (
             suppressDeletedCallTarget(
@@ -1243,11 +1722,23 @@ export function emitReceiverBoundCalls(
       if (typeRef !== undefined && typeRef.rawName.includes('.')) {
         const [nsName, ...classNameParts] = typeRef.rawName.split('.');
         const className = classNameParts.join('.');
-        const targetFiles3 = namespaceTargets.get(nsName);
+        // With the chain walk the dotted type is resolved as a whole
+        // (`x: mod.Outer.Inner`, `t: hub.sub.Thing`); the candidate list then
+        // has one entry or none. Without it: the historical one-hop split.
+        const chainDef3 = walkChains
+          ? resolveNamespaceQualifiedClass(typeRef.rawName, site.inScope, namespaceTargets)
+          : undefined;
+        const targetFiles3 = walkChains
+          ? chainDef3 === undefined
+            ? undefined
+            : [chainDef3.filePath]
+          : namespaceTargets.get(nsName);
         if (targetFiles3 !== undefined && className.length > 0) {
           let found3 = false;
           for (const targetFile3 of targetFiles3) {
-            const classDef3 = findExportedDef(targetFile3, className, index);
+            const classDef3 = walkChains
+              ? chainDef3
+              : lookupNamespaceMember(targetFile3, className);
             if (classDef3 !== undefined) {
               const picked =
                 site.kind === 'call'
@@ -1287,7 +1778,15 @@ export function emitReceiverBoundCalls(
                   nodeLookup,
                   site,
                   memberDef,
-                  memberDef.filePath !== parsed.filePath ? 'import-resolved' : 'global',
+                  // Same marker rule as Case 1 / Case 2: a constructor-form site
+                  // reached through a dotted type binding keeps its
+                  // ` (constructor)` suffix when the provider opted in; for
+                  // every other provider the string is unchanged.
+                  constructionSiteReason(
+                    memberDef.filePath !== parsed.filePath ? 'import-resolved' : 'global',
+                    site,
+                    provider.markConstructionSites,
+                  ),
                   seen,
                   // Explicit defaults so the trailing capture ctx (#2227 U2) can
                   // be threaded without changing dedup/confidence behavior.
@@ -1324,15 +1823,18 @@ export function emitReceiverBoundCalls(
         // already contain `()` (Ruby member-call-return captures),
         // pass through directly — the compound resolver handles the
         // full expression including the call syntax.
-        let ownerDef = resolveCompoundReceiverClass(
+        // Each attempt carries its OWN spelling: the retry below used to reuse a
+        // recorder reset once, before the first call, so a spelling reported by
+        // the attempt that FAILED could be read as the retry's.
+        let resolved = resolveCompoundReceiverTyped(
           typeRef.rawName,
           typeRef.declaredAtScope,
           scopes,
           index,
           fileCompoundOpts,
         );
-        if (ownerDef === undefined && !typeRef.rawName.includes('(')) {
-          ownerDef = resolveCompoundReceiverClass(
+        if (resolved === undefined && !typeRef.rawName.includes('(')) {
+          resolved = resolveCompoundReceiverTyped(
             typeRef.rawName + '()',
             typeRef.declaredAtScope,
             scopes,
@@ -1340,6 +1842,7 @@ export function emitReceiverBoundCalls(
             fileCompoundOpts,
           );
         }
+        let ownerDef = resolved?.def;
         if (ownerDef === undefined && !typeRef.rawName.includes('(')) {
           // A dotted type-binding that names a workspace-registered fully-qualified
           // class — e.g. an Apex nested type `Outer.Inner` injected under its folded
@@ -1453,6 +1956,7 @@ export function emitReceiverBoundCalls(
             // value instead because ITS primary varies that way; Case 3b's
             // primary, like Case 0's, does not, so there is no 1.0 arm here to
             // mirror.
+            // Same fold, same recovered spelling as Case 0.
             emitted += emitInterfaceDispatchFor(
               ownerDef,
               memberName,
@@ -1460,6 +1964,7 @@ export function emitReceiverBoundCalls(
               site,
               0.85,
               calleeCapture,
+              resolved?.declaredSpelling,
             );
             // Always mark handled when the site was resolved, even
             // if the edge was deduplicated (collapse mode), so
@@ -1737,6 +2242,12 @@ export function emitReceiverBoundCalls(
             // declaration-only interface-typed call targets ONLY the
             // interface's own member (Apex, SDD-003 §3) opts out via
             // `emitInterfaceDispatch: false`.
+            //
+            // This case is the one that KNOWS the instantiation: the receiver
+            // has a declared type, and `typeApplication` is that type restored
+            // to its written `Base<Args>` spelling (`rawName` is the erasure).
+            // A language whose `rawName` was never erased carries the arguments
+            // itself, so both spellings are read (#2912).
             if (provider.emitInterfaceDispatch !== false) {
               emitted += emitInterfaceDispatchFor(
                 ownerDef,
@@ -1745,6 +2256,7 @@ export function emitReceiverBoundCalls(
                 site,
                 confidence,
                 calleeCapture,
+                typeApplication ?? typeRef.rawName,
               );
             }
             // Always mark handled when the site was resolved, even
@@ -2017,6 +2529,8 @@ export function emitReceiverBoundCalls(
               // way. Omitting it would make the static spelling emit fewer
               // targets than the identical instance field, which is the very
               // spelling-dependence #2829/#2842 closed elsewhere.
+              // The field's DECLARED type is the spelling the source wrote, so
+              // its arguments are available here exactly as in Case 4 (#2912).
               emitted += emitInterfaceDispatchFor(
                 receiverClass,
                 memberName,
@@ -2024,6 +2538,7 @@ export function emitReceiverBoundCalls(
                 site,
                 confidence,
                 calleeCapture,
+                fieldDeclaredType,
               );
               handledSites.add(siteKey);
               continue;
