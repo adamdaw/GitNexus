@@ -19,8 +19,12 @@ node .gitnexus/run.cjs analyze
 
 Run from the project root. This parses all source files, builds the knowledge graph, writes it to `.gitnexus/`, and generates CLAUDE.md / AGENTS.md context files.
 
+**Always ask the user for a `--name <alias>` before running `analyze`.** Do not run it bare and do not infer the alias from the directory. Without the flag the repo registers under its directory basename, which collides across worktrees or checkouts of the same repo and leaves `-r <name>` ambiguous. Propose an alias, ask, then run with the answer.
+
 | Flag           | Effect                                                           |
 | -------------- | ---------------------------------------------------------------- |
+| `--name <alias>` | Register the repo under this alias in `~/.gitnexus/registry.json`. Ask the user for it every time. |
+| `--allow-duplicate-name` | Register even though another path already holds the alias. Leaves `-r <name>` ambiguous for both paths; use `-r <path>` instead. |
 | `--watch`      | Keep a Git repository index current with serialized refreshes    |
 | `--debounce <ms>` | Watch quiet period before refresh (default: 300 ms)            |
 | `--force`      | Force full re-index even if up to date                           |
