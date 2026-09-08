@@ -10,7 +10,6 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { execFile, execFileSync } from 'child_process';
-import { createRequire } from 'module';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { parseTree, modify, applyEdits, ParseError, parse as parseJsonc } from 'jsonc-parser';
