@@ -74,6 +74,41 @@ describe('resolve-analyze-cmd.cjs (canonical invocation resolver)', () => {
     expect(source).not.toMatch(/\b(?:npx|bunx|dlx)\b\s+\S*gitnexus/);
   });
 
+  // The resolver above was corrected, but four sibling hooks kept their own
+  // fetch rung and are copied outward by `analyze` just the same: three spawned
+  // `npx -y gitnexus` when the CLI path did not resolve, and the shell adapter
+  // invoked it unconditionally. Assert on the SPAWN, not on the word — an
+  // explanatory comment naming npx is fine, an argv carrying it is not.
+  it.each([
+    ['claude hook', path.resolve(__dirname, '..', '..', 'hooks', 'claude', 'gitnexus-hook.cjs')],
+    [
+      'antigravity hook',
+      path.resolve(__dirname, '..', '..', 'hooks', 'antigravity', 'gitnexus-antigravity-hook.cjs'),
+    ],
+    [
+      'pre-tool-use adapter',
+      path.resolve(__dirname, '..', '..', 'hooks', 'claude', 'pre-tool-use.sh'),
+    ],
+    [
+      'plugin hook',
+      path.resolve(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'gitnexus-claude-plugin',
+        'hooks',
+        'gitnexus-hook.js',
+      ),
+    ],
+  ])('spawns no npm fetch in the %s', (_name, file) => {
+    const source = readFileSync(file, 'utf-8');
+    // argv forms: `'npx'` / `'npx.cmd'` array entries, and a bare shell call.
+    expect(source).not.toMatch(/'npx(?:\.cmd)?'/);
+    expect(source).not.toMatch(/^\s*[^#*/\n]*\bnpx\b\s+-y\s+gitnexus/m);
+    expect(source).not.toMatch(/gitnexus@/);
+  });
+
   it('appends --index-only for the routine stale-index nudge (#2907)', () => {
     process.env.GITNEXUS_INVOCATION = 'gitnexus';
     expect(cjs.formatAnalyzeCommand({ indexOnly: true })).toBe('gitnexus analyze --index-only');

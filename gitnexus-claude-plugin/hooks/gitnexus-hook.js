@@ -234,8 +234,7 @@ let unguardedCliWarned = false;
  * On Windows, invoke gitnexus.cmd directly (no shell needed).
  *
  * Unix orphan containment (#2163 follow-up): the augment CLI is the
- * longest-lived hook child (inner spawnSync timeout 7s locally, 12s via
- * npx), so on Unix every CLI-running branch gets the same SIGKILL-surviving
+ * longest-lived hook child (inner spawnSync timeout 7s), so on Unix every CLI-running branch gets the same SIGKILL-surviving
  * coreutils `timeout` wrapper as the probe's lsof/ps (the cheap which/where
  * PATH check stays unwrapped). The wrapper budget is ceil(inner/1000)+1
  * seconds — STRICTLY greater than the inner spawnSync timeout, so on the
@@ -247,27 +246,11 @@ let unguardedCliWarned = false;
  *     CLI is the guard's CHILD): `-k 1` TERM-first — a SIGTERM-immune CLI
  *     can hold the guard ~1s past the inner timeout before the `-k` SIGKILL
  *     escalation reaps it.
- *   - npx (the CLI is a GRANDCHILD: guard → npx → CLI): `-s KILL` — the
- *     budget expiry SIGKILLs the whole process group outright. TERM-first
- *     would kill only the obedient npx parent, making `timeout` reap it and
- *     return before the `-k` escalation ever fires, stranding a
- *     SIGTERM-immune CLI grandchild unbounded (reproduced on coreutils
- *     9.x). `-k 1` is retained alongside `-s KILL` as a harmless belt: with
- *     `-s KILL` the `-k` escalation signal is also KILL. Two residual gaps
- *     on this branch, both bounded by "no worse than pre-fix" (where the
- *     grandchild received no signal at all): the group-wide SIGKILL is
- *     coreutils semantics — a busybox `timeout` passes the self-test (it
- *     has `-k` and propagates exit status) but signals only its direct
- *     child, so a busybox guard cannot reach the grandchild; and on the
- *     SUPERVISED path (hook alive, inner spawnSync timeout SIGTERMs the
- *     guard) coreutils forwards TERM rather than the `-s` signal, npx dies,
- *     and the guard exits before any KILL fires — so a SIGTERM-immune CLI
- *     grandchild still escapes in those two cases.
  * If the sibling probe predates the resolveUnixGuardTimeout export (version
  * skew), the adapter degrades to the unwrapped invocation instead of
  * throwing. Windows is deliberately NOT wrapped — there is no coreutils
  * timeout to resolve there and the resolver's self-test spawns /bin/sh — so
- * on win32 (the gitnexus.cmd / npx.cmd paths) and whenever the guard
+ * on win32 (the gitnexus.cmd path) and whenever the guard
  * resolves to null (e.g. macOS without Homebrew coreutils — reported once
  * under GITNEXUS_DEBUG) the argv stays byte-identical to the pre-wrap
  * invocation.
@@ -341,33 +324,19 @@ function runGitNexusCli(args, cwd, timeout) {
       windowsHide: true,
     });
   }
-  // npx fallback needs shell on Windows since npx is a .cmd script. The
-  // wrapped arm leads with `-s KILL` (NOT TERM-first like the direct
-  // branches above): the CLI here is a grandchild behind npx — see the
-  // docblock.
-  const [cmd, cmdArgs] = guard
-    ? [
-        guard,
-        [
-          '-s',
-          'KILL',
-          '-k',
-          '1',
-          String(Math.ceil((timeout + 5000) / 1000) + 1),
-          'npx',
-          '-y',
-          'gitnexus',
-          ...args,
-        ],
-      ]
-    : [isWin ? 'npx.cmd' : 'npx', ['-y', 'gitnexus', ...args]];
-  return spawnSync(cmd, cmdArgs, {
-    encoding: 'utf-8',
-    timeout: timeout + 5000,
-    cwd,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
+  // No npm-fetch rung. This build is not published to npm, so `npx -y gitnexus`
+  // would run the published package — no Apex support, returning nothing rather
+  // than erroring. Report the miss through the spawnSync error contract the
+  // caller already treats as graceful failure.
+  return {
+    error: new Error(
+      'gitnexus CLI not found. This build is not published to npm — clone the repo, build it, ' +
+        'and `npm link`, or point GITNEXUS_HOOK_CLI_PATH at dist/cli/index.js.',
+    ),
+    status: null,
+    stdout: '',
+    stderr: '',
+  };
 }
 
 /**

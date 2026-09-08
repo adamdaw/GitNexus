@@ -472,16 +472,12 @@ describe('windowsHide regression', () => {
 // ─── Source code regression: .cmd extensions for Windows ─────────────
 
 describe('Windows .cmd extension handling', () => {
-  for (const [label, hookPath] of [
-    ['CJS', CJS_HOOK],
-    ['Plugin', PLUGIN_HOOK],
-  ] as const) {
-    it(`${label} hook uses .cmd extensions for Windows npx`, () => {
-      const source = fs.readFileSync(hookPath, 'utf-8');
-      expect(source).toContain('npx.cmd');
-    });
-  }
-
+  // The `npx.cmd` assertions that sat here covered the npm-fetch branch, which
+  // this fork removed: `npx -y gitnexus` runs the published package, which has no
+  // Apex support. Only the plugin hook still spawns a PATH command needing the
+  // Windows shim; the CJS and antigravity hooks spawn process.execPath with a
+  // resolved CLI path, which takes no extension. The removal itself is asserted
+  // in resolve-invocation.test.ts.
   it('Plugin hook uses .cmd extension for Windows gitnexus binary', () => {
     const source = fs.readFileSync(PLUGIN_HOOK, 'utf-8');
     expect(source).toContain('gitnexus.cmd');
@@ -1667,8 +1663,8 @@ describe('Augment CLI guard wrap (source, #2163 follow-up)', () => {
       const end = source.indexOf('\nfunction ', start + 1);
       const fn = source.slice(start, end === -1 ? undefined : end);
       // Consults the probe's exported resolver (memo shared with the probe),
-      // and never on Windows — the npx.cmd / gitnexus.cmd argv stay exactly
-      // as before the wrap. The typeof check is the probe version-skew guard
+      // and never on Windows — the gitnexus.cmd argv stays exactly as before
+      // the wrap. The typeof check is the probe version-skew guard
       // (#2169 review): an old probe without the resolveUnixGuardTimeout
       // export must degrade to the unwrapped argv, not throw a TypeError
       // that the caller's catch swallows into a silently dead augment.
@@ -1677,42 +1673,31 @@ describe('Augment CLI guard wrap (source, #2163 follow-up)', () => {
       );
       // Coreutils `-k 1` escalation…
       expect(fn).toContain("'-k',");
-      // …with a budget STRICTLY above each branch's inner spawnSync timeout:
-      // ceil(inner/1000)+1 for both the direct (timeout) and npx
-      // (timeout + 5000) call sites. The direct-budget formula is counted
-      // exactly — once per wrapped direct-exec branch (the Plugin adapter has
-      // two: GITNEXUS_HOOK_CLI_PATH and the PATH-direct `gitnexus` branch,
-      // its most common production path) — so a partial revert of any single
-      // branch cannot pass unnoticed.
+      // …with a budget STRICTLY above the inner spawnSync timeout:
+      // ceil(inner/1000)+1. The formula is counted exactly — once per wrapped
+      // direct-exec branch (the Plugin adapter has two:
+      // GITNEXUS_HOOK_CLI_PATH and the PATH-direct `gitnexus` branch, its most
+      // common production path) — so a partial revert of any single branch
+      // cannot pass unnoticed.
       const directBudgetCount = (fn.match(/Math\.ceil\(timeout \/ 1000\) \+ 1/g) ?? []).length;
       expect(directBudgetCount).toBe(label === 'Plugin' ? 2 : 1);
-      expect(fn).toMatch(/Math\.ceil\(\(timeout \+ 5000\) \/ 1000\) \+ 1/);
       // Argv-order pin (#2169 review): the budget token must appear BEFORE
       // the command word — `timeout … <budget> <cmd>` — or coreutils would
       // parse the command word as its DURATION argument. Token presence and
-      // the counts above alone would let a transposed argv pass. Every
-      // direct-exec budget must be immediately followed by its command token
-      // (process.execPath, or the PATH-direct 'gitnexus' on Plugin), and the
-      // npx budget by 'npx'.
+      // the counts above alone would let a transposed argv pass.
       const directOrderCount = (
         fn.match(
           /String\(Math\.ceil\(timeout \/ 1000\) \+ 1\),\s*(?:process\.execPath|'gitnexus')/g,
         ) ?? []
       ).length;
       expect(directOrderCount).toBe(label === 'Plugin' ? 2 : 1);
-      expect(fn).toMatch(/String\(Math\.ceil\(\(timeout \+ 5000\) \/ 1000\) \+ 1\),\s*'npx'/);
-      // npx-branch grandchild containment (#2169 review): the npx wrapped
-      // arm must SIGKILL the process group at budget (`-s KILL`) — a group
-      // SIGTERM there kills only the obedient npx parent, `timeout` returns
-      // before its `-k` escalation fires, and a SIGTERM-immune CLI
-      // grandchild escapes unbounded.
-      expect(fn).toMatch(
-        /'-s',\s*'KILL',\s*'-k',\s*'1',\s*String\(Math\.ceil\(\(timeout \+ 5000\)/,
-      );
-      // …and the direct-exec arm(s) must NOT lead with `-s KILL`: TERM-first
-      // is gentler and sufficient there (the CLI is the guard's direct
-      // child), so `-s` appears exactly once — in the npx arm.
-      expect((fn.match(/'-s',/g) ?? []).length).toBe(1);
+      // Every surviving arm execs the CLI as the guard's DIRECT child, so
+      // TERM-first `-k 1` is both gentler and sufficient and `-s` must not
+      // appear at all. `-s KILL` and the `timeout + 5000` budget existed only
+      // for the deleted npx arm, where the CLI was a grandchild; seeing either
+      // again means an npm-fetch branch came back with them.
+      expect((fn.match(/'-s',/g) ?? []).length).toBe(0);
+      expect(fn).not.toMatch(/Math\.ceil\(\(timeout \+ 5000\) \/ 1000\) \+ 1/);
     });
   }
 
