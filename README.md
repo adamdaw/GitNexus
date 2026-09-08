@@ -1,45 +1,37 @@
-# GitNexus (Akon Labs)
+# GitNexus — Apex fork
 
-**⚠️ Important Notice:** GitNexus has NO official cryptocurrency, token, or coin. Any token/coin using the GitNexus name on Pump.fun or any other platform is **not affiliated with, endorsed by, or created by** this project or its maintainers. Do not purchase any cryptocurrency claiming association with GitNexus.
-
-<div align="center">
-
-  <a href="https://trendshift.io/repositories/19809" target="_blank">
-    <img src="https://trendshift.io/api/badge/repositories/19809" alt="abhigyanpatwari%2FGitNexus | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
+<p>
+  <a href="https://github.com/adamdaw/GitNexus/actions/workflows/ci.yml">
+    <img src="https://github.com/adamdaw/GitNexus/actions/workflows/ci.yml/badge.svg" alt="CI"/>
   </a>
+  <a href="https://polyformproject.org/licenses/noncommercial/1.0.0/">
+    <img src="https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg" alt="License: PolyForm Noncommercial"/>
+  </a>
+</p>
 
-  <p>
-    <a href="https://discord.gg/MgJrmsqr62">
-      <img src="https://img.shields.io/discord/1477255801545429032?color=5865F2&logo=discord&logoColor=white" alt="Discord"/>
-    </a>
-    <a href="https://www.npmjs.com/package/gitnexus">
-      <img src="https://img.shields.io/npm/v/gitnexus.svg" alt="npm version"/>
-    </a>
-    <a href="https://polyformproject.org/licenses/noncommercial/1.0.0/">
-      <img src="https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg" alt="License: PolyForm Noncommercial"/>
-    </a>
-    <a href="https://securityscorecards.dev/viewer/?uri=github.com/abhigyanpatwari/GitNexus">
-      <img src="https://api.securityscorecards.dev/projects/github.com/abhigyanpatwari/GitNexus/badge" alt="OpenSSF Scorecard"/>
-    </a>
-    <a href="https://github.com/abhigyanpatwari/GitNexus/actions/workflows/ci.yml">
-      <img src="https://github.com/abhigyanpatwari/GitNexus/actions/workflows/ci.yml/badge.svg" alt="CI Workflows"/>
-    </a>
-  </p>
+A fork of [abhigyanpatwari/GitNexus](https://github.com/abhigyanpatwari/GitNexus) that adds
+first-class Salesforce **Apex** support: a vendored tree-sitter Apex grammar plus an Apex
+ingestion pass, so `.cls` and `.trigger` files index as real `Class` and `Method` nodes with
+resolved cross-file call edges. `impact`, `context`, `trace` and the MCP tools then return
+Apex symbols on a Salesforce repo, where the published package returns nothing.
 
-  <p><strong>The nervous system for agent context.</strong></p>
-
-  <p>
-    Indexes any codebase into a knowledge graph — every dependency, call chain, cluster, and execution flow —
-    then exposes it through smart MCP tools so AI agents never miss code.
-  </p>
-
-  <p>
-    💬 <a href="https://discord.gg/MgJrmsqr62">Discord</a> ·
-    🌐 <a href="https://gitnexus.vercel.app">Web UI</a> ·
-    🏢 <a href="https://akonlabs.com">Enterprise (SaaS & self-hosted)</a>
-  </p>
-
-</div>
+> **Read this before you install**
+>
+> **This fork is not published to npm. You must build it from source.**
+>
+> The `gitnexus` package on the npm registry is **upstream's**, and upstream has no Apex
+> parser. Both of these fetch that package:
+>
+> ```
+> npx gitnexus …            # upstream, no Apex
+> npm install -g gitnexus   # upstream, no Apex
+> ```
+>
+> Neither errors. The index reports success and silently skips every `.cls` and `.trigger`
+> file, so the failure looks like a working install until an Apex query comes back empty.
+>
+> Follow [Install](#install). Any upstream snippet in this README that starts with
+> `npx gitnexus` or names `gitnexus@latest` is the wrong command here.
 
 https://github.com/user-attachments/assets/172685ba-8e54-4ea7-9ad1-e31a3398da72
 
@@ -47,40 +39,172 @@ https://github.com/user-attachments/assets/172685ba-8e54-4ea7-9ad1-e31a3398da72
 
 **TL;DR:** The **CLI + MCP** makes your AI agent reliable — it gives Cursor, Claude Code, Antigravity, Codex, and friends a deep architectural view of your codebase so they stop missing dependencies, breaking call chains, and shipping blind edits. Even smaller models get full architectural clarity. The **Web UI** is a quick way to chat with any repo in the browser.
 
-## Quick Start
+## Install
+
+### 1. Check your Node version
 
 ```bash
-# 1. Index your repo (run from repo root)
-npx gitnexus analyze
-
-# 2. Connect your editors (one-time, auto-detects Claude Code, Cursor, Codex, …)
-npx gitnexus setup
+node --version
 ```
 
-That's it. `analyze` indexes the codebase, installs agent skills, registers Claude Code hooks, and creates `AGENTS.md` / `CLAUDE.md` context files — all in one command. `setup` writes the MCP config so your AI agent can use the graph.
+The CLI's `engines` field is `^22.18.0 || >=24.11.0`, so npm rejects the install on Node 23,
+and on Node 24.0 through 24.10. If you use `nvm`: `nvm install 22 && nvm use 22`.
+
+### 2. Build the CLI
+
+```bash
+git clone https://github.com/adamdaw/GitNexus.git
+cd GitNexus/gitnexus
+
+npm install     # installs deps and materializes the vendored grammars, Apex included
+npm run build   # compiles dist/cli/index.js
+```
+
+`npm install` takes a couple of minutes and needs no C or C++ toolchain — every vendored
+grammar ships prebuilt binaries that `node-gyp-build` selects at require time.
+
+On npm 11 the install prints `npm warn allow-scripts … packages have install scripts not yet
+covered by allowScripts`, naming around 18 packages. Expect it and ignore it: npm 11 gates
+lifecycle scripts, and none of the skipped ones are needed because `@ladybugdb/core` and the
+grammars resolve their `.node` at require time regardless. Do not run `npm approve-scripts`.
+
+Both commands must exit 0. A half-built CLI still indexes without error and still finds no
+Apex, so a failure here is easy to miss.
+
+### 3. Put this build on your PATH
+
+```bash
+npm uninstall -g gitnexus   # remove any upstream copy that would shadow the link
+npm link                    # exposes this build as the `gitnexus` command
+```
+
+`npm link` symlinks to `dist/`, so a later `git pull && npm run build` takes effect on your
+next command with no relink.
+
+### 4. Verify you got the fork, not upstream
+
+Two checks. The first proves the command is yours; the second proves Apex parses.
+
+```bash
+readlink -f "$(command -v gitnexus)"
+```
+
+That must land inside your clone, at `…/GitNexus/gitnexus/dist/cli/index.js`.
+
+**The version number proves nothing.** This fork is cut from an upstream base and reports the
+same version as the published package, so `gitnexus --version` cannot tell you which one you
+are running. Check the resolved path instead.
+
+Then index two Apex classes and look for the call edge between them:
+
+```bash
+mkdir -p /tmp/apex-smoke && cd /tmp/apex-smoke && git init -q .
+cat > SmokeService.cls <<'EOF'
+public class SmokeService {
+  public static String hello() {
+    return SmokeHelper.greet();
+  }
+}
+EOF
+cat > SmokeHelper.cls <<'EOF'
+public class SmokeHelper {
+  public static String greet() {
+    return 'hi';
+  }
+}
+EOF
+git add -A && git commit -qm smoke
+
+gitnexus analyze . --skip-skills --skip-agents-md
+gitnexus cypher "MATCH (c:Class) RETURN c.name AS name, c.filePath AS path"
+gitnexus cypher "MATCH (a)-[r:CodeRelation]->(b) WHERE r.type = 'CALLS' RETURN a.name AS caller, b.name AS callee"
+```
+
+Expect `SmokeService` and `SmokeHelper` from the first query, and `hello` → `greet` from the
+second. Empty results mean the Apex grammar did not load: you are on upstream's binary, or
+step 2 did not finish. Clean up with `gitnexus clean --force` before deleting the directory,
+so the global registry keeps no pointer to it.
+
+### 5. Index your own repo and connect your editor
+
+```bash
+cd /path/to/your/repo
+gitnexus analyze     # index this repo
+gitnexus setup       # write the MCP config for detected editors (one-time)
+```
+
+**Run `npm link` before `gitnexus setup`.** `setup` resolves the MCP command by running
+`which gitnexus`: with the link in place it writes the absolute path to your build, and
+without it it falls back to `npx -y gitnexus@<version>` — upstream, no Apex, baked into your
+editor config. After running `setup`, open each config it reports and confirm no entry says
+`npx`.
+
+`analyze` also rewrites a `<!-- gitnexus:start/end -->` block in the target repo's
+`AGENTS.md`, `CLAUDE.md` and `.claude/skills/`. Pass `--skip-agents-md` and `--skip-skills`
+when you need the working tree left alone.
+
+### Troubleshooting
+
+**"It indexed successfully but no Apex symbols show up."**
+You are on upstream's binary. Re-run the `readlink -f` check from step 4. Look for a shell
+alias or a project script calling `npx gitnexus`, and for a second global shim left by
+another Node version — `npm link` under one Node leaves the other version's shim pointing
+wherever it pointed before, so check the resolved target of each one.
+
+**A C or C++ build starts during `npm install` and fails.**
+`gitnexus/vendor/tree-sitter-apex/prebuilds` ships `linux`, `darwin` and `win32` for both
+`x64` and `arm64`, so Apex should never be compiled from source. If it is, `node-gyp-build`
+rejected the prebuild for your platform-arch — report that rather than working around it.
+
+**Do not reach for `GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1` to get past it.** Apex is registered
+`required: false` in `gitnexus/scripts/build-tree-sitter-grammars.cjs`, so that flag skips
+Apex too, alongside Dart, Proto, Swift and Kotlin — only C is required. On a platform-arch
+that has a prebuild the flag changes nothing at runtime, because the loader reads
+`vendor/<name>/prebuilds/` directly and the postinstall script never writes anything the
+runtime needs. On a platform-arch without one, the flag is the difference between a source
+build and no Apex at all.
+
+**`git status` reports a file modified that you never touched.**
+An old clone, from before the case-colliding test fixtures (`COuter.cls` / `couter.cls`) were
+renamed. On a case-insensitive filesystem those two paths are one file, so git always reports
+one of them dirty and refuses to fast-forward over it. `git restore`, `git stash`,
+`--assume-unchanged`, `--skip-worktree` and `merge --ff-only` all fail, because restoring
+either arm re-dirties the other. Delete the clone and clone again.
+
+**The publish guard refuses to pack: "stray source-build output under vendor/".**
+A leftover `gitnexus/vendor/*/build/` from a checkout that source-built a grammar before the
+prebuilds landed. `node-gyp-build` loads `build/Release` ahead of `prebuilds/`, so packing it
+would shadow the committed binaries. It is gitignored and local-only — delete it with
+`rm -rf gitnexus/vendor/*/build`.
+
+**Embeddings were skipped on a large repo.**
+`--embeddings` has a default 50,000-node cap. Raise it (`--embeddings 100000`) or remove it
+(`--embeddings 0`), and check that `stats.embeddings` is non-zero rather than assuming.
+Keyword search (BM25) works either way, so a plain reindex is unaffected.
 
 <details>
-<summary><strong>Install problems?</strong> npm 11 crash · slow cold install · no C++ toolchain</summary>
+<summary><strong>Behind an HTTP proxy or a regional firewall?</strong></summary>
 
-> **On npm 11.x?** `npx` can crash during install with `Cannot destructure property 'package' of 'node.target'` (an npm/arborist bug, before GitNexus runs). Use pnpm instead — it builds the native deps explicitly:
->
-> ```bash
-> pnpm --allow-build=@ladybugdb/core --allow-build=gitnexus --allow-build=tree-sitter dlx gitnexus@latest analyze
-> ```
->
-> Or install globally (`npm install -g gitnexus@latest`) and run `gitnexus analyze`. See [#1939](https://github.com/abhigyanpatwari/GitNexus/issues/1939).
-
-> **Fastest MCP startup:** install globally (`npm i -g gitnexus`) before running `gitnexus setup` — this writes an absolute-path MCP config that bypasses `npx` entirely. On a cold cache, an `npx`-based MCP install can exceed Claude Code's `MCP_TIMEOUT` default (~30s).
-
-> **No C++ toolchain?** Set `GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1` before `npm install -g gitnexus` to skip the vendored grammar materialize/build for `tree-sitter-dart`, `tree-sitter-proto`, `tree-sitter-swift`, and `tree-sitter-kotlin` — those four languages won't be parsed, but install completes in seconds without `python3`/`make`/`g++`. Strict `=1` only — any other value falls through to the rebuild.
-
-> **Behind an HTTP proxy / regional firewall?** `onnxruntime-node`'s postinstall downloads optional CUDA binaries from `api.nuget.org` and ignores `HTTP_PROXY`/`HTTPS_PROXY` ([#2370](https://github.com/abhigyanpatwari/GitNexus/issues/2370)). The embedding stack is an optional dependency, so a failed download no longer breaks the install — and it self-heals: the first `gitnexus analyze --embeddings` (or `gitnexus embeddings install`) fetches the stack through your npm registry config (mirrors/proxies apply, no NuGet) into `~/.gitnexus/embedding-runtime` (override with `GITNEXUS_EMBEDDING_RUNTIME_DIR`). The on-demand prefix needs Node with `module.registerHooks` (≥ 22.15 on 22.x, ≥ 23.5 on 23.x); on older Node, keep the stack in the install itself with `ONNXRUNTIME_NODE_INSTALL=skip npm install -g gitnexus` (works on every supported Node).
-
-> **About `tree-sitter-kotlin`:** like Dart/Proto/Swift, Kotlin is a **vendored** grammar (under `gitnexus/vendor/tree-sitter-kotlin`). Upstream ships **source only** (no prebuilt binaries), so GitNexus cross-builds the platform prebuilds itself (via the `build-tree-sitter-prebuilds` GitHub Actions workflow) and vendors them — the same uniform pipeline used for Dart, Proto, and Swift. `node-gyp-build` selects the right `.node` at require time, so **no C/C++ toolchain is needed**. If no prebuild matches your platform-arch, only Kotlin (`.kt`/`.kts`) parsing is unavailable; the rest of `gitnexus` is unaffected.
+`onnxruntime-node`'s postinstall downloads optional CUDA binaries from `api.nuget.org` and ignores `HTTP_PROXY`/`HTTPS_PROXY` ([#2370](https://github.com/abhigyanpatwari/GitNexus/issues/2370)). The embedding stack is an optional dependency, so a failed download no longer breaks the install — and it self-heals: the first `gitnexus analyze --embeddings` (or `gitnexus embeddings install`) fetches the stack through your npm registry config (mirrors/proxies apply, no NuGet) into `~/.gitnexus/embedding-runtime` (override with `GITNEXUS_EMBEDDING_RUNTIME_DIR`). The on-demand prefix needs Node with `module.registerHooks` (≥ 22.15 on 22.x, ≥ 23.5 on 23.x); on older Node, keep the stack in the install itself with `ONNXRUNTIME_NODE_INSTALL=skip npm install` (works on every supported Node).
 
 </details>
 
-### Deploy to Render
+<details>
+<summary><strong>How the vendored grammars work</strong> (Apex, Kotlin, Dart, Proto, Swift)</summary>
+
+Upstream's tree-sitter grammars for these languages ship **source only**, with no prebuilt binaries. GitNexus cross-builds the platform prebuilds itself — via the `build-tree-sitter-prebuilds` GitHub Actions workflow — and vendors them under `gitnexus/vendor/tree-sitter-<lang>/prebuilds/`. `node-gyp-build` selects the right `.node` at require time, so **no C or C++ toolchain is needed**. This fork's Apex grammar follows the same pipeline, at `gitnexus/vendor/tree-sitter-apex/`, with the parser at `gitnexus/src/core/ingestion/languages/apex/`. If no prebuild matches your platform-arch, only that one language is unavailable; the rest of `gitnexus` is unaffected.
+
+Apex is regenerated from the same grammar the published `tree-sitter-sfapex` package ships, rather than depending on that package, for three reasons recorded in `gitnexus/vendor/tree-sitter-apex/package.json` under `_whyNotAPublishedRelease`: its current release is ABI-15 and will not load on the pinned `tree-sitter@0.21.1`; every release ships darwin and win32 prebuilds only, never linux; and it is multi-grammar (`apex`/`soql`/`sosl`/`sflog` off one `.node`) where this vendor is single-grammar.
+
+All three objections are about the **native** package, which is the only kind GitNexus loads. The same upstream also publishes [`web-tree-sitter-sfapex`](https://www.npmjs.com/package/web-tree-sitter-sfapex), a separate WASM build carrying `tree-sitter-apex.wasm` against `web-tree-sitter@^0.26.8`, but nothing in this repo parses with WASM any more — see [Two Ways to Use GitNexus](#two-ways-to-use-gitnexus).
+
+</details>
+
+## Deploy to Render
+
+> **No Apex.** The button below deploys upstream's repository, not this fork. To deploy the
+> fork, point Render at `https://github.com/adamdaw/GitNexus` — the `render.yaml` Blueprint is
+> in this tree and builds from source.
 
 Deploy GitNexus in one click:
 
@@ -104,15 +228,30 @@ Indexing is memory-bound. If `gitnexus-server` runs out of memory on a large rep
 
 ## Two Ways to Use GitNexus
 
-|             | **CLI + MCP** (recommended)                                                        | **Web UI**                                                           |
-| ----------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| **What**    | Index repos locally, connect AI agents via MCP                                     | Visual graph explorer + AI chat in browser                           |
-| **For**     | Daily development with Cursor, Claude Code, Antigravity, Codex, Windsurf, OpenCode | Quick exploration, demos, one-off analysis                           |
-| **Scale**   | Full repos, any size                                                               | Limited by browser memory (~5k files), or unlimited via backend mode |
-| **Install** | `npm install -g gitnexus`                                                          | No install — [gitnexus.vercel.app](https://gitnexus.vercel.app)      |
-| **Storage** | LadybugDB native (fast, persistent)                                                | LadybugDB WASM (in-memory, per session)                              |
-| **Parsing** | Tree-sitter native bindings                                                        | Tree-sitter WASM                                                     |
-| **Privacy** | Everything local, no network                                                       | Everything in-browser, no server                                     |
+|             | **CLI + MCP** (recommended)                                                        | **Web UI**                                        |
+| ----------- | ---------------------------------------------------------------------------------- | ------------------------------------------------- |
+| **What**    | Index repos locally, connect AI agents via MCP                                     | Visual graph explorer + AI chat over that index   |
+| **For**     | Daily development with Cursor, Claude Code, Antigravity, Codex, Windsurf, OpenCode | Quick exploration, demos, one-off analysis        |
+| **Scale**   | Full repos, any size                                                               | Whatever the CLI indexed                          |
+| **Install** | Build from source — see [Install](#install)                                        | Served by `gitnexus serve` from the same build    |
+| **Storage** | LadybugDB native (fast, persistent)                                                | None — reads the CLI's index over the HTTP API    |
+| **Parsing** | Tree-sitter native bindings                                                        | None — the backend parses                         |
+| **Privacy** | Everything local, no network                                                       | Local, against your own server                    |
+| **Apex**    | Yes                                                                                | Yes — it is the CLI's graph                       |
+
+> **Apex works on both, because there is only one parser.** Upstream unified the two ingestion
+> pipelines in `fd7fb5bf` ("unify web and cli ingestion pipeline", #536), which deleted the
+> browser's own parser. `gitnexus-web/src/core/ingestion/` now holds one file
+> (`cluster-enricher.ts`), `src/core/graph/graph.ts` is a plain in-memory `Map` for rendering,
+> there is no LadybugDB or `web-tree-sitter` dependency, and `RepoAnalyzer` sends even a local
+> folder to the backend via `startAnalyze` / `uploadFolder`. So the Web UI shows Apex the
+> moment you point it at a `gitnexus serve` running this build.
+>
+> Two consequences. First, `tree-sitter-wasms@0.1.13` in `gitnexus-web/package.json` is a dead
+> dependency — nothing imports it. Second, there is no in-browser mode to add an Apex WASM
+> grammar to: [`web-tree-sitter-sfapex`](https://www.npmjs.com/package/web-tree-sitter-sfapex)
+> exists and ships a real `tree-sitter-apex.wasm`, but adopting it would mean rebuilding the
+> pipeline #536 removed, to reach a capability the backend already has.
 
 > **Bridge mode:** `gitnexus serve` connects the two — the web UI auto-detects the local server and can browse all your CLI-indexed repos without re-uploading or re-indexing.
 
@@ -246,38 +385,47 @@ When a repo contains an `.agents/` directory, the standard and generated skills 
 <details>
 <summary><strong>Manual MCP configuration</strong> (if you prefer not to run <code>gitnexus setup</code>)</summary>
 
+> **Every command below is `gitnexus`, never `npx`.** Upstream's README configures MCP with
+> `npx -y gitnexus@latest mcp`, which fetches the published package and loses Apex. The
+> snippets here invoke the linked build from [Install](#install) instead. If a host does not
+> inherit your shell `PATH`, substitute the absolute shim path that
+> `command -v gitnexus` prints.
+
 **Claude Code** (full support — MCP + skills + hooks):
 
 ```bash
 # macOS / Linux
-claude mcp add gitnexus -- npx -y gitnexus@latest mcp
+claude mcp add gitnexus -- gitnexus mcp
 
 # Windows
-claude mcp add gitnexus -- cmd /c npx -y gitnexus@latest mcp
+claude mcp add gitnexus -- cmd /c gitnexus mcp
 ```
 
 **Codex** (full support — MCP + skills + hooks):
 
 ```bash
-codex mcp add gitnexus -- npx -y gitnexus@latest mcp
+codex mcp add gitnexus -- gitnexus mcp
 ```
 
 Or via `~/.codex/config.toml` (system scope) / `.codex/config.toml` (project scope):
 
 ```toml
 [mcp_servers.gitnexus]
-command = "npx"
-args = ["-y", "gitnexus@latest", "mcp"]
+command = "gitnexus"
+args = ["mcp"]
 ```
 
 Codex hooks (PreToolUse graph enrichment + PostToolUse stale-index detection in `~/.codex/hooks.json`, [same schema as Claude Code](https://developers.openai.com/codex/hooks)) need the bundled adapter script, so they are installed by `gitnexus setup -c codex` rather than manually.
 
-Alternatively, install everything as a [Codex plugin](https://developers.openai.com/codex/plugins/build) (MCP + skills + hooks in one step):
-
-```bash
-codex plugin marketplace add abhigyanpatwari/GitNexus
-# then inside Codex: /plugins → install "GitNexus"
-```
+> **The Codex plugin route does not work for this fork.** `gitnexus-claude-plugin/.mcp.json`
+> configures its MCP server as `npx -y gitnexus@latest mcp`, so installing the plugin points
+> Codex at the published package and loses Apex. Use `gitnexus setup -c codex`, or the manual
+> config above, and skip the plugin:
+>
+> ```bash
+> # upstream only — resolves to the published npm package, no Apex
+> codex plugin marketplace add abhigyanpatwari/GitNexus
+> ```
 
 > **Codex notes:** SessionStart is intentionally not registered — Codex reads [AGENTS.md natively](https://developers.openai.com/codex/guides/agents-md), which already carries the GitNexus context block. Newly installed hooks need a one-time approval in Codex via `/hooks` before they run. Pick **one** install route (`gitnexus setup -c codex` **or** the plugin): plugin hooks load alongside `~/.codex/hooks.json`, so installing both can fire duplicate hooks per tool call.
 
@@ -287,8 +435,8 @@ codex plugin marketplace add abhigyanpatwari/GitNexus
 {
   "mcpServers": {
     "gitnexus": {
-      "command": "npx",
-      "args": ["-y", "gitnexus@latest", "mcp"]
+      "command": "gitnexus",
+      "args": ["mcp"]
     }
   }
 }
@@ -300,8 +448,8 @@ codex plugin marketplace add abhigyanpatwari/GitNexus
 {
   "mcpServers": {
     "gitnexus": {
-      "command": "npx",
-      "args": ["-y", "gitnexus@latest", "mcp"]
+      "command": "gitnexus",
+      "args": ["mcp"]
     }
   }
 }
@@ -328,8 +476,8 @@ codex plugin marketplace add abhigyanpatwari/GitNexus
 {
   "mcpServers": {
     "gitnexus": {
-      "command": "npx",
-      "args": ["-y", "gitnexus@latest", "mcp"]
+      "command": "gitnexus",
+      "args": ["mcp"]
     }
   }
 }
@@ -341,8 +489,8 @@ codex plugin marketplace add abhigyanpatwari/GitNexus
 {
   "mcpServers": {
     "gitnexus": {
-      "command": "npx",
-      "args": ["-y", "gitnexus@latest", "mcp"]
+      "command": "gitnexus",
+      "args": ["mcp"]
     }
   }
 }
@@ -657,8 +805,12 @@ GitNexus builds a complete knowledge graph of your codebase through a multi-phas
 | C          | —       | —              | ✓       | —        | ✓                | ✓                     | —      | ✓          | ✓            |
 | C++        | —       | —              | ✓       | ✓        | ✓                | ✓                     | —      | ✓          | ✓            |
 | Dart       | ✓       | —              | ✓       | ✓        | ✓                | ✓                     | —      | ✓          | ✓            |
-| Apex       | —       | —              | ✓       | ✓        | ✓                | ✓                     | —      | —          | ✓            |
+| Apex ¹     | —       | —              | ✓       | ✓        | ✓                | ✓                     | —      | —          | ✓            |
 | Zig        | ✓       | —              | ✓       | —        | ✓                | ✓                     | ✓      | —          | ✓            |
+
+¹ **Apex is this fork only** — it is not in the published `gitnexus` package. Cross-file call
+resolution works without the import columns because Apex has no import statement: a class in
+the same namespace is referenced by name.
 
 **Imports** — cross-file import resolution · **Named Bindings** — `import { X as Y }` / re-export tracking · **Exports** — public/exported symbol detection · **Heritage** — class inheritance, interfaces, mixins · **Type Annotations** — explicit type extraction for receiver resolution · **Constructor Inference** — infer receiver type from constructor calls (`self`/`this` resolution included for all languages) · **Config** — language toolchain config parsing (tsconfig, go.mod, etc.) · **Frameworks** — AST-based framework pattern detection · **Entry Points** — entry point scoring heuristics
 
@@ -872,11 +1024,11 @@ The wiki generator reads the indexed graph structure, groups files into modules 
 
 A client-side graph explorer and AI chat — your code never leaves your machine.
 
-**Try it now:** [gitnexus.vercel.app](https://gitnexus.vercel.app) — run `npx gitnexus@latest serve` locally and the page auto-connects to your local backend.
+**Try it now:** [gitnexus.vercel.app](https://gitnexus.vercel.app) — run `gitnexus serve` locally and the page auto-connects to your local backend.
 
 <img width="2550" height="1343" alt="gitnexus_img" src="https://github.com/user-attachments/assets/cc5d637d-e0e5-48e6-93ff-5bcfdb929285" />
 
-The web UI uses the same indexing pipeline as the CLI but runs entirely in WebAssembly (Tree-sitter WASM, LadybugDB WASM, in-browser embeddings). It's great for quick exploration but limited by browser memory for larger repos.
+The web UI uses the same indexing pipeline as the CLI because it _is_ the CLI's: since upstream's #536 the browser does no parsing, holds no database, and computes no embeddings. It renders and queries whatever `gitnexus serve` has indexed, so Apex and every other language behave identically to the CLI.
 
 **Local Backend Mode:** run `gitnexus serve` and open the web UI — it auto-detects the server and shows all your indexed repos, with full AI chat support. No re-upload, no re-index. The agent's tools (Cypher queries, search, code navigation) route through the backend HTTP API automatically.
 
@@ -884,17 +1036,33 @@ The web UI uses the same indexing pipeline as the CLI but runs entirely in WebAs
 <summary><strong>Run the frontend locally</strong></summary>
 
 ```bash
-git clone https://github.com/abhigyanpatwari/gitnexus.git
-cd gitnexus/gitnexus-shared && npm install && npm run build
+git clone https://github.com/adamdaw/GitNexus.git
+cd GitNexus/gitnexus-shared && npm install && npm run build
 cd ../gitnexus-web && npm install
 npm run dev
 # Then in another terminal, start the backend the frontend connects to:
-npx gitnexus@latest serve
+gitnexus serve
 ```
+
+`gitnexus-web/` needs Node `^20.19.0 || >=22.12.0`, a wider range than the CLI's.
 
 </details>
 
 ## Docker
+
+> **The published images have no Apex.** `docker-compose.yaml` defaults to
+> `ghcr.io/abhigyanpatwari/gitnexus:latest`, which is built from upstream. Build the images
+> from this tree and point compose at them through the `SERVER_IMAGE` / `WEB_IMAGE`
+> overrides the compose file already reads:
+>
+> ```bash
+> docker build -f Dockerfile.cli -t gitnexus-apex:local .
+> docker build -f Dockerfile.web -t gitnexus-apex-web:local .
+> SERVER_IMAGE=gitnexus-apex:local WEB_IMAGE=gitnexus-apex-web:local docker compose up -d
+> ```
+>
+> Everything below about signatures, tags and provenance describes upstream's published
+> images, which this fork does not publish.
 
 ```bash
 docker compose up -d
@@ -1074,11 +1242,11 @@ Built by the community — not officially maintained, but worth checking out.
 
 | Layer               | CLI                                   | Web                                     |
 | ------------------- | ------------------------------------- | --------------------------------------- |
-| **Runtime**         | Node.js (native)                      | Browser (WASM)                          |
-| **Parsing**         | Tree-sitter native bindings           | Tree-sitter WASM                        |
-| **Database**        | LadybugDB native                      | LadybugDB WASM                          |
-| **Embeddings**      | HuggingFace transformers.js (GPU/CPU) | transformers.js (WebGPU/WASM)           |
-| **Search**          | BM25 + semantic + RRF                 | BM25 + semantic + RRF                   |
+| **Runtime**         | Node.js (native)                      | Browser                                 |
+| **Parsing**         | Tree-sitter native bindings           | — (backend)                             |
+| **Database**        | LadybugDB native                      | — (backend)                             |
+| **Embeddings**      | HuggingFace transformers.js (GPU/CPU) | — (backend)                             |
+| **Search**          | BM25 + semantic + RRF                 | Same, over the HTTP API                 |
 | **Agent Interface** | MCP (stdio)                           | LangChain ReAct agent                   |
 | **Visualization**   | —                                     | Sigma.js + Graphology (WebGL)           |
 | **Frontend**        | —                                     | React 18, TypeScript, Vite, Tailwind v4 |
