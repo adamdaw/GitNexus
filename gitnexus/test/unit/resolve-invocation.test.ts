@@ -32,7 +32,7 @@ const PLUGIN_CJS = path.resolve(
 type InvocationMode = 'gitnexus' | 'unavailable';
 
 interface CjsModule {
-  formatAnalyzeCommand: (o?: { embeddings?: boolean }) => string;
+  formatAnalyzeCommand: (o?: { embeddings?: boolean; indexOnly?: boolean }) => string;
   resolveInvocationMode: (
     probe?: (command: string, gitnexusWrapper?: boolean) => string | null,
   ) => InvocationMode;
@@ -72,6 +72,16 @@ describe('resolve-analyze-cmd.cjs (canonical invocation resolver)', () => {
     const source = readFileSync(CANONICAL_CJS, 'utf-8');
     expect(source).not.toMatch(/gitnexus@/);
     expect(source).not.toMatch(/\b(?:npx|bunx|dlx)\b\s+\S*gitnexus/);
+  });
+
+  it('appends --index-only for the routine stale-index nudge (#2907)', () => {
+    process.env.GITNEXUS_INVOCATION = 'gitnexus';
+    expect(cjs.formatAnalyzeCommand({ indexOnly: true })).toBe('gitnexus analyze --index-only');
+    expect(cjs.formatAnalyzeCommand({ indexOnly: true, embeddings: true })).toBe(
+      'gitnexus analyze --index-only --embeddings',
+    );
+    // Absent/false leaves the doc-refreshing form untouched.
+    expect(cjs.formatAnalyzeCommand({ indexOnly: false })).toBe('gitnexus analyze');
   });
 
   it('auto-selects the global gitnexus binary when it is on PATH', () => {

@@ -22,6 +22,7 @@ import type {
   ParameterTypeClass,
   ParsedFile,
   Reference,
+  ReferenceSite,
   ScopeId,
   SymbolDefinition,
 } from 'gitnexus-shared';
@@ -67,6 +68,9 @@ export function emitFreeCallFallback(
     /** When true, `Type(...)` constructor calls link to the Class def
      *  itself rather than its explicit Constructor. Swift opts in. */
     readonly constructorCallTargetsClass?: boolean;
+    /** When true, a constructor-form site's edge gets ` (constructor)`
+     *  appended to its reason. See `ScopeResolver.markConstructionSites`. */
+    readonly markConstructionSites?: boolean;
     readonly isFileLocalDef?: (def: SymbolDefinition) => boolean;
     readonly isCallableVisibleFromCaller?: (ctx: {
       readonly callerParsed: ParsedFile;
@@ -680,13 +684,31 @@ export function emitFreeCallFallback(
         type: 'CALLS',
         confidence: 0.85,
         // Match legacy DAG's reason convention so consumers that
-        // assert `reason === 'import-resolved'` keep working.
-        reason: fnDef.filePath !== parsed.filePath ? 'import-resolved' : 'local-call',
+        // assert `reason === 'import-resolved'` keep working. The
+        // construction-site marker is opt-in for the same reason.
+        reason: constructionSiteReason(
+          fnDef.filePath !== parsed.filePath ? 'import-resolved' : 'local-call',
+          site,
+          options.markConstructionSites,
+        ),
       });
       emitted++;
     }
   }
   return emitted;
+}
+
+/** `reason` of a free-call edge: the legacy string, plus ` (constructor)` for
+ *  a construction site when the provider opted in
+ *  (`ScopeResolver.markConstructionSites`). */
+export function constructionSiteReason(
+  base: string,
+  site: Pick<ReferenceSite, 'callForm'>,
+  markConstructionSites: boolean | undefined,
+): string {
+  return markConstructionSites === true && site.callForm === 'constructor'
+    ? `${base} (constructor)`
+    : base;
 }
 
 function siteKey(
@@ -846,7 +868,7 @@ export function pickUniqueGlobalCallable(
   // because the list would then depend on the caller's scope, not just its file.
   const cacheKey =
     scopeDefsCache !== undefined && isCallerVisible === undefined
-      ? `${name} ${callerFilePath}`
+      ? `${name}\0${callerFilePath}`
       : undefined;
   let scopeDefs: readonly SymbolDefinition[] | undefined =
     cacheKey !== undefined ? scopeDefsCache!.get(cacheKey) : undefined;

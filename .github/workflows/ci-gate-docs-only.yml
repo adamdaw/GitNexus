@@ -1,0 +1,75 @@
+name: CI Gate (docs-only)
+
+# `ci.yml` carries `paths-ignore: ['**.md', 'docs/**', 'LICENSE']`, so a PR
+# whose every changed file matches that set never starts CI and never reports
+# the `CI Gate` context that branch protection requires on `main`. With
+# `enforce_admins` on, such a PR cannot be merged by anyone. This workflow
+# reports the context for exactly that case.
+#
+# The guard sits on the posting, not on the trigger. A `paths:` filter is the
+# wrong place for it: `paths-ignore` skips `ci.yml` only when EVERY changed
+# file matches, whereas `paths:` fires when ANY one does, so a PR mixing docs
+# with code would trip both workflows and put two `CI Gate` check runs on the
+# same head. The 10-second no-op would then be free to report success while
+# the real gate is still running. Instead this runs on every PR, recomputes
+# the ignore set against the actual file list, and stays silent unless
+# `ci.yml` genuinely sat the PR out.
+#
+# Keep the ignore set below in sync with `paths-ignore` in `ci.yml`.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  statuses: write
+
+# Concurrency convention: see CONTRIBUTING.md → "GitHub Actions — Concurrency Convention".
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    # Deliberately NOT named "CI Gate". Naming the job after the context would
+    # mint a check run of that name on every PR, including the mixed ones this
+    # workflow must stay out of.
+    name: Docs-only CI Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report CI Gate when ci.yml skipped the PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')
+          if [[ -z "$files" ]]; then
+            echo "No changed files reported; leaving the gate to ci.yml."
+            exit 0
+          fi
+
+          # `case` globbing matches `/` with `*`, so `docs/*` covers nested paths.
+          while IFS= read -r f; do
+            case "$f" in
+              *.md | docs/* | LICENSE) ;;
+              *)
+                echo "$f falls outside ci.yml's paths-ignore set."
+                echo "ci.yml runs for this PR and owns the CI Gate context."
+                exit 0
+                ;;
+            esac
+          done <<<"$files"
+
+          echo "Every changed file matches ci.yml's paths-ignore set:"
+          echo "$files"
+          gh api -X POST "repos/$REPO/statuses/$SHA" \
+            -f state=success \
+            -f context='CI Gate' \
+            -f description='Docs-only change; ci.yml skipped by paths-ignore'

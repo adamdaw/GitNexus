@@ -116,7 +116,14 @@ function resolveInvocationMode(probe = resolveOnPath) {
  * `NOT_INSTALLED_MESSAGE` covers at execution time.
  */
 function formatAnalyzeCommand(options = {}) {
-  return `gitnexus analyze${options.embeddings ? ' --embeddings' : ''}`;
+  // `--index-only` is what a routine "your index is stale" nudge wants: it
+  // reindexes without rewriting AGENTS.md / CLAUDE.md / skills, so an agent
+  // following the nudge on every commit cannot churn the tracked agent guides
+  // (#2907). Callers that actually want the docs refreshed omit it.
+  const suffix = `${options.indexOnly ? ' --index-only' : ''}${
+    options.embeddings ? ' --embeddings' : ''
+  }`;
+  return `gitnexus analyze${suffix}`;
 }
 
 /**
