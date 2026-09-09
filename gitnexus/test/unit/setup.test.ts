@@ -11,7 +11,6 @@ import { createRequire } from 'module';
 // entrypoint is always a valid launch path. Platform-independent: there is no cmd
 // wrapper to add, because there is no npx shim to wrap.
 const SELF_MCP = { command: process.execPath, args: [path.resolve(process.argv[1]!), 'mcp'] };
-const SELF_MCP_ARRAY = [process.execPath, path.resolve(process.argv[1]!), 'mcp'];
 
 // Match what setup.ts emits — read the version from the same package.json
 // so the test never goes stale on a release bump.

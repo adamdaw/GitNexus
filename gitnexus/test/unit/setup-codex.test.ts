@@ -10,7 +10,6 @@ import { createRequire } from 'module';
 // on every MCP connect. `gitnexus setup` runs from this build, so its own
 // entrypoint is always a valid launch path. Platform-independent: there is no cmd
 // wrapper to add, because there is no npx shim to wrap.
-const SELF_MCP = { command: process.execPath, args: [path.resolve(process.argv[1]!), 'mcp'] };
 const SELF_MCP_ARRAY = [process.execPath, path.resolve(process.argv[1]!), 'mcp'];
 
 const PKG_VERSION = (createRequire(import.meta.url)('../../package.json') as { version: string })
