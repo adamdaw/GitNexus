@@ -132,7 +132,11 @@ describe('setupCommand skills integration', () => {
     // entrypoint instead, which is by definition this build.
     expect(codexConfig).not.toMatch(/gitnexus@\d+\.\d+\.\d+/);
     expect(codexConfig).not.toMatch(/\b(?:npx|bunx|dlx)\b/);
-    expect(codexConfig).toContain(path.resolve(process.argv[1]!));
+    // The section is built with JSON.stringify per value, so a Windows path is
+    // written TOML-escaped (`"D:\\a\\GitNexus\\…"`) and a raw-path containment
+    // check fails there while passing on POSIX. Collapse the escaping before
+    // comparing rather than asserting on one platform's separator.
+    expect(codexConfig.replace(/\\\\/g, '\\')).toContain(path.resolve(process.argv[1]!));
 
     const codexSkill = await fs.readFile(
       path.join(tempHome, '.agents', 'skills', 'gitnexus-cli', 'SKILL.md'),
