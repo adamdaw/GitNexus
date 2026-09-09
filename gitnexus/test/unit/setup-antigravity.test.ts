@@ -23,6 +23,14 @@ import { spawnSync } from 'child_process';
 import { createRequire } from 'module';
 import { commitAll, initGitRepo } from '../helpers/temp-git-repo.js';
 
+// The MCP fallback when no `gitnexus` launcher is on PATH. This build is not
+// published to npm, so upstream's `npx -y gitnexus@<version> mcp` fallback would
+// persist an upstream-pointing server into the user's editor config — silently, and
+// on every MCP connect. `gitnexus setup` runs from this build, so its own
+// entrypoint is always a valid launch path. Platform-independent: there is no cmd
+// wrapper to add, because there is no npx shim to wrap.
+const SELF_MCP = { command: process.execPath, args: [path.resolve(process.argv[1]!), 'mcp'] };
+
 const PKG_VERSION = (createRequire(import.meta.url)('../../package.json') as { version: string })
   .version;
 const NPX_REF = `gitnexus@${PKG_VERSION}`;
@@ -114,8 +122,7 @@ describe('setupAntigravity', () => {
     const config = JSON.parse(raw);
 
     expect(config.mcpServers.gitnexus).toEqual({
-      command: 'npx',
-      args: ['-y', NPX_REF, 'mcp'],
+      ...SELF_MCP,
     });
   });
 
@@ -132,8 +139,7 @@ describe('setupAntigravity', () => {
     const config = JSON.parse(raw);
 
     expect(config.mcpServers.gitnexus).toEqual({
-      command: 'cmd',
-      args: ['/c', 'npx', '-y', NPX_REF, 'mcp'],
+      ...SELF_MCP,
     });
   });
 

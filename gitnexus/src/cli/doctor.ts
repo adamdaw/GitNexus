@@ -149,7 +149,7 @@ export function pageSizeDoctorLines(
         : `@ladybugdb/core < 0.18.0`;
     lines.push(
       `  ${padDisplayEnd('', 10)}⚠ non-4K page size with ${versionClause} — ` +
-        `'gitnexus analyze' may fail during COPY (#1231). Upgrade gitnexus (npm install -g gitnexus@latest).`,
+        `'gitnexus analyze' may fail during COPY (#1231). Upgrade gitnexus (git pull && npm install && npm run build && npm link).`,
     );
   }
   return lines;

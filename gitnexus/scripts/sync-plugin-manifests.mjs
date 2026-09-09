@@ -12,7 +12,6 @@
  *   - .claude-plugin/marketplace.json                     (plugins[gitnexus])
  *   - gitnexus-claude-plugin/.codex-plugin/plugin.json    (top-level version)
  *   - .agents/plugins/marketplace.json                    (plugins[gitnexus])
- *   - gitnexus-claude-plugin/skills/<skill>/mcp.json      (gitnexus@<version> launch arg, x10)
  *
  * Modes:
  *   node scripts/sync-plugin-manifests.mjs           rewrite stale surfaces
@@ -26,34 +25,17 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Plugin skill mcp.json are executable MCP definitions (they launch
-// `npx -y gitnexus@<version> mcp` when a skill starts), not quickstart docs, so
-// they must ship pinned to the released version and be auto-stamped here like
-// the other surfaces — otherwise every skill invocation pulls whatever owns
-// `gitnexus@latest`, independent of the reviewed plugin version. All ten are
-// kept byte-identical (the shipped-skills-sync drift guard enforces it).
-const PLUGIN_SKILL_MCP_DIRS = [
-  'gitnexus-plan',
-  'gitnexus-work',
-  'gitnexus-review',
-  'gitnexus-lfg',
-  'gitnexus-guide',
-  'gitnexus-cli',
-  'gitnexus-debugging',
-  'gitnexus-exploring',
-  'gitnexus-impact-analysis',
-  'gitnexus-refactoring',
-];
-
+// The ten plugin skill mcp.json carry no version to stamp. They launch the
+// PATH-resolved `gitnexus` binary, because this build is not published to npm:
+// any `npx -y gitnexus@<version>` launch arg resolves to the published package,
+// which has no Apex support and returns nothing rather than erroring. A
+// PATH-resolved command is inherently in step with whatever is linked, so there
+// is nothing here for a release to drift out of sync with.
 const MANIFEST_SURFACES = [
   { file: 'gitnexus-claude-plugin/.claude-plugin/plugin.json', kind: 'plugin' },
   { file: '.claude-plugin/marketplace.json', kind: 'marketplace' },
   { file: 'gitnexus-claude-plugin/.codex-plugin/plugin.json', kind: 'plugin' },
   { file: '.agents/plugins/marketplace.json', kind: 'marketplace' },
-  ...PLUGIN_SKILL_MCP_DIRS.map((name) => ({
-    file: `gitnexus-claude-plugin/skills/${name}/mcp.json`,
-    kind: 'mcp',
-  })),
 ];
 
 const PLUGIN_NAME = 'gitnexus';
@@ -95,27 +77,11 @@ function versionTarget(manifest, kind, filePath) {
 
 /**
  * Resolve the current pinned version and the textual needle for one surface.
- * `plugin`/`marketplace` pin a JSON `"version"` field; `mcp` pins the version
- * inside the `gitnexus@<version>` launch arg. Returns `{ from, needle }` where
- * `needle(v)` renders the exact substring to match/replace for version `v`.
+ * `plugin`/`marketplace` pin a JSON `"version"` field. Returns `{ from, needle }`
+ * where `needle(v)` renders the exact substring to match/replace for version `v`.
  * Fail-closed on a missing/ambiguous target.
  */
 function versionInfo(manifest, kind, filePath) {
-  if (kind === 'mcp') {
-    const server = manifest?.mcpServers?.[PLUGIN_NAME];
-    const args = Array.isArray(server?.args) ? server.args : [];
-    const pins = args.filter((arg) => typeof arg === 'string' && arg.startsWith(`${PLUGIN_NAME}@`));
-    if (pins.length !== 1) {
-      throw new Error(
-        `Manifest surface ${filePath} must contain exactly one "${PLUGIN_NAME}@<version>" launch arg, found ${pins.length}`,
-      );
-    }
-    const from = pins[0].slice(`${PLUGIN_NAME}@`.length);
-    if (from.length === 0) {
-      throw new Error(`Manifest surface ${filePath} has an empty ${PLUGIN_NAME}@ version`);
-    }
-    return { from, needle: (value) => `${PLUGIN_NAME}@${value}` };
-  }
   const target = versionTarget(manifest, kind, filePath);
   return { from: target.version, needle: (value) => `"version": "${value}"` };
 }

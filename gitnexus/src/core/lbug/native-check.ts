@@ -55,18 +55,23 @@ const NATIVE_BUILD_PACKAGES = ['@ladybugdb/core', 'gitnexus', 'tree-sitter'] as 
 const ALLOW_BUILD_FLAGS = NATIVE_BUILD_PACKAGES.map((p) => `--allow-build=${p}`).join(' ');
 
 /**
- * bun repair advice, shared by both failure messages so they cannot drift.
+ * Repair advice for a package manager that skipped the install lifecycle script,
+ * shared by both failure messages so they cannot drift.
  *
- * `trustedDependencies` in a package.json is NOT what makes `bunx gitnexus@latest`
- * work — see the note on restorePrebuiltNativeBinary — so a one-shot user, who
- * has no package.json to edit, gets an actionable alternative instead of advice
- * they cannot follow.
+ * Upstream's advice here was a set of registry one-shots (`pnpm dlx` /
+ * `bunx gitnexus@…` / `<pm> install -g gitnexus`). None apply: this build is not
+ * published to npm, so every one of them would replace a source-built install
+ * with the published package — no Apex support, and it reports no error. The only
+ * repair is to re-run the lifecycle script or reinstall from this checkout.
  */
-const BUN_REPAIR_LINES = [
-  '  - bun: inside a project, add to package.json and reinstall:',
-  `      "trustedDependencies": [${NATIVE_BUILD_PACKAGES.map((p) => `"${p}"`).join(', ')}]`,
-  '    A one-shot `bunx gitnexus@latest …` has no package.json to put that in —',
-  '    install once instead:  bun install -g gitnexus',
+const SKIPPED_SCRIPT_REPAIR_LINES = [
+  '  - pnpm/bun block build scripts by default (security model). Inside this repo,',
+  '    allow the required builds and reinstall:',
+  `      pnpm install ${ALLOW_BUILD_FLAGS}`,
+  `      # bun: add "trustedDependencies": [${NATIVE_BUILD_PACKAGES.map((p) => `"${p}"`).join(', ')}]`,
+  '      #      to package.json, then `bun install`',
+  '  - npm configured with ignore-scripts=true',
+  '    (in .npmrc or via --ignore-scripts).',
 ];
 
 /**
@@ -166,8 +171,8 @@ function unrestorableBinaryFailure(
           'was refused, which is a filesystem permission problem (read-only or non-writable',
           'node_modules), not a skipped install script.',
           '',
-          'To repair, make that directory writable, or reinstall gitnexus somewhere writable:',
-          '  npm i -g gitnexus@latest   # or: bun install -g gitnexus',
+          'To repair, make that directory writable, then reinstall from this checkout:',
+          '  npm install && npm link',
           '',
           'Allowing build scripts (trustedDependencies, --allow-build, ignore-scripts) will',
           'NOT help here — the install script fails on the same write.',
@@ -181,16 +186,7 @@ function unrestorableBinaryFailure(
           `  node ${path.join(pkgDir, 'install.js')}`,
           '',
           'Common causes:',
-          '  - pnpm dlx / pnpx skip build scripts by default (security model). Options:',
-          '      # Keep pnpm dlx — explicitly allow the required builds:',
-          `      pnpm ${ALLOW_BUILD_FLAGS} \\`,
-          '        dlx gitnexus@latest serve',
-          '      # Or install globally with build scripts allowed (pnpm 10.2+):',
-          `      pnpm add -g ${ALLOW_BUILD_FLAGS} gitnexus`,
-          '      # Or npm i -g gitnexus@latest (bare npx on npm 11 may crash before gitnexus runs).',
-          ...BUN_REPAIR_LINES,
-          '  - npm configured with ignore-scripts=true',
-          '    (in .npmrc or via --ignore-scripts).',
+          ...SKIPPED_SCRIPT_REPAIR_LINES,
         ];
   return {
     ok: false,
@@ -291,11 +287,8 @@ export function checkLbugNative(overridePkgDir?: string): NativeCheckResult {
       'To repair:',
       `  node ${path.join(pkgDir, 'install.js')}`,
       '',
-      'If install scripts were skipped (pnpm dlx / pnpx / ignore-scripts):',
-      `  pnpm ${ALLOW_BUILD_FLAGS} \\`,
-      '    dlx gitnexus@latest serve',
-      `  pnpm add -g ${ALLOW_BUILD_FLAGS} gitnexus`,
-      ...BUN_REPAIR_LINES,
+      'If install scripts were skipped:',
+      ...SKIPPED_SCRIPT_REPAIR_LINES,
     ].join('\n'),
   };
 }

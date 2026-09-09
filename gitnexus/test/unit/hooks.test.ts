@@ -472,16 +472,12 @@ describe('windowsHide regression', () => {
 // ─── Source code regression: .cmd extensions for Windows ─────────────
 
 describe('Windows .cmd extension handling', () => {
-  for (const [label, hookPath] of [
-    ['CJS', CJS_HOOK],
-    ['Plugin', PLUGIN_HOOK],
-  ] as const) {
-    it(`${label} hook uses .cmd extensions for Windows npx`, () => {
-      const source = fs.readFileSync(hookPath, 'utf-8');
-      expect(source).toContain('npx.cmd');
-    });
-  }
-
+  // The `npx.cmd` assertions that sat here covered the npm-fetch branch, which
+  // this fork removed: `npx -y gitnexus` runs the published package, which has no
+  // Apex support. Only the plugin hook still spawns a PATH command needing the
+  // Windows shim; the CJS and antigravity hooks spawn process.execPath with a
+  // resolved CLI path, which takes no extension. The removal itself is asserted
+  // in resolve-invocation.test.ts.
   it('Plugin hook uses .cmd extension for Windows gitnexus binary', () => {
     const source = fs.readFileSync(PLUGIN_HOOK, 'utf-8');
     expect(source).toContain('gitnexus.cmd');
@@ -1390,194 +1386,17 @@ describe.skipIf(process.platform !== 'linux')(
   },
 );
 
-// ─── Behavior: npx branch — SIGKILLed hook cannot strand the CLI grandchild ──
-
-describe.skipIf(process.platform !== 'linux')(
-  'Orphaned npx-branch CLI grandchild is reaped by the -s KILL wrapper (#2163 follow-up)',
-  () => {
-    // The npx branch has a DEEPER topology than the direct-exec suite above:
-    // guard → npx → CLI, so the CLI is the guard's GRANDCHILD. Under the
-    // TERM-first `-k 1` guard the budget's group SIGTERM kills the obedient
-    // npx parent; `timeout` reaps its direct child and exits IMMEDIATELY, so
-    // its `-k` SIGKILL never fires — and a SIGTERM-immune CLI grandchild
-    // survives unbounded (reproduced on coreutils 9.x). The `-s KILL`
-    // wrapped arm instead SIGKILLs the whole process group at budget
-    // (13s = ceil((7000+5000)/1000)+1 here), which nothing can ignore.
-    // Reverting the npx arm to plain `-k 1` TERM-first makes this test red.
-    //
-    // Topology notes: the hook is STAGED into a bare temp dir together with
-    // its sibling helpers (the install-shaped copy, like the antigravity e2e
-    // suite uses), so resolveCliPath() finds no local dist/ and no
-    // resolvable gitnexus package; with GITNEXUS_HOOK_CLI_PATH cleared the
-    // npx fallback branch is the one that runs. A fake `npx` injected on
-    // PATH then spawns the SIGTERM-immune fake CLI as its own child and
-    // waits on it, mirroring the real npx process tree.
-    it('CJS (staged): SIGKILLed hook leaves no immortal CLI grandchild behind npx', async () => {
-      // Guard-availability precheck — see resolveHostGuardForReapingTests.
-      expect(resolveHostGuardForReapingTests(), GUARD_PRECHECK_MSG).not.toBeNull();
-      const { spawn } = await import('child_process');
-      // REQUIRED: a real lbug file means the probe runs. #2180 removed the
-      // Linux lsof fallback, so we route the probe at an EMPTY fake /proc
-      // (not-owned) so the augment runs through the same probe-then-spawn flow
-      // as production. (Pre-#2180 this used BUDGET_MS:'1' to fall through to a
-      // fake lsof; that path no longer exists on Linux.)
-      const lbugPath = path.join(gitNexusDir, 'lbug');
-      fs.writeFileSync(lbugPath, '');
-      const emptyProcRoot = createFakeProcRoot([]);
-      const pidFile = path.join(os.tmpdir(), `gn-hook-npxclipid-${process.pid}`);
-      fs.rmSync(pidFile, { force: true });
-      // Route self-proof (#2169 review): written by the fake npx as its first
-      // statement, so the test fails loudly if a future resolveCliPath /
-      // hookEnv change silently re-routes the augment to the direct arm.
-      const npxMarkerPath = path.join(os.tmpdir(), `gn-hook-npxmarker-${process.pid}`);
-      fs.rmSync(npxMarkerPath, { force: true });
-      const binDir = createHookToolDir({
-        gitnexusPidFile: pidFile,
-        gitnexusSleepMs: 30000,
-        gitnexusIgnoreSigterm: true,
-        lsofOutput: '',
-        psOutput: '',
-      });
-      // Fake npx: spawns the fake CLI as the guard's grandchild and waits on
-      // it like real npx; npx itself stays SIGTERM-obedient (Node default).
-      fs.writeFileSync(
-        path.join(binDir, 'npx'),
-        `#!/usr/bin/env node\n` +
-          `require('fs').writeFileSync(${JSON.stringify(npxMarkerPath)}, String(process.pid));\n` +
-          `const { spawn } = require('child_process');\n` +
-          `const child = spawn(process.execPath, [${JSON.stringify(
-            path.join(binDir, 'gitnexus-cli.js'),
-          )}], { stdio: 'ignore' });\n` +
-          `child.on('exit', (code) => process.exit(code === null ? 1 : code));\n`,
-        { mode: 0o755 },
-      );
-      // Stage the hook + its sibling helpers into a bare dir with no dist/
-      // and no reachable node_modules/gitnexus, so resolveCliPath() → ''.
-      const stagedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-staged-hook-'));
-      const hookSrcDir = path.dirname(CJS_HOOK);
-      for (const f of [
-        'gitnexus-hook.cjs',
-        'hook-lock.cjs',
-        'hook-db-lock-probe.cjs',
-        'resolve-analyze-cmd.cjs',
-      ]) {
-        fs.copyFileSync(path.join(hookSrcDir, f), path.join(stagedDir, f));
-      }
-      const stagedHook = path.join(stagedDir, 'gitnexus-hook.cjs');
-      let cliPid = 0;
-      let hookChild: ReturnType<typeof spawn> | null = null;
-
-      const isFakeCliAlive = () => {
-        try {
-          process.kill(cliPid, 0);
-        } catch {
-          return false; // ESRCH — reaped
-        }
-        // PID-reuse guard: only count it alive while the cmdline still
-        // points at our fake CLI.
-        try {
-          return fs.readFileSync(`/proc/${cliPid}/cmdline`, 'utf-8').includes(binDir);
-        } catch {
-          return false;
-        }
-      };
-
-      try {
-        hookChild = spawn(process.execPath, [stagedHook], {
-          stdio: ['pipe', 'ignore', 'ignore'],
-          env: {
-            ...hookEnv(binDir),
-            // Force the npx fallback: no CLI-path override (empty string
-            // fails resolveCliPath's trim check), and nothing for the staged
-            // copy's require.resolve to find via NODE_PATH.
-            GITNEXUS_HOOK_CLI_PATH: '',
-            NODE_PATH: '',
-            // #2180: empty fake /proc → not-owned → augment runs. Generous
-            // budget so the scan completes rather than failing closed.
-            GITNEXUS_HOOK_PROC_ROOT: emptyProcRoot,
-            GITNEXUS_HOOK_LINUX_PROC_BUDGET_MS: '5000',
-            // Hermeticity: fall through to the built-in guard candidates.
-            GITNEXUS_HOOK_TIMEOUT_PATH: '',
-          },
-        });
-        hookChild.stdin!.end(
-          JSON.stringify({
-            hook_event_name: 'PreToolUse',
-            tool_name: 'Grep',
-            tool_input: { pattern: 'validateUser' },
-            cwd: tmpDir,
-          }),
-        );
-
-        // The fake CLI writes its PID as its FIRST statement; poll tightly.
-        const spawnDeadline = Date.now() + 8000;
-        while (Date.now() < spawnDeadline) {
-          try {
-            const raw = fs.readFileSync(pidFile, 'utf-8').trim();
-            if (raw) {
-              cliPid = Number.parseInt(raw, 10);
-              break;
-            }
-          } catch {
-            /* not written yet */
-          }
-          await new Promise((r) => setTimeout(r, 10));
-        }
-        expect(cliPid).toBeGreaterThan(0);
-        // The augment really took the npx fallback arm, not the direct arm.
-        expect(fs.existsSync(npxMarkerPath)).toBe(true);
-
-        // Kill the hook while the npx → CLI chain is alive (orphan topology).
-        hookChild.kill('SIGKILL');
-
-        // The npx call site's wrapper budget is 13s (= ceil((7000+5000)/
-        // 1000)+1) from the guard's start; the group SIGKILL lands then.
-        // Poll past it with margin, far short of the CLI's 30s sleep.
-        const reapDeadline = Date.now() + 18000;
-        let alive = isFakeCliAlive();
-        while (alive && Date.now() < reapDeadline) {
-          await new Promise((r) => setTimeout(r, 100));
-          alive = isFakeCliAlive();
-        }
-        expect(alive).toBe(false);
-      } finally {
-        // PID-reuse guard (#2169 review): re-run the detection loop's
-        // /proc/<pid>/cmdline identity check before the cleanup SIGKILL, so
-        // a PID already reaped and recycled by the OS is never signalled.
-        if (cliPid > 0 && isFakeCliAlive()) {
-          try {
-            process.kill(cliPid, 'SIGKILL');
-          } catch {
-            /* already gone */
-          }
-        }
-        try {
-          hookChild?.kill('SIGKILL');
-        } catch {
-          /* ignore */
-        }
-        // The hook claims a slot before probing; it died holding it.
-        const lockDir = path.join(gitNexusDir, '.hook-locks');
-        try {
-          for (const f of fs.readdirSync(lockDir)) fs.unlinkSync(path.join(lockDir, f));
-        } catch {
-          /* ignore */
-        }
-        try {
-          fs.rmdirSync(lockDir);
-        } catch {
-          /* ignore */
-        }
-        fs.rmSync(lbugPath, { force: true });
-        fs.rmSync(pidFile, { force: true });
-        fs.rmSync(npxMarkerPath, { force: true });
-        fs.rmSync(stagedDir, { recursive: true, force: true });
-        fs.rmSync(binDir, { recursive: true, force: true });
-        fs.rmSync(emptyProcRoot, { recursive: true, force: true });
-      }
-    }, 45000);
-  },
-);
+// ─── Behavior: npx branch removed — no grandchild topology remains ──
+//
+// A `describe.skipIf(platform !== linux)` suite here proved that a SIGKILLed
+// hook could not strand an immortal CLI grandchild behind npx: the `-s KILL`
+// wrapped arm SIGKILLed the whole process group at budget, where TERM-first
+// would have reaped only the obedient npx parent. That topology (guard → npx
+// → CLI) no longer exists. This fork removed the npm-fetch arm, since it ran
+// the published package, which has no Apex support; every surviving arm execs
+// the CLI as the guard's DIRECT child, which the direct-exec suite above
+// covers. The invariant that replaced it — no hook spawns an npm fetch at all
+// — is asserted in resolve-invocation.test.ts and mutation-tested there.
 
 // ─── Wrapping equivalence: disabled guard ⇒ pre-wrap augment behavior ──
 
@@ -1667,8 +1486,8 @@ describe('Augment CLI guard wrap (source, #2163 follow-up)', () => {
       const end = source.indexOf('\nfunction ', start + 1);
       const fn = source.slice(start, end === -1 ? undefined : end);
       // Consults the probe's exported resolver (memo shared with the probe),
-      // and never on Windows — the npx.cmd / gitnexus.cmd argv stay exactly
-      // as before the wrap. The typeof check is the probe version-skew guard
+      // and never on Windows — the gitnexus.cmd argv stays exactly as before
+      // the wrap. The typeof check is the probe version-skew guard
       // (#2169 review): an old probe without the resolveUnixGuardTimeout
       // export must degrade to the unwrapped argv, not throw a TypeError
       // that the caller's catch swallows into a silently dead augment.
@@ -1677,42 +1496,31 @@ describe('Augment CLI guard wrap (source, #2163 follow-up)', () => {
       );
       // Coreutils `-k 1` escalation…
       expect(fn).toContain("'-k',");
-      // …with a budget STRICTLY above each branch's inner spawnSync timeout:
-      // ceil(inner/1000)+1 for both the direct (timeout) and npx
-      // (timeout + 5000) call sites. The direct-budget formula is counted
-      // exactly — once per wrapped direct-exec branch (the Plugin adapter has
-      // two: GITNEXUS_HOOK_CLI_PATH and the PATH-direct `gitnexus` branch,
-      // its most common production path) — so a partial revert of any single
-      // branch cannot pass unnoticed.
+      // …with a budget STRICTLY above the inner spawnSync timeout:
+      // ceil(inner/1000)+1. The formula is counted exactly — once per wrapped
+      // direct-exec branch (the Plugin adapter has two:
+      // GITNEXUS_HOOK_CLI_PATH and the PATH-direct `gitnexus` branch, its most
+      // common production path) — so a partial revert of any single branch
+      // cannot pass unnoticed.
       const directBudgetCount = (fn.match(/Math\.ceil\(timeout \/ 1000\) \+ 1/g) ?? []).length;
       expect(directBudgetCount).toBe(label === 'Plugin' ? 2 : 1);
-      expect(fn).toMatch(/Math\.ceil\(\(timeout \+ 5000\) \/ 1000\) \+ 1/);
       // Argv-order pin (#2169 review): the budget token must appear BEFORE
       // the command word — `timeout … <budget> <cmd>` — or coreutils would
       // parse the command word as its DURATION argument. Token presence and
-      // the counts above alone would let a transposed argv pass. Every
-      // direct-exec budget must be immediately followed by its command token
-      // (process.execPath, or the PATH-direct 'gitnexus' on Plugin), and the
-      // npx budget by 'npx'.
+      // the counts above alone would let a transposed argv pass.
       const directOrderCount = (
         fn.match(
           /String\(Math\.ceil\(timeout \/ 1000\) \+ 1\),\s*(?:process\.execPath|'gitnexus')/g,
         ) ?? []
       ).length;
       expect(directOrderCount).toBe(label === 'Plugin' ? 2 : 1);
-      expect(fn).toMatch(/String\(Math\.ceil\(\(timeout \+ 5000\) \/ 1000\) \+ 1\),\s*'npx'/);
-      // npx-branch grandchild containment (#2169 review): the npx wrapped
-      // arm must SIGKILL the process group at budget (`-s KILL`) — a group
-      // SIGTERM there kills only the obedient npx parent, `timeout` returns
-      // before its `-k` escalation fires, and a SIGTERM-immune CLI
-      // grandchild escapes unbounded.
-      expect(fn).toMatch(
-        /'-s',\s*'KILL',\s*'-k',\s*'1',\s*String\(Math\.ceil\(\(timeout \+ 5000\)/,
-      );
-      // …and the direct-exec arm(s) must NOT lead with `-s KILL`: TERM-first
-      // is gentler and sufficient there (the CLI is the guard's direct
-      // child), so `-s` appears exactly once — in the npx arm.
-      expect((fn.match(/'-s',/g) ?? []).length).toBe(1);
+      // Every surviving arm execs the CLI as the guard's DIRECT child, so
+      // TERM-first `-k 1` is both gentler and sufficient and `-s` must not
+      // appear at all. `-s KILL` and the `timeout + 5000` budget existed only
+      // for the deleted npx arm, where the CLI was a grandchild; seeing either
+      // again means an npm-fetch branch came back with them.
+      expect((fn.match(/'-s',/g) ?? []).length).toBe(0);
+      expect(fn).not.toMatch(/Math\.ceil\(\(timeout \+ 5000\) \/ 1000\) \+ 1/);
     });
   }
 

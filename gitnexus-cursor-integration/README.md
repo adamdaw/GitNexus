@@ -1,5 +1,11 @@
 # GitNexus — Cursor integration
 
+> **This fork is not published to npm.** Every `npx` / `bunx` / `pnpm dlx` /
+> `npm install -g gitnexus` command below fetches the **upstream** package, which has
+> no Apex support and returns nothing rather than erroring — a silent wrong answer, not
+> a failure you would notice. Build from source and `npm link` instead, then use the
+> `gitnexus` binary on PATH. See the Apex setup guide.
+
 Static config that adds GitNexus knowledge-graph augmentation and skill files to Cursor.
 
 > **Hooks require Cursor 2.4+.** Earlier versions don't expose `postToolUse` and the hook will silently no-op.

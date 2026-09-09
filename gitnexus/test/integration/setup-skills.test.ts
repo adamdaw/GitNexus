@@ -125,7 +125,18 @@ describe('setupCommand skills integration', () => {
 
     const codexConfig = await fs.readFile(path.join(tempHome, '.codex', 'config.toml'), 'utf-8');
     expect(codexConfig).toContain('[mcp_servers.gitnexus]');
-    expect(codexConfig).toMatch(/gitnexus@\d+\.\d+\.\d+/);
+    // PATH is emptied above, so no `gitnexus` launcher resolves. Upstream wrote a
+    // version-pinned `npx -y gitnexus@<v> mcp` here; this build is not published to
+    // npm, so that entry would persist an upstream server into the user's Codex
+    // config and be launched on every connect. It falls back to this process's own
+    // entrypoint instead, which is by definition this build.
+    expect(codexConfig).not.toMatch(/gitnexus@\d+\.\d+\.\d+/);
+    expect(codexConfig).not.toMatch(/\b(?:npx|bunx|dlx)\b/);
+    // The section is built with JSON.stringify per value, so a Windows path is
+    // written TOML-escaped (`"D:\\a\\GitNexus\\…"`) and a raw-path containment
+    // check fails there while passing on POSIX. Collapse the escaping before
+    // comparing rather than asserting on one platform's separator.
+    expect(codexConfig.replace(/\\\\/g, '\\')).toContain(path.resolve(process.argv[1]!));
 
     const codexSkill = await fs.readFile(
       path.join(tempHome, '.agents', 'skills', 'gitnexus-cli', 'SKILL.md'),

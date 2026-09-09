@@ -43,7 +43,7 @@
 
 ## Risk & rollout
 
-<!-- Breaking changes, migrations, index refresh (`npx gitnexus analyze`), release notes -->
+<!-- Breaking changes, migrations, index refresh (`gitnexus analyze`), release notes -->
 
 ## Checklist
 

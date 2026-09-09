@@ -1,5 +1,11 @@
 # Migration Guide
 
+> **This fork is not published to npm.** Every `npx` / `bunx` / `pnpm dlx` /
+> `npm install -g gitnexus` command below fetches the **upstream** package, which has
+> no Apex support and returns nothing rather than erroring — a silent wrong answer, not
+> a failure you would notice. Build from source and `npm link` instead, then use the
+> `gitnexus` binary on PATH. See the Apex setup guide.
+
 ## `impact` tool may now return `{ status: 'ambiguous' }` (PR #888, issue #470)
 
 Before this change the `impact` MCP tool silently picked the first match

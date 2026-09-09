@@ -164,7 +164,7 @@ Each mode has a `system_{mode}.jinja` + `instance_{mode}.jinja` pair. The agent 
 ```
 Agent → bash command → /usr/local/bin/gitnexus-query
   → curl http://127.0.0.1:4848/tool/query   (fast path: eval-server, ~100ms)
-  → npx gitnexus query                       (fallback: cold CLI, ~5-10s)
+  → gitnexus query                           (fallback: cold CLI, ~5-10s)
 ```
 
 Each tool script in `/usr/local/bin/` is standalone — no sourcing, no env inheritance needed. This is critical because mini-swe-agent runs every command via `subprocess.run` in a fresh subshell.

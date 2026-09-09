@@ -38,16 +38,15 @@ describe('checkLbugNative', () => {
       for (const pkg of manifest.trustedDependencies) {
         expect(result.message).toContain(`--allow-build=${pkg}`);
       }
-      // A `bunx gitnexus@latest …` one-shot has no package.json to edit, so the
-      // trustedDependencies advice alone is unactionable for this PR's audience.
-      expect(result.message).toContain('bun install -g gitnexus');
       expect(result.message).toContain('ignore-scripts');
       expect(result.message).toContain('--allow-build=@ladybugdb/core');
-      expect(result.message).toContain('pnpm add -g --allow-build=@ladybugdb/core');
-      const allowBuildIdx = result.message!.indexOf('--allow-build=@ladybugdb/core');
-      const dlxIdx = result.message!.indexOf('dlx gitnexus');
-      expect(allowBuildIdx).toBeGreaterThanOrEqual(0);
-      expect(dlxIdx).toBeGreaterThan(allowBuildIdx);
+      // The repair must reinstall from this checkout. This build is not published
+      // to npm, so a registry one-shot or a global install would swap a
+      // source-built install for the published package — no Apex support, and it
+      // reports no error, which is worse than the missing binary it "repaired".
+      expect(result.message).toContain('pnpm install --allow-build=@ladybugdb/core');
+      expect(result.message).not.toMatch(/(?:npx|bunx|dlx) gitnexus/);
+      expect(result.message).not.toMatch(/(?:npm|pnpm|bun) (?:i|install|add) -g gitnexus/);
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }

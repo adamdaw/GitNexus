@@ -85,10 +85,10 @@ describe.each(HOOKS)('hooks e2e ($name)', ({ name, path: hookPath }) => {
       const output = parseHookOutput(result.stdout);
       expect(output).not.toBeNull();
       expect(output!.additionalContext).toContain('stale');
-      expect(output!.additionalContext).toContain('npx gitnexus@latest analyze');
+      expect(output!.additionalContext).toContain('gitnexus analyze');
     });
 
-    it('prefers pnpm dlx when GITNEXUS_INVOCATION=pnpm', () => {
+    it('ignores GITNEXUS_INVOCATION=pnpm rather than emitting an npm fetch', () => {
       fs.writeFileSync(
         path.join(gitNexusDir, 'meta.json'),
         JSON.stringify({ lastCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', stats: {} }),
@@ -109,8 +109,12 @@ describe.each(HOOKS)('hooks e2e ($name)', ({ name, path: hookPath }) => {
 
       const output = parseHookOutput(result.stdout);
       expect(output).not.toBeNull();
-      expect(output!.additionalContext).toContain('--allow-build=@ladybugdb/core');
-      expect(output!.additionalContext).toContain('gitnexus@latest analyze');
+      // Upstream honored `pnpm` here and emitted a `pnpm … dlx gitnexus@<v>` fetch.
+      // This build is not on npm, so that would hand back the published package —
+      // no Apex support, no error. The hint must stay on the one real command.
+      expect(output!.additionalContext).toContain('gitnexus analyze');
+      expect(output!.additionalContext).not.toMatch(/(?:npx|bunx|dlx)/);
+      expect(output!.additionalContext).not.toContain('--allow-build');
     });
 
     it('auto-detects a PATH-installed gitnexus and suggests `gitnexus analyze` (no npx)', () => {
@@ -231,9 +235,7 @@ describe.each(HOOKS)('hooks e2e ($name)', ({ name, path: hookPath }) => {
 
       const output = parseHookOutput(result.stdout);
       expect(output).not.toBeNull();
-      expect(output!.additionalContext).toContain(
-        'npx gitnexus@latest analyze --index-only --embeddings',
-      );
+      expect(output!.additionalContext).toContain('gitnexus analyze --index-only --embeddings');
     });
 
     it('treats missing meta.json as stale', () => {

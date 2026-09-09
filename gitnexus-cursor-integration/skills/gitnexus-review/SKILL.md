@@ -71,7 +71,8 @@ worktree afterward. Never switch or reset the user's current worktree.
 Check GitNexus status in the target worktree. If stale, run
 `node .gitnexus/run.cjs analyze --index-only` before trusting graph results
 (temporary worktrees never carry the gitignored `run.cjs` — fall back to the
-installed `gitnexus` CLI, then `npx gitnexus`), and include `--pdg` in that
+`gitnexus` CLI on PATH; this build is not on npm, so never fetch the package),
+and include `--pdg` in that
 same refresh when the diff plausibly touches trust or data-flow boundaries,
 so the taint pass below doesn't pay a second full analyze. Taint and
 dependence evidence needs that PDG layer: when the workflow's taint pass

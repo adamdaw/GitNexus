@@ -1,28 +1,19 @@
 /**
  * Single source of truth for how docs, hooks, and warnings invoke gitnexus.
  *
- * Automatically selects a working invocation path:
- * 1. Global `gitnexus` on PATH (best — no install step)
- * 2. npm 11+ with pnpm on PATH → `pnpm --allow-build=… dlx` (avoids the npx
- *    arborist crash *and* pnpm 10+ ignored-build-script failures, #1939)
- * 3. npm 11+ without pnpm but with bunx → `bunx` (dodges the same crash)
- * 4. npm < 11 with npm on PATH → `npx` (works; simpler than pnpm dlx)
- * 5. pnpm-only → `pnpm --allow-build=… dlx`
- * 6. bun-only → `bunx`
- * 7. Last resort → `npx` (warned on npm 11+ from analyze.ts)
+ * There is exactly one invocation path: the `gitnexus` binary on PATH.
  *
- * The bun branches exist because a Node toolchain is no longer implied: on a
- * bun-only machine npm, npx and pnpm are all absent, so every rung above
- * resolved to `npx` and the emitted command could not run at all. `bunx` is
- * bun's install-free one-shot runner and needs no allow-build equivalent — bun
- * skips lifecycle scripts unconditionally for a `bunx` fetch, which the native
- * loader recovers from directly (see core/lbug/native-check.ts). Both bun rungs
- * gate on `bunx` actually running, not merely existing on PATH — see `hasBun`.
+ * Upstream also resolves three install-free fallbacks that fetch the package
+ * from the registry. Those rungs are removed here, because this build is
+ * NOT published to npm: every one of them resolves to the published package,
+ * which has no Apex support and returns nothing rather than erroring. A fallback
+ * that silently produces empty results is worse than no fallback — and this
+ * file is copied into `<repo>/.gitnexus/run.cjs` of every indexed repo, so a
+ * wrong rung here propagates outward into other people's checkouts.
  *
- * The `--allow-build` flags MUST precede the `dlx` token. pnpm < 10.14 keeps
- * `dlx` in its argv escape list, so flags placed *after* `dlx` are parsed as
- * package specs (ERR_PNPM_SPEC_NOT_SUPPORTED). The pre-`dlx` position parses
- * into dlx's allow-build option and has been honored since pnpm 10.2.0 (#1939).
+ * So `gitnexus` on PATH or a loud failure. Install it by building from source
+ * and `npm link` (see the setup guide); a missing binary now prints how, instead
+ * of quietly fetching a different tool.
  *
  * This stays self-contained CJS because the Claude/Antigravity hooks run as
  * standalone files copied into the user's hook dir, where no package import is
@@ -40,25 +31,13 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const NPX_REF = 'gitnexus@latest';
-
-// Native packages whose postinstall must run under pnpm 10+ (blocked by default).
-const PNPM_ALLOW_BUILD_BASE = ['@ladybugdb/core', 'gitnexus', 'tree-sitter'];
-const PNPM_ALLOW_BUILD_EMBEDDINGS = ['onnxruntime-node'];
-
-// Version-probe timeout, kept under Claude Code's 10s hook budget. PATH presence
-// detection is now spawn-free (resolveOnPath scans PATH directly), so the only
-// subprocesses left are the version probes: in a linked worktree the stale-index
-// hook first runs `git rev-parse --git-common-dir` (~2s) and `git rev-parse HEAD`
-// (~3s); the pnpm path then adds up to two 1s `--version` probes (npm, pnpm), so
-// the worst case is ~7s — within budget. A healthy `--version` returns in well
-// under a second, so the realistic cost is far lower. The bun rungs add at most
-// one more 1s probe (`bunx --version`), reached only when pnpm is unusable and
-// npm is 11+ or unreadable, for a ~8s theoretical cap. That cap needs an absent
-// pnpm to burn its full second, which only Windows can do (`shell: true` spawns
-// cmd.exe); on POSIX an absent pnpm ENOENTs in ~1ms, so the real ceiling is
-// unmoved.
-const PROBE_TIMEOUT_MS = 1000;
+// Shown whenever the binary is absent. Names the failure mode explicitly: the
+// tempting recovery (fetch it from npm) is the one that silently breaks Apex.
+const NOT_INSTALLED_MESSAGE =
+  'gitnexus is not on PATH. This build is not published to npm, so there is no ' +
+  'install-free one-shot: clone the repo, build it, and `npm link`. Fetching the ' +
+  'published package instead gives a build with no Apex support, which returns ' +
+  'nothing rather than erroring.';
 
 /**
  * Absolute path to `command` on PATH, or null — a pure-Node, spawn-free lookup
@@ -119,163 +98,24 @@ function resolveOnPath(
   return weakHit;
 }
 
-// One spawn of `<command> --version` → { ran, major, minor } (versions null when
-// unreadable). Version injection happens at the resolver seam (getNpmMajorVersion
-// / formatPnpmAllowBuildArgs), so this stays a pure real-process probe.
-//
-// `ran` is liveness, kept separate from the version because a PATH hit proves a
-// file exists, not that it works, and the two answers differ: a banner-printing
-// or oddly-versioned tool is alive with `major: null`, while a stale shim left by
-// a partial uninstall is neither. Only the bun rung consults `ran` today (see
-// hasBun) — it is the one runner with no version to read, so a dedicated probe is
-// its only liveness signal; pnpm gets the same evidence for free from the version
-// spawn it must make anyway, and deliberately forgives an unreadable one (#1939).
-function probeVersion(command) {
-  try {
-    const output = execFileSync(command, ['--version'], {
-      encoding: 'utf-8',
-      timeout: PROBE_TIMEOUT_MS,
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-      // On Windows, npm/pnpm resolve to `.cmd` shims; execFileSync does no
-      // PATHEXT resolution and Node refuses to spawn `.cmd`/`.bat` without a
-      // shell (CVE-2024-27980), so a bare `<command> --version` ENOENTs and the
-      // probe would wrongly report a present tool as absent. A shell lets the OS
-      // resolve the shim. POSIX needs no shell (direct PATH lookup works).
-      shell: process.platform === 'win32',
-    });
-    // Find the first line that starts with a version token (`MAJOR.MINOR`,
-    // optional `v` prefix) rather than splitting the whole output — pnpm/npm
-    // under Corepack or with an update notice can print a banner line on stdout
-    // before the version (stderr is already dropped via the stdio config).
-    const versionLine = output
-      .split('\n')
-      .map((l) => l.trim())
-      .find((l) => /^v?\d+\.\d+/.test(l));
-    const match = versionLine ? versionLine.match(/^v?(\d+)\.(\d+)/) : null;
-    return {
-      ran: true,
-      major: match ? Number(match[1]) : null,
-      minor: match ? Number(match[2]) : null,
-    };
-  } catch {
-    // Spawn failure, non-zero exit, or the timeout — the command did not run.
-    return { ran: false, major: null, minor: null };
-  }
-}
-
-// `deps` is the single injection seam: an explicitly provided key — including a
-// `null` value, detected via `in` — is honored as-is so tests can simulate an
-// absent tool without spawning; an absent key falls through to the real probe.
-function getNpmMajorVersion(deps = {}) {
-  return 'npmMajor' in deps ? deps.npmMajor : probeVersion('npm').major;
+/**
+ * Resolve `gitnexus` | `unavailable`. `GITNEXUS_INVOCATION=gitnexus` forces the
+ * binary without a PATH scan (test/escape hatch); upstream's other mode values
+ * are ignored, since each named an npm fetch that no longer exists here. `probe`
+ * is injectable so the decision is unit-testable without touching host PATH.
+ */
+function resolveInvocationMode(probe = resolveOnPath) {
+  if (process.env.GITNEXUS_INVOCATION?.trim().toLowerCase() === 'gitnexus') return 'gitnexus';
+  return probe('gitnexus', true) ? 'gitnexus' : 'unavailable';
 }
 
 /**
- * `--allow-build` flags for the pre-`dlx` position. Emitted for pnpm >= 10.2
- * (where the flag exists, and pnpm 10+ blocks build scripts by default). Omitted
- * below 10.2: pnpm < 10 runs build scripts anyway, and pnpm 10.0/10.1 lack the
- * flag (it would be rejected as an unknown option). `alwaysAllowBuild` forces the
- * flags for committed documentation, which cannot probe the reader's pnpm.
+ * The analyze command to show a user. Always the same string — there is only one
+ * runner — so this needs no probing and stays inside any hook time budget. An
+ * absent binary is not a different command, it is a missing install, which
+ * `NOT_INSTALLED_MESSAGE` covers at execution time.
  */
-function formatPnpmAllowBuildArgs(options = {}, deps = {}) {
-  if (!options.alwaysAllowBuild) {
-    const { major, minor } =
-      'pnpmMajor' in deps
-        ? { major: deps.pnpmMajor, minor: 'pnpmMinor' in deps ? deps.pnpmMinor : null }
-        : probeVersion('pnpm');
-    const lacksAllowBuild =
-      major !== null && (major < 10 || (major === 10 && minor !== null && minor < 2));
-    if (lacksAllowBuild) return [];
-  }
-  const pkgs = [...PNPM_ALLOW_BUILD_BASE];
-  if (options.embeddings) pkgs.push(...PNPM_ALLOW_BUILD_EMBEDDINGS);
-  return pkgs.map((p) => `--allow-build=${p}`);
-}
-
-/** Fixed install-free command for committed AGENTS.md / SKILL.md (pnpm >= 10.2). */
-function formatDocumentationDlxCommand(gitnexusArgs, options = {}) {
-  const flags = formatPnpmAllowBuildArgs({ ...options, alwaysAllowBuild: true }).join(' ');
-  const prefix = flags ? `${flags} ` : '';
-  return `pnpm ${prefix}dlx ${NPX_REF} ${gitnexusArgs}`;
-}
-
-/**
- * Resolve `gitnexus` | `pnpm` | `bun` | `npx`. `GITNEXUS_INVOCATION` forces a
- * mode (test/escape hatch). `probe` is injectable so the preference order can be
- * unit-tested without spawning; it defaults to the real PATH probe. `deps` can
- * inject `{ npmMajor, pnpmMajor, bunPresent, bunRuns }` for tests.
- */
-function resolveInvocationMode(probe = resolveOnPath, deps = {}) {
-  const forced = process.env.GITNEXUS_INVOCATION?.trim().toLowerCase();
-  if (forced === 'gitnexus' || forced === 'pnpm' || forced === 'npx' || forced === 'bun') {
-    return forced;
-  }
-  if (probe('gitnexus', true)) return 'gitnexus';
-
-  const npmMajor = getNpmMajorVersion(deps);
-  // pnpm presence: prefer an explicit `pnpmPresent` flag (set by
-  // formatAnalyzeCommand, which falls back to a PATH probe when the version is
-  // unreadable) so a present-but-unparseable pnpm — slow probe, Corepack
-  // banner — still selects pnpm instead of the npx crash path. Otherwise an
-  // injected version (a successful `pnpm --version` proves presence)
-  // short-circuits the `which pnpm` probe; failing both, fall back to PATH.
-  const hasPnpm =
-    'pnpmPresent' in deps
-      ? deps.pnpmPresent
-      : 'pnpmMajor' in deps
-        ? deps.pnpmMajor !== null
-        : Boolean(probe('pnpm'));
-
-  // bun usability is resolved lazily: only the two branches below can select it,
-  // so a machine with pnpm, or with npm < 11, never pays the PATH scan or the
-  // spawn. `bunx` (not `bun`) is probed because `bunx` is what the resolved
-  // command actually runs. Two gates, `&&`-ordered cheapest first: a spawn-free
-  // PATH scan, then liveness — a PATH hit alone would route a present-but-broken
-  // shim to a command that can only fail at execution time.
-  let bunCache;
-  const hasBun = () => {
-    if (bunCache === undefined) {
-      const present = 'bunPresent' in deps ? Boolean(deps.bunPresent) : Boolean(probe('bunx'));
-      bunCache = present && ('bunRuns' in deps ? Boolean(deps.bunRuns) : probeVersion('bunx').ran);
-    }
-    return bunCache;
-  };
-
-  // npm 11+ npx install crash (#1939) — prefer pnpm dlx when available.
-  if (hasPnpm && npmMajor !== null && npmMajor >= 11) return 'pnpm';
-  // Same crash, no pnpm to fall back on: bunx is install-free and unaffected.
-  if (npmMajor !== null && npmMajor >= 11 && hasBun()) return 'bun';
-  // npm 10 and earlier: npx works; prefer it over pnpm dlx when npm is present.
-  if (npmMajor !== null && npmMajor < 11) return 'npx';
-  // npm absent or unreadable — use pnpm if present (with allow-build flags).
-  if (hasPnpm) return 'pnpm';
-  // Neither npm nor pnpm — bunx is the only install-free runner left. Without
-  // this rung a bun-only machine fell through to `npx`, which is not installed
-  // there, so the emitted command failed with "npx: command not found".
-  if (hasBun()) return 'bun';
-
-  return 'npx';
-}
-
-function formatPnpmDlxCommand(gitnexusArgs, options = {}, deps = {}) {
-  const flags = formatPnpmAllowBuildArgs(options, deps).join(' ');
-  const prefix = flags ? `${flags} ` : '';
-  return `pnpm ${prefix}dlx ${NPX_REF} ${gitnexusArgs}`;
-}
-
-/**
- * bun's install-free one-shot runner. Deliberately flag-free: bun has no
- * per-invocation `--allow-build` equivalent (`--trust` is a `bun add`/`bun
- * install` flag that writes trustedDependencies into a project package.json,
- * which a one-shot `bunx` has nowhere to put), so the skipped lifecycle copy is
- * recovered by the native loader instead of by the invocation.
- */
-function formatBunxCommand(gitnexusArgs) {
-  return `bunx ${NPX_REF} ${gitnexusArgs}`;
-}
-
-function formatAnalyzeCommand(options = {}, deps = {}) {
+function formatAnalyzeCommand(options = {}) {
   // `--index-only` is what a routine "your index is stale" nudge wants: it
   // reindexes without rewriting AGENTS.md / CLAUDE.md / skills, so an agent
   // following the nudge on every commit cannot churn the tracked agent guides
@@ -283,105 +123,56 @@ function formatAnalyzeCommand(options = {}, deps = {}) {
   const suffix = `${options.indexOnly ? ' --index-only' : ''}${
     options.embeddings ? ' --embeddings' : ''
   }`;
-  // Keep the stale-index hook budget tight by querying each tool at most once.
-  // The memoized `probe` is a spawn-free PATH scan (resolveOnPath) shared with
-  // resolveInvocationMode, so `gitnexus` is scanned only once and no subprocess
-  // is spawned for presence. pnpm's *version* is still captured by a single
-  // `pnpm --version` (the allow-build gate needs the number), which also proves
-  // presence; the memoized scan only re-checks pnpm when that version is
-  // unreadable. Injected deps (tests) and forced/global modes skip the pnpm probe.
-  const cache = new Map();
-  const probe = (command, gitnexusWrapper) => {
-    const key = `${command}:${gitnexusWrapper ? 1 : 0}`;
-    if (!cache.has(key)) cache.set(key, resolveOnPath(command, gitnexusWrapper));
-    return cache.get(key);
-  };
-  let resolved = deps;
-  if (!('pnpmMajor' in deps)) {
-    const forced = process.env.GITNEXUS_INVOCATION?.trim().toLowerCase();
-    // pnpm is only consulted when no non-pnpm mode is already certain: forced
-    // gitnexus/npx never use pnpm, and a present global gitnexus wins outright.
-    const mightUsePnpm =
-      forced === 'pnpm' || (forced !== 'gitnexus' && forced !== 'npx' && forced !== 'bun');
-    if (mightUsePnpm && (forced === 'pnpm' || !probe('gitnexus', true))) {
-      const { major, minor } = probeVersion('pnpm');
-      // Carry presence separately from version: when the version probe fails
-      // (timeout, Corepack banner) but pnpm is on PATH, still treat it as
-      // present so mode resolution picks pnpm over the npx crash path. The
-      // PATH probe is memoized and only runs when the version is unreadable.
-      const pnpmPresent = major !== null || Boolean(probe('pnpm'));
-      resolved = { ...deps, pnpmMajor: major, pnpmMinor: minor, pnpmPresent };
-    }
-  }
-  const mode = resolveInvocationMode(probe, resolved);
-  if (mode === 'gitnexus') return `gitnexus analyze${suffix}`;
-  if (mode === 'pnpm') return `${formatPnpmDlxCommand(`analyze${suffix}`, options, resolved)}`;
-  if (mode === 'bun') return formatBunxCommand(`analyze${suffix}`);
-  return `npx ${NPX_REF} analyze${suffix}`;
+  return `gitnexus analyze${suffix}`;
 }
 
 /**
- * Resolve `mode` into a concrete { program, args } pair for a set of gitnexus
- * subcommand arguments. Shared by the direct-exec entrypoint below; pure (no
- * spawn) so it is unit-testable. `--embeddings` widens the pnpm allow-build set.
+ * Resolve `mode` into a concrete { program, args } pair, or null when no runner
+ * is available. Pure (no spawn) so it is unit-testable. Callers MUST treat null
+ * as fatal rather than substituting a fetch.
  */
-function buildRunnerArgv(mode, gitnexusArgs, deps = {}) {
-  // Match both the space form (`--embeddings`) and the equals form
-  // (`--embeddings=5000`) Commander accepts, so the pnpm allow-build set still
-  // widens to onnxruntime-node when a user hand-types the equals form.
-  const embeddings = gitnexusArgs.some(
-    (a) => a === '--embeddings' || a.startsWith('--embeddings='),
-  );
-  if (mode === 'gitnexus') return { program: 'gitnexus', args: [...gitnexusArgs] };
-  if (mode === 'bun') return { program: 'bunx', args: [NPX_REF, ...gitnexusArgs] };
-  if (mode === 'pnpm') {
-    return {
-      program: 'pnpm',
-      args: [...formatPnpmAllowBuildArgs({ embeddings }, deps), 'dlx', NPX_REF, ...gitnexusArgs],
-    };
-  }
-  return { program: 'npx', args: [NPX_REF, ...gitnexusArgs] };
+function buildRunnerArgv(mode, gitnexusArgs) {
+  if (mode !== 'gitnexus') return null;
+  return { program: 'gitnexus', args: [...gitnexusArgs] };
 }
 
 module.exports = {
   formatAnalyzeCommand,
-  formatBunxCommand,
-  formatDocumentationDlxCommand,
-  formatPnpmAllowBuildArgs,
-  formatPnpmDlxCommand,
   resolveInvocationMode,
   buildRunnerArgv,
   resolveOnPath,
-  getNpmMajorVersion,
-  NPX_REF,
-  PNPM_ALLOW_BUILD_BASE,
+  NOT_INSTALLED_MESSAGE,
 };
 
-// Direct-exec entrypoint (#1945): `node run.cjs <gitnexus args…>` resolves the
-// best available runner (global `gitnexus` → `pnpm dlx` → `bunx` → `npx`) at call time and
-// runs it, inheriting stdio and propagating the child's exit code. This lets the
-// committed skills and generated AGENTS.md/CLAUDE.md reference ONE stable,
-// CLI-neutral command without baking in a package-manager assumption. `gitnexus
-// analyze` drops a copy of this file at `.gitnexus/run.cjs`. Skipped on require()
-// (the CLI and tests reuse the exports above), so it runs only when invoked as a
-// script.
+// Direct-exec entrypoint (#1945): `node run.cjs <gitnexus args…>` runs the
+// PATH-resolved `gitnexus` and propagates its exit code, inheriting stdio. This
+// lets the committed skills and generated AGENTS.md/CLAUDE.md reference ONE
+// stable command. `gitnexus analyze` drops a copy of this file at
+// `.gitnexus/run.cjs`. Skipped on require() (the CLI and tests reuse the exports
+// above), so it runs only when invoked as a script.
 if (require.main === module) {
   const gitnexusArgs = process.argv.slice(2);
-  const { program, args } = buildRunnerArgv(resolveInvocationMode(), gitnexusArgs);
+  const argv = buildRunnerArgv(resolveInvocationMode(), gitnexusArgs);
+  if (argv === null) {
+    process.stderr.write(`gitnexus runner: ${NOT_INSTALLED_MESSAGE}\n`);
+    process.exit(1);
+  }
+  const { program, args } = argv;
   try {
     execFileSync(program, args, {
       stdio: 'inherit',
       windowsHide: true,
-      // On Windows, `npx`/`pnpm`/`gitnexus` resolve to `.cmd`/`.ps1`/`.exe`
-      // shims (npm, Volta, Corepack, scoop). execFileSync does not do PATHEXT
-      // resolution and Node refuses to spawn `.cmd`/`.bat` without a shell
-      // (CVE-2024-27980), so a bare program name ENOENTs. A shell lets the OS
-      // resolve the shim; POSIX needs no shell (direct PATH lookup works).
+      // On Windows, `gitnexus` resolves to a `.cmd`/`.ps1`/`.exe` shim (npm,
+      // Volta, Corepack, scoop). execFileSync does not do PATHEXT resolution and
+      // Node refuses to spawn `.cmd`/`.bat` without a shell (CVE-2024-27980), so
+      // a bare program name ENOENTs. A shell lets the OS resolve the shim; POSIX
+      // needs no shell (direct PATH lookup works).
       shell: process.platform === 'win32',
     });
   } catch (err) {
-    // Make spawn failures (resolved program absent from PATH) self-explanatory
-    // instead of a silent exit 1, then propagate the runner's own exit code.
+    // Make spawn failures (binary vanished between the probe and the spawn)
+    // self-explanatory instead of a silent exit 1, then propagate the runner's
+    // own exit code.
     if (typeof err.status !== 'number') {
       process.stderr.write(`gitnexus runner: could not launch \`${program}\` — ${err.message}\n`);
     }

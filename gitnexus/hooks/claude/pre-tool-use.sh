@@ -64,7 +64,14 @@ fi
 
 # Run gitnexus augment — must be fast (<500ms target)
 # augment writes to stderr (KuzuDB captures stdout at OS level), so capture stderr and discard stdout
-RESULT=$(cd "$CWD" && npx -y gitnexus augment "$PATTERN" 2>&1 1>/dev/null)
+#
+# The binary on PATH, never an npm one-shot. This build is not published to npm,
+# so `npx -y gitnexus` would run the published package — no Apex support, and it
+# returns nothing rather than erroring — besides blowing the time budget on a
+# cold cache. Enrichment is best-effort, so an absent binary exits quiet here;
+# the commands the user runs directly are what report a missing install.
+command -v gitnexus >/dev/null 2>&1 || exit 0
+RESULT=$(cd "$CWD" && gitnexus augment "$PATTERN" 2>&1 1>/dev/null)
 
 if [ -n "$RESULT" ]; then
   ESCAPED=$(echo "$RESULT" | jq -Rs .)

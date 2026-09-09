@@ -133,11 +133,10 @@ gitnexus analyze     # index this repo
 gitnexus setup       # write the MCP config for detected editors (one-time)
 ```
 
-**Run `npm link` before `gitnexus setup`.** `setup` resolves the MCP command by running
-`which gitnexus`: with the link in place it writes the absolute path to your build, and
-without it it falls back to `npx -y gitnexus@<version>` — upstream, no Apex, baked into your
-editor config. After running `setup`, open each config it reports and confirm no entry says
-`npx`.
+`setup` cannot write an upstream-pointing entry. It resolves the MCP command with
+`which gitnexus`, and when the binary is not on PATH it uses this process's own CLI
+entrypoint — which is by definition the build you are running `setup` from. There is no
+registry fallback, so `setup` works whether or not you have run `npm link`.
 
 `analyze` also rewrites a `<!-- gitnexus:start/end -->` block in the target repo's
 `AGENTS.md`, `CLAUDE.md` and `.claude/skills/`. Pass `--skip-agents-md` and `--skip-skills`
@@ -417,14 +416,15 @@ args = ["mcp"]
 
 Codex hooks (PreToolUse graph enrichment + PostToolUse stale-index detection in `~/.codex/hooks.json`, [same schema as Claude Code](https://developers.openai.com/codex/hooks)) need the bundled adapter script, so they are installed by `gitnexus setup -c codex` rather than manually.
 
-> **The Codex plugin route does not work for this fork.** `gitnexus-claude-plugin/.mcp.json`
-> configures its MCP server as `npx -y gitnexus@latest mcp`, so installing the plugin points
-> Codex at the published package and loses Apex. Use `gitnexus setup -c codex`, or the manual
-> config above, and skip the plugin:
+> **Install the plugin from this fork, and it no longer carries an MCP entry.** Both
+> checked-in `.mcp.json` are deleted and the per-skill `mcp.json` invoke the bare `gitnexus`
+> command, so no plugin file can point Codex at the published package. What the plugin no
+> longer does is configure the MCP server for you — run `gitnexus setup -c codex`, or use the
+> manual config above, alongside it.
 >
 > ```bash
-> # upstream only — resolves to the published npm package, no Apex
-> codex plugin marketplace add abhigyanpatwari/GitNexus
+> # this fork; the upstream marketplace entry installs the Apex-less build
+> codex plugin marketplace add adamdaw/GitNexus
 > ```
 
 > **Codex notes:** SessionStart is intentionally not registered — Codex reads [AGENTS.md natively](https://developers.openai.com/codex/guides/agents-md), which already carries the GitNexus context block. Newly installed hooks need a one-time approval in Codex via `/hooks` before they run. Pick **one** install route (`gitnexus setup -c codex` **or** the plugin): plugin hooks load alongside `~/.codex/hooks.json`, so installing both can fire duplicate hooks per tool call.

@@ -127,14 +127,16 @@ describe('intended standard-skill improvements stay in every applicable copy', (
   });
 
   // These copies are NOT byte-compared (only the engineering FAMILY above is),
-  // so a runner added to resolve-analyze-cmd.cjs can silently miss them. The
-  // audience that most needs bunx documented — a bun-only machine with no npm,
-  // npx or pnpm — is exactly the one an npx/pnpm-only bootstrap line strands.
-  it('documents the bunx runner and bootstrap in every CLI copy', () => {
+  // so a bootstrap line edited in one can silently miss the others. This build is
+  // not published to npm, so no copy may name an npm one-shot as the way to get a
+  // runner: each resolves to the published package, which has no Apex support and
+  // returns nothing rather than erroring.
+  it('bootstraps every CLI copy from source, never from npm', () => {
     for (const file of standardSkillCopies('gitnexus-cli')) {
       const content = fs.readFileSync(file, 'utf-8');
-      expect(content).toContain('else `bunx`');
-      expect(content).toContain('bunx gitnexus@latest analyze');
+      expect(content).toContain('This build is not published to npm');
+      expect(content).not.toMatch(/(?:npx|bunx|dlx) gitnexus/);
+      expect(content).not.toMatch(/npm i(?:nstall)? -g gitnexus/);
     }
   });
 
@@ -142,7 +144,7 @@ describe('intended standard-skill improvements stay in every applicable copy', (
     const required = [
       'node .gitnexus/run.cjs impact <symbol> --direction upstream --repo .',
       'node .gitnexus/run.cjs detect-changes --scope all --repo .',
-      'replace `node .gitnexus/run.cjs` with `npx gitnexus`',
+      'replace `node .gitnexus/run.cjs` with the `gitnexus` CLI on PATH',
       'detect_changes({scope: "all"})',
     ];
     for (const file of standardSkillCopies('gitnexus-impact-analysis')) {

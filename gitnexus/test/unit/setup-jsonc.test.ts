@@ -5,6 +5,15 @@ import path from 'path';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { createRequire } from 'module';
 
+// The MCP fallback when no `gitnexus` launcher is on PATH. This build is not
+// published to npm, so upstream's `npx -y gitnexus@<version> mcp` fallback would
+// persist an upstream-pointing server into the user's editor config — silently, and
+// on every MCP connect. `gitnexus setup` runs from this build, so its own
+// entrypoint is always a valid launch path. Platform-independent: there is no cmd
+// wrapper to add, because there is no npx shim to wrap.
+const SELF_MCP = { command: process.execPath, args: [path.resolve(process.argv[1]!), 'mcp'] };
+const SELF_MCP_ARRAY = [process.execPath, path.resolve(process.argv[1]!), 'mcp'];
+
 const PKG_VERSION = (createRequire(import.meta.url)('../../package.json') as { version: string })
   .version;
 const NPX_REF = `gitnexus@${PKG_VERSION}`;
@@ -296,7 +305,7 @@ describe('setupOpenCode — JSONC preservation', () => {
 
     expect(config.mcp.gitnexus).toEqual({
       type: 'local',
-      command: ['npx', '-y', NPX_REF, 'mcp'],
+      command: SELF_MCP_ARRAY,
     });
   });
 
@@ -318,7 +327,7 @@ describe('setupOpenCode — JSONC preservation', () => {
 
     expect(config.mcp.gitnexus).toEqual({
       type: 'local',
-      command: ['cmd', '/c', 'npx', '-y', NPX_REF, 'mcp'],
+      command: SELF_MCP_ARRAY,
     });
   });
 
@@ -340,7 +349,7 @@ describe('setupOpenCode — JSONC preservation', () => {
 
     expect(config.mcp.gitnexus).toEqual({
       type: 'local',
-      command: ['cmd', '/c', 'npx', '-y', NPX_REF, 'mcp'],
+      command: SELF_MCP_ARRAY,
     });
   });
 
@@ -475,8 +484,7 @@ describe('setupCursor — JSONC preservation', () => {
     const config = parseJsonc(raw);
 
     expect(config.mcpServers.gitnexus).toEqual({
-      command: 'cmd',
-      args: ['/c', 'npx', '-y', NPX_REF, 'mcp'],
+      ...SELF_MCP,
     });
   });
 });

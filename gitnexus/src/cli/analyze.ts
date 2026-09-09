@@ -82,7 +82,7 @@ import {
   isPrefixRuntimeLoadable,
   resolveEmbeddingRuntime,
 } from '../core/embeddings/runtime-install.js';
-import { warnIfNpm11NpxRisk } from './resolve-invocation.js';
+import { assertRunnerContract } from './resolve-invocation.js';
 
 // Capture stderr.write at module load BEFORE anything (LadybugDB native
 // init, progress bar, console redirection) can monkey-patch it. The
@@ -633,7 +633,7 @@ export async function ensureHeap(
       cliError(
         `  Analysis aborted in a native worker or native binding path.\n` +
           `  Try one of these recovery paths:\n` +
-          `    npm uninstall -g gitnexus && npm install -g gitnexus@latest (rebuilds native bindings)\n` +
+          `    npm install && npm run build && npm link (rebuilds native bindings from source)\n` +
           `    Use Node 22 LTS if you are on a newer non-LTS runtime.\n`,
         { recoveryHint: 'native-worker-abort' },
       );
@@ -732,10 +732,11 @@ export const analyzeCommand = async (
   // a stack trace and a non-zero exit code instead of a silent exit 0.
   installFatalHandlers();
 
-  // npm-11 npx-crash nudge (#1939). Runs here, after the heap re-exec guard,
-  // so it fires once in the working process and never on the lazy-startup path
-  // of other commands (e.g. `gitnexus mcp`).
-  warnIfNpm11NpxRisk();
+  // This command copies the hook cjs into `<repo>/.gitnexus/run.cjs`, so verify
+  // its export shape before shipping it into someone's checkout. Runs here, after
+  // the heap re-exec guard, so it fires once in the working process and never on
+  // the lazy-startup path of other commands (e.g. `gitnexus mcp`).
+  assertRunnerContract();
 
   // Snapshot the GITNEXUS_* env vars that the impl writes for downstream
   // consumption, so they don't leak across `analyzeCommand` invocations in
@@ -1809,7 +1810,7 @@ const analyzeCommandImpl = async (
         : upgradeIntro +
           `  Upgrade GitNexus to a release that bundles @ladybugdb/core >= 0.18.0\n` +
           `  (gitnexus >= 1.6.9), which detects the OS page size at runtime:\n` +
-          `    npm install -g gitnexus@latest\n` +
+          `    git pull && npm install && npm run build && npm link\n` +
           `  Last-resort workaround on Raspberry Pi 5: boot the 4 KiB-page kernel\n` +
           `  (config.txt: kernel=kernel8.img), at the cost of Pi 5 optimizations.\n`;
       // Embed the raw native text (indented, no stack) so "the full error
@@ -1916,8 +1917,8 @@ const analyzeCommandImpl = async (
           `  (e.g. behind a corporate proxy or a regional firewall).\n` +
           `  Suggestions:\n` +
           `    1. Set HF_ENDPOINT to a mirror and retry:\n` +
-          `         HF_ENDPOINT=https://hf-mirror.com npx gitnexus analyze --embeddings\n` +
-          `         (Windows: set HF_ENDPOINT=https://hf-mirror.com && npx gitnexus analyze --embeddings)\n` +
+          `         HF_ENDPOINT=https://hf-mirror.com gitnexus analyze --embeddings\n` +
+          `         (Windows: set HF_ENDPOINT=https://hf-mirror.com && gitnexus analyze --embeddings)\n` +
           `    2. Check your proxy / VPN settings.\n` +
           `    3. Once downloaded the model is cached — future runs work offline.\n`,
         { recoveryHint: 'hf-endpoint-unreachable' },
@@ -1963,8 +1964,7 @@ const analyzeCommandImpl = async (
           `  Suggestions:\n` +
           `    1. Clear the npm cache:    npm cache clean --force\n` +
           `    2. Update npm:             npm install -g npm@latest\n` +
-          `    3. Reinstall gitnexus:     npm install -g gitnexus@latest\n` +
-          `    4. Or try npx directly:    npx gitnexus@latest analyze\n`,
+          `    3. Rebuild this checkout:  npm install && npm run build && npm link\n`,
         { recoveryHint: 'npm-resolution' },
       );
     } else if (
@@ -1975,8 +1975,8 @@ const analyzeCommandImpl = async (
       cliError(
         `  A required module could not be loaded. The installation may be corrupt.\n` +
           `  Suggestions:\n` +
-          `    1. Reinstall:   npm install -g gitnexus@latest\n` +
-          `    2. Clear cache: npm cache clean --force && npx gitnexus@latest analyze\n`,
+          `    1. Clear cache: npm cache clean --force\n` +
+          `    2. Rebuild:     npm install && npm run build && npm link\n`,
         { recoveryHint: 'module-not-found' },
       );
     }

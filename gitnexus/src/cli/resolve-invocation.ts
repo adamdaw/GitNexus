@@ -1,102 +1,65 @@
 /**
- * npm 11.x npx-install-crash nudge for the `analyze` command (#1939).
+ * CLI-side contract check for the canonical hook helper.
  *
- * The gitnexus/pnpm/bun/npx selection itself lives in the canonical hook helper
- * (hooks/claude/resolve-analyze-cmd.cjs) — self-contained CJS because the copied
- * hook runtime cannot import from the package. We reuse it here via createRequire
- * instead of re-implementing it, so there is one source of truth for the
- * invocation decision. This module adds only the npm-version probe and the
- * warning, which are CLI-only. The relative path resolves identically from
- * src/cli/ (tsx, vitest) and dist/cli/ (shipped), since both sit one level under
- * the package root and `hooks/` is published.
+ * The gitnexus-on-PATH decision lives in hooks/claude/resolve-analyze-cmd.cjs —
+ * self-contained CJS because the copied hook runtime cannot import from the
+ * package. We require() it here rather than re-implementing it, so there is one
+ * source of truth for the invocation decision. The relative path resolves
+ * identically from src/cli/ (tsx, vitest) and dist/cli/ (shipped), since both sit
+ * one level under the package root and `hooks/` is published.
+ *
+ * Upstream carried an npm-11 npx-install-crash nudge here (#1939). It is gone:
+ * this build is not published to npm, so the resolver has no npx rung left to
+ * warn about, and reaching this module at all means the binary is installed.
+ * What remains is worth more — `gitnexus analyze` copies that exact cjs into
+ * `<repo>/.gitnexus/run.cjs`, so a drifted export ships a broken runner into
+ * someone else's checkout.
  */
 
-import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
-type InvocationMode = 'gitnexus' | 'pnpm' | 'npx' | 'bun';
+type InvocationMode = 'gitnexus' | 'unavailable';
 
 interface InvocationResolver {
   // `probe` is injectable in the cjs (defaults to the real PATH probe) so the
-  // preference order is unit-testable without spawning; the CLI calls it with
-  // no argument.
+  // decision is unit-testable without spawning; the CLI calls it with no argument.
   resolveInvocationMode: (
     probe?: (command: string, gitnexusWrapper?: boolean) => string | null,
   ) => InvocationMode;
-  formatDocumentationDlxCommand: (
-    gitnexusArgs: string,
-    options?: { embeddings?: boolean },
-  ) => string;
-  NPX_REF: string;
+  buildRunnerArgv: (
+    mode: InvocationMode,
+    gitnexusArgs: string[],
+  ) => { program: string; args: string[] } | null;
+  NOT_INSTALLED_MESSAGE: string;
 }
 
-const { resolveInvocationMode, formatDocumentationDlxCommand, NPX_REF } = createRequire(
+// `require()` returns `any`; go through `unknown` so the cast reads as an
+// explicit narrowing to the subset this module uses, not a claim that the cjs's
+// full export shape is known here. assertRunnerContract() verifies it.
+//
+// Destructure at the call rather than binding the module object: it keeps the
+// specifier on the same line as the `)(` after prettier, which is the exact IIFE
+// shape the Dockerfile asset-parity scanner matches to learn that `hooks/` is a
+// module-load runtime asset (dockerfile-runtime-asset-parity.test.ts). A short
+// `const x = createRequire(import.meta.url)('…')` gets reflowed with a trailing
+// comma before the close paren, which silently defeats that scanner.
+export const { resolveInvocationMode, buildRunnerArgv, NOT_INSTALLED_MESSAGE } = createRequire(
   import.meta.url,
-  // `require()` returns `any`; go through `unknown` so the cast reads as an
-  // explicit narrowing to the subset this module uses, not a claim that the
-  // cjs's full export shape is known here. The drift guard below verifies it.
 )('../../hooks/claude/resolve-analyze-cmd.cjs') as unknown as InvocationResolver;
 
-// Fail loud at module load if the canonical cjs export shape drifts (e.g. a
-// renamed export), rather than as a late TypeError inside warnIfNpm11NpxRisk.
-if (
-  typeof resolveInvocationMode !== 'function' ||
-  typeof formatDocumentationDlxCommand !== 'function' ||
-  typeof NPX_REF !== 'string'
-) {
-  throw new Error(
-    'resolve-analyze-cmd.cjs must export resolveInvocationMode (function), formatDocumentationDlxCommand (function), and NPX_REF (string)',
-  );
-}
-
-export { NPX_REF };
-
-// Re-implemented here (rather than reusing the cjs export) so vitest's
-// `vi.mock('node:child_process')` intercepts it — the cjs uses bare
-// `require('child_process')`, which the mock cannot reach. Timeout matches the
-// cjs PROBE_TIMEOUT_MS (1s) so this CLI probe shares the same hook-budget cap;
-// `npm --version` is a sub-second local call.
-export function getNpmMajorVersion(): number | null {
-  try {
-    const output = execFileSync('npm', ['--version'], {
-      encoding: 'utf-8',
-      timeout: 1000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-      // Windows `npm` is a `.cmd` shim; without a shell execFileSync ENOENTs
-      // (CVE-2024-27980) and the npm-11 npx-crash warning below would never
-      // fire on Windows. Mirrors probeVersion in resolve-analyze-cmd.cjs.
-      shell: process.platform === 'win32',
-    });
-    // Read the first version-shaped line so a Corepack/update banner on stdout
-    // doesn't defeat the parse (mirrors the cjs probeVersion hardening).
-    const major = output
-      .split('\n')
-      .map((l) => l.trim())
-      .find((l) => /^v?\d+\./.test(l))
-      ?.match(/^v?(\d+)\./);
-    return major ? Number(major[1]) : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
- * One-line stderr nudge when an npm 11+ user is on the npx install path (#1939).
- * Skipped when a global `gitnexus`, `pnpm` or `bunx` is already preferred, so it
- * never nags users who are not exposed to the npx/arborist crash. "Preferred"
- * means usable, not merely on PATH: a `bunx` shim that no longer runs fails the
- * cjs liveness probe, resolves back to `npx`, and so still gets warned here —
- * without that, a broken bunx would suppress the warning AND emit a command that
- * cannot run.
+ * Fail loud if the canonical cjs export shape has drifted (e.g. a renamed export
+ * after an upstream merge), rather than as a late TypeError — or, worse, as a
+ * runner copied into a consumer repo that cannot resolve its own exports.
  */
-export function warnIfNpm11NpxRisk(): void {
-  if (resolveInvocationMode() !== 'npx') return;
-  const major = getNpmMajorVersion();
-  if (major === null || major < 11) return;
-  process.stderr.write(
-    `Warning: npm ${major}.x can crash while installing gitnexus via npx ` +
-      `(npm/arborist "node.target is null"). Prefer: ${formatDocumentationDlxCommand('analyze')} ` +
-      `or npm install -g ${NPX_REF}. See https://github.com/abhigyanpatwari/GitNexus/issues/1939\n`,
-  );
+export function assertRunnerContract(): void {
+  if (
+    typeof resolveInvocationMode !== 'function' ||
+    typeof buildRunnerArgv !== 'function' ||
+    typeof NOT_INSTALLED_MESSAGE !== 'string'
+  ) {
+    throw new Error(
+      'resolve-analyze-cmd.cjs must export resolveInvocationMode (function), buildRunnerArgv (function), and NOT_INSTALLED_MESSAGE (string)',
+    );
+  }
 }

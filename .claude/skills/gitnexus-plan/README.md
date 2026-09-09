@@ -112,8 +112,9 @@ phase that needs them.
   security, performance, concurrency, architecture) default to
   `freshness: strict` — a stale index (or missing PDG layer) is refreshed once with
   `analyze --index-only [--pdg]` — run via `node .gitnexus/run.cjs` when the
-  project has one, else the installed `gitnexus` CLI
-  (`npm install -g gitnexus`), else `npx gitnexus` — before the graph is relied
+  project has one, else the `gitnexus` CLI on PATH (this build is not published
+  to npm: install it by building from source and `npm link`, never by fetching
+  the package) — before the graph is relied
   on, but only when that runner's provenance is known-current.
   Compact-plan categories default to `accept` (source-weighted, refresh only
   if a graph claim becomes load-bearing). `--index-only` touches only the
