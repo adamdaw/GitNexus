@@ -8,17 +8,18 @@
  *  3. Copy gitnexus-shared/dist → dist/_shared
  *  4. Rewrite bare 'gitnexus-shared' specifiers → relative paths
  */
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runWebBuild } from './build-web.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const SHARED_ROOT = path.resolve(ROOT, '..', 'gitnexus-shared');
 const DIST = path.join(ROOT, 'dist');
 const SHARED_DEST = path.join(DIST, '_shared');
-const DEFAULT_BUILD_TIMEOUT_MS = 300_000;
+const DEFAULT_BUILD_TIMEOUT_MS = 600_000;
 
 function getBuildTimeoutMs() {
   const raw = process.env.GITNEXUS_BUILD_TIMEOUT_MS;
@@ -51,6 +52,22 @@ if (!fs.existsSync(SHARED_ROOT)) {
   process.exit(1);
 }
 
+// Launch tsc as `node typescript/lib/tsc.js` on every OS. The `.bin/tsc` /
+// `tsc.cmd` shims are Windows-only wrappers; `execFileSync` cannot spawn a
+// `.cmd` without a shell, and a separate `npm ci` in gitnexus-shared would
+// pull a second TypeScript 7 optional-platform install (7+ minutes in CI).
+const tscJs = path.join(ROOT, 'node_modules', 'typescript', 'lib', 'tsc.js');
+if (!fs.existsSync(tscJs)) {
+  console.error(
+    `[build] missing ${tscJs}. Install gitnexus dependencies first (npm ci in gitnexus/).`,
+  );
+  process.exit(1);
+}
+
+function runTsc(cwd) {
+  execFileSync(process.execPath, [tscJs], { cwd, stdio: 'inherit', timeout: BUILD_TIMEOUT_MS });
+}
+
 // ── 1. Build gitnexus-shared ───────────────────────────────────────
 // Anchor tsc to gitnexus/node_modules (ROOT) rather than a bare
 // relative path: gitnexus-shared has no node_modules of its own, so a
@@ -60,13 +77,11 @@ if (!fs.existsSync(SHARED_ROOT)) {
 // there is no shell, no .cmd/POSIX split, and no quoting to get wrong on an
 // install path containing spaces.
 console.log('[build] compiling gitnexus-shared…');
-const tscEntry = path.join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
-const tscOpts = { stdio: 'inherit', timeout: BUILD_TIMEOUT_MS };
-execFileSync(process.execPath, [tscEntry], { ...tscOpts, cwd: SHARED_ROOT });
+runTsc(SHARED_ROOT);
 
 // ── 2. Build gitnexus ──────────────────────────────────────────────
 console.log('[build] compiling gitnexus…');
-execFileSync(process.execPath, [tscEntry], { ...tscOpts, cwd: ROOT });
+runTsc(ROOT);
 
 // ── 3. Copy shared dist ────────────────────────────────────────────
 console.log('[build] copying shared module into dist/_shared…');
@@ -109,26 +124,16 @@ walk(DIST, ['.js', '.d.ts'], rewriteFile);
 
 // ── 5. Make CLI entry executable ────────────────────────────────────
 const cliEntry = path.join(DIST, 'cli', 'index.js');
-if (fs.existsSync(cliEntry)) fs.chmodSync(cliEntry, 0o755);
-
-// ── 6. Build & copy web UI ──────────────────────────────────────────
-const WEB_ROOT = path.resolve(ROOT, '..', 'gitnexus-web');
-const WEB_DEST = path.join(DIST, '..', 'web');
-
-if (fs.existsSync(path.join(WEB_ROOT, 'package.json'))) {
-  console.log('[build] building gitnexus-web…');
-  if (!fs.existsSync(path.join(WEB_ROOT, 'node_modules'))) {
-    console.log('[build] installing gitnexus-web dependencies…');
-    execSync('npm ci', { cwd: WEB_ROOT, stdio: 'inherit', timeout: BUILD_TIMEOUT_MS });
-  }
-  execSync('npm run build', { cwd: WEB_ROOT, stdio: 'inherit', timeout: BUILD_TIMEOUT_MS });
-
-  // Copy dist → gitnexus/web/ (shipped in the npm package)
-  fs.rmSync(WEB_DEST, { recursive: true, force: true });
-  fs.cpSync(path.join(WEB_ROOT, 'dist'), WEB_DEST, { recursive: true });
-  console.log('[build] copied web UI → gitnexus/web/');
-} else {
-  console.log('[build] skipping web UI (gitnexus-web not found)');
+if (process.platform !== 'win32' && fs.existsSync(cliEntry)) {
+  fs.chmodSync(cliEntry, 0o755);
 }
+
+// ── 6. Build & copy web UI (opt-in) ─────────────────────────────────
+// Web UI is a separate package and is only required in the published
+// tarball, so it is built by `prepack --web`, not by `prepare`. Serve
+// falls back to the landing page when web/ is absent. CLI-only builds
+// delete stale web/ except during npm pack/publish prepare, which must
+// keep the prepack output.
+runWebBuild({ root: ROOT, dist: DIST, timeoutMs: BUILD_TIMEOUT_MS });
 
 console.log(`[build] done — rewrote ${rewritten} files.`);

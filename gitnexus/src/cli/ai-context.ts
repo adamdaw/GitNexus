@@ -220,6 +220,7 @@ ${tableBody}`
 This project is indexed by GitNexus as **${projectName}**${noStats ? '' : ` (${stats.nodes || 0} symbols, ${stats.edges || 0} relationships, ${stats.processes || 0} execution flows)`}.
 
 > Index stale? Run \`${runner} analyze --index-only\` from the project root — it runs the \`gitnexus\` binary on PATH. ${bootstrapNote}
+> On query/context/impact/cypher object results, read staleness.status and branch/lastCommit. Re-analyze only for behind or diverged — current is clone HEAD, not main.
 
 ## Always Do
 

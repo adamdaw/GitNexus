@@ -32,6 +32,7 @@ import {
   syntheticCapture,
   type SyntaxNode,
 } from '../../utils/ast-helpers.js';
+import { collectEsmExportEvidence, esmExportVerdict } from '../../ts-js-export-marker.js';
 import { splitImportStatement } from './import-decomposer.js';
 import { getTsParser, getTsScopeQuery, tsCachedTreeMatchesGrammar } from './query.js';
 import { recordCacheHit, recordCacheMiss } from './cache-stats.js';
@@ -52,6 +53,7 @@ import { synthesizeReceiverChainCapture } from '../../utils/receiver-chain-captu
 import {
   deriveDefaultExportHocName,
   isBlockedDefaultExportHoc,
+  isBlockedPairCallbackRegistration,
   isDefaultExportHocFunctionNode,
 } from '../../ts-js-hoc-utils.js';
 
@@ -388,6 +390,8 @@ export function emitTsScopeCaptures(
   }
 
   const rawMatches = getTsScopeQuery(filePath).matches(tree.rootNode);
+  // Export evidence, read once per file (see `ts-js-export-marker.ts`).
+  const exportEvidence = collectEsmExportEvidence(tree.rootNode, filePath);
   const out: CaptureMatch[] = [];
 
   for (const m of rawMatches) {
@@ -525,6 +529,13 @@ export function emitTsScopeCaptures(
       if (arrowNode !== null && isBlockedDefaultExportHoc(arrowNode)) {
         continue;
       }
+      // Pair-value built-in registrations (`{ timer: setTimeout(() => …) }`,
+      // `{ later: promise.then(() => …) }`) bind handles/values, not
+      // callables. See `isBlockedPairCallbackRegistration` for why this
+      // gate lives emit-side rather than in the query predicates.
+      if (arrowNode !== null && isBlockedPairCallbackRegistration(arrowNode)) {
+        continue;
+      }
       // #2723: a CJS export assignment must not register a SECOND module-scope
       // declaration for a name the file already declares lexically — the name
       // would become ambiguous and the resolver would drop the intra-module
@@ -560,6 +571,13 @@ export function emitTsScopeCaptures(
           '@declaration.name',
           fnNode,
           deriveDefaultExportHocName(filePath),
+        );
+        // This declaration's name is synthetic, so the later query-name
+        // marker cannot see it. The HOC predicate already proves the export.
+        grouped['@declaration.is-exported'] = syntheticCapture(
+          '@declaration.is-exported',
+          fnNode,
+          'true',
         );
       }
     }
@@ -660,6 +678,20 @@ export function emitTsScopeCaptures(
     // instead of re-parsing the receiver's source text. Self-gating: a
     // non-call match, an absent receiver, or a chain with no nameable base
     // all leave `grouped` untouched.
+    // `@declaration.is-exported`: a verdict for every declaration the file's
+    // export surface can decide (see `ts-js-export-marker.ts`); nothing where
+    // it cannot, because absence is the honest answer there.
+    const declNameNode = groupedNodes['@declaration.name'];
+    if (exportEvidence !== undefined && declNameNode !== undefined) {
+      const verdict = esmExportVerdict(declNameNode, exportEvidence);
+      if (verdict !== undefined) {
+        grouped['@declaration.is-exported'] = syntheticCapture(
+          '@declaration.is-exported',
+          declNameNode,
+          verdict ? 'true' : 'false',
+        );
+      }
+    }
     synthesizeReceiverChainCapture(grouped, groupedNodes['@reference.receiver']);
     out.push(grouped);
 
