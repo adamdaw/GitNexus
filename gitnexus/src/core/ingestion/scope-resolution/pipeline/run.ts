@@ -24,6 +24,7 @@
  */
 
 import type { ParsedFile, RegistryProviders } from 'gitnexus-shared';
+import type { TypeRef } from 'gitnexus-shared';
 import type { KnowledgeGraph } from '../../../graph/types.js';
 import { generateId } from '../../../../lib/utils.js';
 import { lookupOwnedMembersByOwner } from '../../model/owned-members-lookup.js';
@@ -84,6 +85,7 @@ import {
 import { emitReturnShapeMemberAccesses } from '../passes/return-shape-members.js';
 import { emitImportedValueReferences } from '../passes/imported-value-refs.js';
 import {
+  calleeIdPosKey,
   createCalleeIdAccumulator,
   type CalleeIdAccumulator,
 } from '../graph-bridge/callee-id-sink.js';
@@ -103,6 +105,58 @@ import { buildWorkspaceResolutionIndex } from '../workspace-index.js';
 import type { ResolutionOutcome, ResolutionOutcomeRecorder } from '../resolution-outcome.js';
 import { logHeapProbe } from '../../utils/heap-probe.js';
 import { parseTruthyEnv } from '../../utils/env.js';
+
+/**
+ * Join extraction-time assignment identity to Phase-4's exact resolved callee.
+ * Ambiguous dispatch and missing return annotations deliberately produce no
+ * binding. Extraction emits these facts only for untyped declarations, so an
+ * existing entry here is necessarily inference/mirroring and may be corrected;
+ * explicit annotations never enter this join.
+ */
+export function applyPreciseCallResultBindings(
+  parsedFiles: readonly ParsedFile[],
+  indexes: ReturnType<typeof finalizeScopeModel>,
+  workspaceIndex: ReturnType<typeof buildWorkspaceResolutionIndex>,
+  calleeIds: CalleeIdAccumulator,
+  nodeLookup: ReturnType<typeof buildGraphNodeLookup>,
+): number {
+  let updated = 0;
+  const returnTypeByGraphId = new Map<string, TypeRef>();
+  for (const parsed of parsedFiles) {
+    for (const def of parsed.localDefs) {
+      const returnType = workspaceIndex.declaredReturnTypeByCallableId.get(def.nodeId);
+      if (returnType === undefined) continue;
+      const graphId = resolveDefGraphId(def.filePath, def, nodeLookup);
+      if (graphId !== undefined) returnTypeByGraphId.set(graphId, returnType);
+    }
+  }
+  for (const parsed of parsedFiles) {
+    const resolvedByPosition = calleeIds.get(parsed.filePath);
+    if (resolvedByPosition === undefined) continue;
+    for (const assignment of parsed.callResultAssignmentSites ?? []) {
+      const targets = resolvedByPosition.get(
+        calleeIdPosKey(assignment.callSite.startLine, assignment.callSite.startCol),
+      );
+      if (targets === undefined || targets.size !== 1) continue;
+      const targetId = targets.values().next().value as string | undefined;
+      if (targetId === undefined) continue;
+      const returnType = returnTypeByGraphId.get(targetId);
+      if (returnType === undefined) continue;
+      const scope = indexes.scopeTree.getScope(assignment.inScope);
+      if (scope === undefined) continue;
+      (scope.typeBindings as Map<string, TypeRef>).set(assignment.lhs, {
+        rawName: returnType.rawName,
+        ...(returnType.declaredSpelling !== undefined
+          ? { declaredSpelling: returnType.declaredSpelling }
+          : {}),
+        declaredAtScope: assignment.inScope,
+        source: 'assignment-inferred',
+      });
+      updated++;
+    }
+  }
+  return updated;
+}
 import { isValueDefinitionLabel } from '../../utils/ast-helpers.js';
 import { TransitionalScopeTree } from '../../../../storage/scope-index-store.js';
 import { forceGc } from '../../../../storage/parsedfile-store.js';
@@ -551,7 +605,6 @@ export function runScopeResolution(
   const undecidedSatisfaction: UndecidedSatisfaction[] = [];
   const recordResolutionOutcome: ResolutionOutcomeRecorder = (outcome) => {
     resolutionOutcomes.push(outcome);
-    input.recordResolutionOutcome?.(outcome);
   };
   const PROF = process.env.PROF_SCOPE_RESOLUTION === '1';
   const tStart = PROF ? process.hrtime.bigint() : 0n;
@@ -638,7 +691,15 @@ export function runScopeResolution(
     'sr-extract-end',
     `lang=${provider.language} parsedFiles=${parsedFiles.length} preExtractedHits=${preExtractedHits} skipped=${filesSkipped}`,
   );
-  provider.populateWorkspaceOwners?.(parsedFiles, { fileContents: getFileContents() });
+  provider.populateWorkspaceOwners?.(parsedFiles, {
+    fileContents: getFileContents(),
+    resolutionConfig: input.resolutionConfig,
+  });
+  provider.populateWorkspaceReferences?.(parsedFiles, {
+    fileContents: getFileContents(),
+    treeCache,
+    resolutionConfig: input.resolutionConfig,
+  });
 
   // A callable-flow-only provider has no reason to build the whole-graph
   // lookup or finalize ordinary references when none of its files emitted a
@@ -721,6 +782,7 @@ export function runScopeResolution(
   const resolutionConfig = input.resolutionConfig;
   const finalized = finalizeScopeModel(parsedFiles, {
     hooks: {
+      importsBindAtLexicalScope: provider.importsBindAtLexicalScope === true,
       resolveImportTarget: (targetRaw, fromFile, _workspaceIndex, parsedImport) =>
         provider.resolveImportTarget(targetRaw, fromFile, allFilePaths, resolutionConfig, {
           parsedFiles,
@@ -732,10 +794,23 @@ export function runScopeResolution(
         provider.expandsWildcardTo?.(targetModuleScope, parsedFiles) ?? [],
       mergeBindings: (existing, incoming, scopeId) =>
         provider.mergeBindings(existing, incoming, scopeId),
+      wildcardCollisionIsAmbiguous: provider.exclusiveWildcardReexports === true,
+      namedImportsBindTopLevelOnly: provider.namedImportsBindTopLevelOnly === true,
     },
   });
   logHeapProbe('sr-post-finalize', `lang=${provider.language}`);
-
+  // `export *` collisions the shared finalize refused to bind (WS1 C2). Recorded
+  // as outcomes so the refusal is auditable next to the name-fallback census —
+  // a silently unresolved importer is indistinguishable from a resolver gap.
+  for (const refused of finalized.stats.ambiguousWildcardExports) {
+    recordResolutionOutcome({
+      kind: 'reexport-ambiguous',
+      candidateIds: refused.candidateDefIds,
+      phase: 'finalize',
+      filePath: refused.filePath,
+      name: refused.name,
+    });
+  }
   // One store and ONE writer rule for heritage instantiations (#2912), shared by
   // the pre-pass below and by the language hook further down — a heritage shape
   // the pre-pass cannot express (Rust `impl T for S`, Dart `implements`) records
@@ -841,7 +916,9 @@ export function runScopeResolution(
   // hook (C# implicit-namespace visibility; writes `bindingAugmentations`/
   // `workspaceFqnBindings` in place, finalized `bindings` stay immutable, I8).
   const runWorkspaceAndSiblings = (idx: ReturnType<typeof buildIndexes>) => {
-    const wsIndex = buildWorkspaceResolutionIndex(parsedFiles, idx.scopeTree);
+    const wsIndex = buildWorkspaceResolutionIndex(parsedFiles, idx.scopeTree, {
+      stripTypePreservingDecoration: provider.stripTypePreservingDecoration,
+    });
     logHeapProbe('sr-post-workspaceIndex', `lang=${provider.language}`);
     if (provider.populateNamespaceSiblings !== undefined) {
       provider.populateNamespaceSiblings(parsedFiles, idx, {
@@ -1040,6 +1117,12 @@ export function runScopeResolution(
   const deferredIndirectCollection = collectDeferredIndirectCollection(emitParsedFiles, indexes);
   const deferredIndirectSites = deferredIndirectCollection.sites;
   const callableArgumentSites = new Set<string>();
+  const callResultAssignmentSites = new Set<string>();
+  for (const parsed of emitParsedFiles) {
+    for (const site of parsed.callResultAssignmentSites ?? []) {
+      callResultAssignmentSites.add(callableFlowSiteKey(parsed.filePath, site.callSite));
+    }
+  }
   if (input.pdg !== true && deferredIndirectSites.size > 0) {
     for (const parsed of emitParsedFiles) {
       for (const site of parsed.callableFlowSites ?? []) {
@@ -1054,11 +1137,14 @@ export function runScopeResolution(
   // propagation. Populated below at every CALLS emit path before dedup; the CFG
   // join still consumes it only inside the `input.pdg` block.
   const calleeIdAccumulator: CalleeIdAccumulator | undefined =
-    input.pdg === true || deferredIndirectSites.size > 0
+    input.pdg === true || deferredIndirectSites.size > 0 || callResultAssignmentSites.size > 0
       ? createCalleeIdAccumulator(
           input.pdg === true
             ? undefined
-            : (filePath, line, col) => callableArgumentSites.has(`${filePath}:${line}:${col}`),
+            : (filePath, line, col) => {
+                const key = `${filePath}:${line}:${col}`;
+                return callableArgumentSites.has(key) || callResultAssignmentSites.has(key);
+              },
         )
       : undefined;
   const receiverBound = callableFlowOnly
@@ -1089,7 +1175,7 @@ export function runScopeResolution(
           heritageTypeArguments,
         },
       );
-  const receiverExtras = receiverBound.emitted;
+  let receiverExtras = receiverBound.emitted;
   if (receiverBound.dispatchFanoutSkipped > 0) {
     // Never drop dispatch coverage silently (#2829) — same contract as the
     // property-dispatch cap below. An interface member over the cap loses real
@@ -1129,11 +1215,19 @@ export function runScopeResolution(
         workspaceIndex,
         {
           allowGlobalFallback: provider.allowGlobalFreeCallFallback === true,
+          language: provider.language,
+          isGlobalNameFallbackPlausible: provider.isGlobalNameFallbackPlausible,
+          resolutionConfig,
+          sourceTextOf:
+            provider.isGlobalNameFallbackPlausible !== undefined
+              ? (filePath: string) => getFileContents().get(filePath)
+              : undefined,
           constructorCallTargetsClass: provider.constructorCallTargetsClass === true,
           markConstructionSites: provider.markConstructionSites === true,
           isFileLocalDef: provider.isFileLocalDef,
           isBuiltInName: provider.languageProvider.isBuiltInName,
           freeCallsRequireInstanceOwnership: provider.freeCallsRequireInstanceOwnership === true,
+          implicitThisWalksMro: provider.implicitThisWalksMro === true,
           isCallableVisibleFromCaller: provider.isCallableVisibleFromCaller,
           resolveAdlCandidates: provider.resolveAdlCandidates,
           resolveQualifiedFreeCall: provider.resolveQualifiedFreeCall,
@@ -1141,12 +1235,68 @@ export function runScopeResolution(
           conversionOnlyArgTypePrefixes: provider.conversionOnlyArgTypePrefixes,
           constraintCompatibility: provider.constraintCompatibility,
           conservativeOverloadResolution: provider.conservativeOverloadResolution === true,
-          resolveInheritedImplicitThisCall: provider.resolveInheritedImplicitThisCall === true,
           recordResolutionOutcome,
           calleeIdSink: calleeIdAccumulator,
           skipSites: deferredIndirectSites,
         },
       );
+  const replayedCallResultBindings =
+    callableFlowOnly || calleeIdAccumulator === undefined
+      ? 0
+      : applyPreciseCallResultBindings(
+          emitParsedFiles,
+          indexes,
+          workspaceIndex,
+          calleeIdAccumulator,
+          postHeritageNodeLookup,
+        );
+  if (replayedCallResultBindings > 0) {
+    const handledBeforeReplay = new Set(handledSites);
+    const replayedReceiverBound = emitReceiverBoundCalls(
+      graph,
+      indexes,
+      emitParsedFiles,
+      postHeritageNodeLookup,
+      handledSites,
+      provider,
+      workspaceIndex,
+      readonlyModel,
+      {
+        calleeIdSink: calleeIdAccumulator,
+        isBuiltInName: provider.languageProvider.isBuiltInName,
+        heritageTypeArguments,
+      },
+    );
+    receiverExtras += replayedReceiverBound.emitted;
+    if (replayedReceiverBound.dispatchFanoutSkipped > 0) {
+      logger.warn(
+        {
+          lang: provider.language,
+          dispatchFanoutSkipped: replayedReceiverBound.dispatchFanoutSkipped,
+          dispatchFanoutSkippedNames: replayedReceiverBound.dispatchFanoutSkippedNames,
+          fanoutCap: MAX_INTERFACE_DISPATCH_FANOUT,
+          replay: true,
+        },
+        'interface-dispatch: members over the fan-out cap dropped implementors (their CALLS edges were not emitted)',
+      );
+    }
+    const resolvedOnReplay = new Set<string>();
+    for (const key of handledSites) {
+      if (!handledBeforeReplay.has(key)) resolvedOnReplay.add(key);
+    }
+    if (resolvedOnReplay.size > 0) {
+      for (let i = resolutionOutcomes.length - 1; i >= 0; i--) {
+        const outcome = resolutionOutcomes[i];
+        if (
+          outcome.kind === 'suppressed' &&
+          outcome.reason === 'receiver-unresolved' &&
+          resolvedOnReplay.has(callableFlowSiteKey(outcome.filePath, outcome.range))
+        ) {
+          resolutionOutcomes.splice(i, 1);
+        }
+      }
+    }
+  }
   const referenceSkipSites = new Set(handledSites);
   for (const key of deferredIndirectSites) referenceSkipSites.add(key);
   const { emitted, skipped } = callableFlowOnly
@@ -1262,7 +1412,12 @@ export function runScopeResolution(
         indexes,
         emitParsedFiles,
         postHeritageNodeLookup,
+        readonlyModel,
         calleeIdAccumulator,
+        // Same provider hook the receiver-bound pass consults for a namespace
+        // member (Case 1). Without it a hub module's re-exported callable
+        // resolves when CALLED and declines when REGISTERED.
+        provider.namespaceExportsIncludeImportedNames === true,
       );
   if (propertyDispatch.skippedKeys > 0) {
     // Never drop dispatch coverage silently: a hook table larger than the
@@ -1712,6 +1867,8 @@ export function runScopeResolution(
   }
 
   logHeapProbe('sr-end', `lang=${provider.language} parsedFiles=${parsedFiles.length}`);
+
+  for (const outcome of resolutionOutcomes) input.recordResolutionOutcome?.(outcome);
 
   return {
     filesProcessed: parsedFiles.length,

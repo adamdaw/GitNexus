@@ -65,6 +65,7 @@ See the `<!-- gitnexus:start --> … <!-- gitnexus:end -->` block in **[AGENTS.m
 This project is indexed by GitNexus as **GitNexus** (248612 symbols, 565510 relationships, 918 execution flows).
 
 > Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it runs the `gitnexus` binary on PATH. No `.gitnexus/run.cjs` yet? Build from source and re-run — the npm-published build has no Apex support and reports no error.
+> On query/context/impact/cypher object results, read staleness.status and branch/lastCommit. Re-analyze only for behind or diverged — current is clone HEAD, not main.
 
 ## Always Do
 

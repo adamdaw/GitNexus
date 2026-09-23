@@ -1,5 +1,4 @@
 import { parentPort, threadId, workerData } from 'node:worker_threads';
-import { createRequire } from 'node:module';
 import {
   boundCallableStartPosition,
   localIdentity,
@@ -20,7 +19,7 @@ import PHP from 'tree-sitter-php';
 import Ruby from 'tree-sitter-ruby';
 import { requireVendoredGrammar } from '../../tree-sitter/vendored-grammars.js';
 import { SupportedLanguages } from 'gitnexus-shared';
-import { getProvider } from '../languages/index.js';
+import { getLanguageForFileContent, getProvider } from '../languages/index.js';
 import {
   getTreeSitterBufferSize,
   getTreeSitterContentByteLength,
@@ -30,6 +29,7 @@ import {
   ARRAY_METHOD_HOC_BLOCKLIST_SET,
   DEFAULT_EXPORT_IDENTIFIER_BLOCKLIST_SET,
   deriveDefaultExportHocName,
+  isBlockedCallbackRegistrationCall,
 } from '../ts-js-hoc-utils.js';
 import { parseSourceSafe } from '../../tree-sitter/safe-parse.js';
 import type { SkippedPath } from './clone-safety.js';
@@ -59,7 +59,7 @@ type TreeSitterLanguage = Parameters<typeof Parser.prototype.setLanguage>[0];
 // `isLanguageAvailable` must re-introduce the gate here. (The cleaner end-state
 // — routing this table through `parser-loader.getLanguageGrammar` so there is
 // one loader — is the deferred Tier-1 consolidation.)
-// Swift/Dart/Kotlin/C are vendored grammars loaded from `vendor/` by absolute
+// Swift/Dart/Kotlin/C/Zig are vendored grammars loaded from `vendor/` by absolute
 // path (NEVER copied into node_modules — see vendored-grammars.ts / #2111). Each
 // may be absent on a platform without a prebuild or a toolchain-less /
 // `--ignore-scripts` install, so every load is guarded so a missing binding
@@ -89,11 +89,14 @@ try {
   Apex = requireVendoredGrammar('tree-sitter-apex') as TreeSitterLanguage;
 } catch {}
 
-// @tree-sitter-grammars/tree-sitter-zig is an optionalDependency — may not be installed
-const _require = createRequire(import.meta.url);
 let Zig: TreeSitterLanguage | null = null;
 try {
-  Zig = _require('@tree-sitter-grammars/tree-sitter-zig');
+  Zig = requireVendoredGrammar('tree-sitter-zig') as TreeSitterLanguage;
+} catch {}
+
+let ObjectiveC: TreeSitterLanguage | null = null;
+try {
+  ObjectiveC = requireVendoredGrammar('tree-sitter-objc') as TreeSitterLanguage;
 } catch {}
 import { getLanguageFromFilename } from 'gitnexus-shared';
 import {
@@ -259,7 +262,7 @@ interface ParsedRelationship {
   id: string;
   sourceId: string;
   targetId: string;
-  type: 'DEFINES' | 'HAS_METHOD' | 'HAS_PROPERTY';
+  type: 'DEFINES' | 'DECLARES' | 'HAS_METHOD' | 'HAS_PROPERTY';
   confidence: number;
   reason: string;
 }
@@ -565,6 +568,7 @@ const languageMap: Record<string, TreeSitterLanguage> = {
   [SupportedLanguages.Java]: Java,
   ...(C ? { [SupportedLanguages.C]: C } : {}),
   [SupportedLanguages.CPlusPlus]: CPP,
+  ...(ObjectiveC ? { [SupportedLanguages.ObjectiveC]: ObjectiveC } : {}),
   [SupportedLanguages.CSharp]: CSharp,
   [SupportedLanguages.Go]: Go,
   [SupportedLanguages.Rust]: Rust,
@@ -1278,7 +1282,7 @@ const processBatch = (
   // Group by language to minimize setLanguage calls
   const byLanguage = new Map<SupportedLanguages, ParseWorkerInput[]>();
   for (const file of files) {
-    const lang = getLanguageFromFilename(file.path);
+    const lang = getLanguageForFileContent(file.path, file.content);
     if (!lang) continue;
     let list = byLanguage.get(lang);
     if (!list) {
@@ -1552,6 +1556,10 @@ function reportWarning(message: string): void {
   }
 }
 
+// Keep compiled queries across jobs in this worker. A language can select
+// multiple native grammars, so both grammar identity and query text matter.
+const compiledQueries = new WeakMap<object, Map<string, Parser.Query>>();
+
 const processFileGroup = (
   files: ParseWorkerInput[],
   language: SupportedLanguages,
@@ -1562,7 +1570,14 @@ const processFileGroup = (
   let query: Parser.Query;
   try {
     const lang = parser.getLanguage();
-    query = new Parser.Query(lang, queryString);
+    let queries = compiledQueries.get(lang);
+    if (!queries) {
+      queries = new Map();
+      compiledQueries.set(lang, queries);
+    }
+    const cached = queries.get(queryString);
+    query = cached ?? new Parser.Query(lang, queryString);
+    if (!cached) queries.set(queryString, query);
   } catch (err) {
     reportWarning(
       `Query compilation failed for ${language}: ${err instanceof Error ? err.message : String(err)}`,
@@ -1735,6 +1750,52 @@ const processFileGroup = (
       }
 
       result.parsedFiles.push(withChannels);
+    }
+
+    const semanticGraph = provider.extractSemanticGraph?.(tree, file.path, parseContent);
+    if (semanticGraph !== undefined) {
+      for (const node of semanticGraph.nodes) {
+        result.nodes.push({
+          id: node.id,
+          label: node.label,
+          properties: { ...node.properties },
+        });
+      }
+      for (const relationship of semanticGraph.relationships) {
+        if (
+          relationship.type === 'DECLARES' ||
+          relationship.type === 'DEFINES' ||
+          relationship.type === 'HAS_METHOD' ||
+          relationship.type === 'HAS_PROPERTY'
+        ) {
+          result.relationships.push({ ...relationship, type: relationship.type });
+        }
+      }
+      for (const symbol of semanticGraph.symbols) {
+        result.symbols.push({
+          filePath: symbol.filePath,
+          name: symbol.name,
+          nodeId: symbol.nodeId,
+          type: symbol.type,
+          ...(symbol.qualifiedName !== undefined ? { qualifiedName: symbol.qualifiedName } : {}),
+          ...(symbol.parameterCount !== undefined ? { parameterCount: symbol.parameterCount } : {}),
+          ...(symbol.requiredParameterCount !== undefined
+            ? { requiredParameterCount: symbol.requiredParameterCount }
+            : {}),
+          ...(symbol.parameterTypes !== undefined
+            ? { parameterTypes: [...symbol.parameterTypes] }
+            : {}),
+          ...(symbol.parameterTypeClasses !== undefined
+            ? { parameterTypeClasses: [...symbol.parameterTypeClasses] }
+            : {}),
+          ...(symbol.returnType !== undefined ? { returnType: symbol.returnType } : {}),
+          ...(symbol.declaredType !== undefined ? { declaredType: symbol.declaredType } : {}),
+          ...(symbol.ownerId !== undefined ? { ownerId: symbol.ownerId } : {}),
+          ...(symbol.visibility !== undefined ? { visibility: symbol.visibility } : {}),
+          ...(symbol.isStatic !== undefined ? { isStatic: symbol.isStatic } : {}),
+          ...(symbol.isReadonly !== undefined ? { isReadonly: symbol.isReadonly } : {}),
+        });
+      }
     }
 
     // Build per-file type environment + constructor bindings in a single AST walk.
@@ -2243,6 +2304,18 @@ const processFileGroup = (
       const defaultNodeLabel = getLabelFromCaptures(captureMap, provider);
       if (!defaultNodeLabel) continue;
       if (provider.shouldSkipDefinitionCapture?.(captureMap, defaultNodeLabel) === true) continue;
+
+      // `{ timer: setTimeout(() => …, 100) }` registers a timer, not a
+      // Function — the TSQ-path twin of the emit-side gate in
+      // languages/*/captures.ts (the query-level `#not-any-of?` predicate
+      // is unreliable: node-tree-sitter 0.21 shares `stringValues` across
+      // `#any-of?` predicates of a compiled query).
+      if (
+        definitionNode?.type === 'pair' &&
+        isBlockedCallbackRegistrationCall(definitionNode.childForFieldName('value'))
+      ) {
+        continue;
+      }
 
       const nameNode = captureMap['name'];
       const extractedClassSymbol =
@@ -3132,6 +3205,13 @@ const processFileGroup = (
     if (provider.isRouteFile?.(file.path)) {
       const extractedRoutes = extractLaravelRoutes(tree, file.path);
       for (const r of extractedRoutes) result.routes.push(r);
+    }
+
+    // Content-based route extraction via provider hook (path-gate lives on
+    // the provider; the worker does not name languages or frameworks).
+    if (provider.extractTextRoutes) {
+      const textRoutes = provider.extractTextRoutes(file.path, file.content);
+      for (const r of textRoutes) result.routes.push(r);
     }
 
     // Extract ORM queries (Prisma, Supabase)

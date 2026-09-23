@@ -77,7 +77,7 @@ const apexScopeResolver: ScopeResolver = {
   // REQ-005/007: an unqualified `inherited()` inside a subclass resolves to the
   // cross-file parent's member via the class's MRO (Apex has ordinary single
   // inheritance; there is no C++-style dependent-base two-phase lookup to guard).
-  resolveInheritedImplicitThisCall: true,
+  implicitThisWalksMro: true,
   // SDD-003 §3: a declaration-only interface-typed call (`Iface v; v.act()`)
   // targets ONLY the interface's own member — the concrete implementation is
   // unknown without a runtime type, so the generic implementer-fanout would

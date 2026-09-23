@@ -19,9 +19,9 @@
  * - Chunk-level invalidation gives a useful speedup floor (98% on a single
  *   1-of-50 invalidated chunk) without touching the worker.
  *
- * Survives `--force` because it's content-addressed: the same bytes always
- * produce the same key. `--force` only matters for the LadybugDB writeback;
- * the cache itself is always safe to reuse.
+ * `--force` still reuses content-addressed shards (it only rebuilds graph/FTS).
+ * `useParseCache: false` reparses every file, writes a staging generation, and
+ * publishes onto this cache only after a successful analysis.
  */
 
 import { createHash } from 'crypto';
@@ -250,7 +250,6 @@ import { copyV8CacheIfPresent, tryLoadV8Cache, writeV8CacheFile } from './v8-sid
 // capture schemas would have shared one PARSE_CACHE_VERSION and the durable
 // ParsedFile store would have replayed pre-fix ParsedFiles verbatim for one of
 // them. Only comparing against origin/main at MERGE time surfaces it.
-// PR #2840 (Objective-C, draft) still claims 44 as well — it must move too.
 // RE-CHECK AGAINST origin/main IMMEDIATELY BEFORE MERGING.
 // 45 -> 46 for the JavaScript bare-identifier read captures (A2), which emit
 // `@reference.read.identifier` in value positions (call arguments,
@@ -664,6 +663,7 @@ import { copyV8CacheIfPresent, tryLoadV8Cache, writeV8CacheFile } from './v8-sid
 // `route-extractors/` and `workers/` module content — would close the missing-
 // bump axis without invalidating on unrelated churn, and is the real follow-up.
 // RE-CHECK AGAINST origin/main AND OPEN PRs IMMEDIATELY BEFORE MERGING.
+//
 // 80 -> 81: ParsedFile and parse-cache shards are one immutable `.v8` envelope
 // each (no JSON/path/generation siblings). A v80 index still names `.json`
 // keys and would skip workers while scope-resolution found nothing — the
@@ -732,7 +732,53 @@ import { copyV8CacheIfPresent, tryLoadV8Cache, writeV8CacheFile } from './v8-sid
 // byte-identical graph until `parse-cache/` and `parsedfile-cache/` were
 // deleted by hand. 92 is the next free value above origin/main (91) at merge
 // time. RE-CHECK AGAINST origin/main AND OPEN PRs IMMEDIATELY BEFORE MERGING.
-const SCHEMA_BUMP = 92;
+// v93: Zig call captures inside a comptime-false branch carry
+// `@reference.static-gated` (feat/zig-static-gated-edges); the site gains
+// `staticGated` and the CALLS edge a BOOLEAN column.
+// v94: Objective-C now elides bare, file-scope macro markers before parsing.
+// A warm v93 cache can retain error-recovered trees and provider facts that
+// omit Objective-C declarations following markers such as RCT_EXTERN_C_END.
+// v95: Objective-C header classification no longer treats framework `#import`
+// alone as Objective-C syntax. A warm v94 cache can replay Objective-C worker
+// output for a C++ header during `--force`, even though the current classifier
+// routes that same header through the C++ provider.
+// v96: Objective-C macro-marker preprocessing recognizes all C preprocessing
+// whitespace before a directive or bare marker. A warm v95 cache can retain
+// error-recovered facts for sources that begin those lines with form feed or
+// vertical tab.
+// v97: Objective-C macro-marker preprocessing recognizes comment-prefixed
+// directives and rejects invalid numeric marker prefixes. A warm v96 cache can
+// replay error-recovered facts from the previous normalization behavior.
+// v98 (#3219): `ZIG_SCOPE_QUERY` gained three `@reference.value-ref` rules —
+// bare call argument, qualified call argument (with `@reference.receiver`), and
+// const-binding initialiser — so a Zig callable named in VALUE position now
+// produces a `value-ref` entry in `ParsedFile.referenceSites` where it produced
+// none before. These captures are PARSE-TIME facts, so a warm pre-v98 cache
+// replays unchanged `.zig` files with zero value-ref sites, `--force` included
+// (shards are content-addressed): `emitPropertyDispatchCalls` then emits no
+// USES edge, `callableValueReferenceBoundaries` measures a real zero, and
+// `impact` on a registered accessor republishes `epistemic: "exact"` — the exact
+// #3399 defect this change exists to close, silently un-fixed.
+// v99: ParsedImport retains declaredAtScope and export evidence changes in
+// #3190. Old durable ParsedFiles lack the facts needed for scoped binding;
+// invalidate both stores so warm indexing actually applies the correction.
+// origin/main took 98 for #3219; 99 is the next free value.
+// v100 (#3253): Rust import captures preserve the leading `::` that selects
+// the extern prelude. Old warm captures erase it and cannot distinguish an
+// absolute library import from a same-named local module. Reparse both stores.
+// v101 (#3294 review): Rust bare-keyword glob imports retain crate/self/super
+// instead of an empty target path; restricted pub(...) imports are no longer
+// captured as unrestricted reexports. Re-extract both facts on warm indexes.
+// v102: ParsedFile gained callResultAssignmentSites; old durable shards do
+// not carry the exact assignment identity required by return-type replay.
+// v103 (#3339 review): tRPC route extraction changed — nested-router paths,
+// a tightened entry gate, and controller-less routes now bind handlers via a
+// same-file CALLS edge. Warm caches replay the flat pre-fix capture set
+// verbatim (route rows are parse-time facts), so both stores re-extract.
+// v104 (#3339 review): TS/JS pair-HOC queries now name object-pair
+// `mutation(withAuth(arrow))` handlers. Warm caches replay the pre-fix
+// capture set (anonymous arrows, no Function name), so both stores re-extract.
+const SCHEMA_BUMP = 104;
 const GITNEXUS_PKG_VERSION = (() => {
   try {
     // package.json sits at gitnexus/package.json — two levels up from
@@ -812,6 +858,27 @@ export const packParseCacheChunks = (
 
 const LEGACY_CACHE_FILENAME = 'parse-cache.json';
 const CACHE_DIRNAME = 'parse-cache';
+/**
+ * Per-run staging root for `useParseCache: false`. Parse-cache shards and the
+ * ParsedFile stores write here so a crash cannot mix a new generation into the
+ * live `.gitnexus/parse-cache` / `parsedfile-cache` trees. `saveParseCache`
+ * publishes onto the live `storagePath` only after a successful analysis.
+ */
+export const COLD_PARSE_REBUILD_DIRNAME = 'parse-rebuild';
+
+/** Deterministic staging path — tests only. Production uses {@link createColdParseRebuildDir}. */
+export const getColdParseRebuildDir = (storagePath: string): string =>
+  path.join(storagePath, COLD_PARSE_REBUILD_DIRNAME);
+
+/**
+ * Unique per analyze process so concurrent `--no-parse-cache` runs on
+ * different branch slots (shared `.gitnexus`, separate index locks) do not
+ * delete each other's staging tree.
+ */
+export const createColdParseRebuildDir = async (storagePath: string): Promise<string> => {
+  await fs.mkdir(storagePath, { recursive: true });
+  return fs.mkdtemp(path.join(storagePath, `${COLD_PARSE_REBUILD_DIRNAME}.`));
+};
 const CACHE_INDEX_FILENAME = 'index.json';
 
 /** Keys on disk always come from `computeChunkHash` — 64-char lowercase hex. */
@@ -845,9 +912,21 @@ export interface ParseCache {
    */
   usedKeys: Set<string>;
   /**
+   * Hashes this run decided it cannot vouch for — its durable generation could
+   * not be reset, or its chunk was worker-quarantined (#3204). `saveParseCache`
+   * refuses them, so neither a pre-existing `.v8` nor the chunk's durable
+   * directory survives into the next run. Kept separate from `usedKeys`
+   * because the orchestrator re-adds keys to that set after the parse phase
+   * (#2106 sibling fold), which would undo a deletion.
+   * Transient — never serialized to disk.
+   */
+  staleKeys?: Set<string>;
+  /**
    * When set, chunk payloads are loaded from / flushed to sharded files on
    * demand instead of retaining every chunk in `entries` for the whole run
    * (#1983 — Linux kernel OOM from duplicate in-memory cache + graph).
+   * May be a per-run staging directory (`getColdParseRebuildDir`) while the
+   * live index root is passed separately to `saveParseCache`.
    */
   storagePath?: string;
   /** Index of chunk hashes known to exist under `storagePath/parse-cache/`. */
@@ -1031,6 +1110,11 @@ export const loadParseCacheChunk = async (
  */
 const createdCacheDirs = new Set<string>();
 
+/** Drop the mkdir memo after the staging tree is wiped so the next persist recreates it. */
+export const forgetCreatedParseCacheDir = (storagePath: string): void => {
+  createdCacheDirs.delete(getCacheDirPath(storagePath));
+};
+
 /**
  * Persist one chunk shard and avoid retaining it in RAM for the rest of the
  * run. Falls back to `cache.entries` when `storagePath` is unset (unit tests).
@@ -1064,6 +1148,24 @@ export const persistParseCacheChunk = async (
     return;
   }
   cache.entries.set(chunkHash, slim);
+};
+
+/**
+ * Retire a chunk this run cannot vouch for — its durable ParsedFile generation
+ * could not be reset, or its chunk was worker-quarantined (#3204).
+ *
+ * `saveParseCache` refuses a stale key, so no pre-existing `.v8` is copied
+ * forward and the durable store — pruned to exactly the keys that save
+ * returns — drops the chunk in the same step. The two deletes matter because
+ * `loadParseCacheChunk` reads `entries` and `onDiskKeys` and does NOT consult
+ * `staleKeys`: without them a second lookup of the same hash inside this run
+ * would still serve the retired shard.
+ */
+export const markParseCacheChunkStale = (cache: ParseCache, chunkHash: string): void => {
+  cache.staleKeys ??= new Set<string>();
+  cache.staleKeys.add(chunkHash);
+  cache.entries.delete(chunkHash);
+  cache.onDiskKeys?.delete(chunkHash);
 };
 
 const loadLegacyParseCache = async (storagePath: string): Promise<ParseCache> => {
@@ -1151,7 +1253,14 @@ export const saveParseCache = async (storagePath: string, cache: ParseCache): Pr
   await fs.rm(tmpDir, { recursive: true, force: true });
   await fs.mkdir(tmpDir, { recursive: true });
 
-  const keys = [...cache.usedKeys].filter(isValidChunkCacheKey).sort();
+  // A stale key is dropped here rather than at the failure site: the
+  // orchestrator folds sibling-branch keys back into `usedKeys` after the parse
+  // phase (#2106), so this is the last point that sees the final key set. The
+  // exclusion also reaches the durable store, which prunes to the keys this
+  // function returns — both stores drop the chunk together (#3204).
+  const keys = [...cache.usedKeys]
+    .filter((key) => isValidChunkCacheKey(key) && !cache.staleKeys?.has(key))
+    .sort();
   // Track hashes whose shard was actually written/copied this save. A hash can
   // be in `usedKeys` without a backing shard — its in-memory serialize threw, or
   // its on-disk copy failed/was-absent (e.g. a worker-quarantined chunk added to
@@ -1168,8 +1277,18 @@ export const saveParseCache = async (storagePath: string, cache: ParseCache): Pr
       }
       continue;
     }
-    const existingPath = getCacheChunkPath(storagePath, chunkHash);
-    if (await copyV8CacheIfPresent(existingPath, chunkPath)) {
+    // Cold rebuilds persist mid-run under `cache.storagePath` (staging). Prefer
+    // that generation over a same-hash shard still sitting in the live dir so
+    // we never publish a mixed old/new pair. Sibling-branch keys (#2106) that
+    // this run did not rewrite still copy from the live path.
+    const stagedPath =
+      cache.storagePath !== undefined && cache.storagePath !== storagePath
+        ? getCacheChunkPath(cache.storagePath, chunkHash)
+        : undefined;
+    const livePath = getCacheChunkPath(storagePath, chunkHash);
+    const fromStaged = Boolean(stagedPath && cache.onDiskKeys?.has(chunkHash));
+    const sourcePath = fromStaged && stagedPath ? stagedPath : livePath;
+    if (await copyV8CacheIfPresent(sourcePath, chunkPath)) {
       writtenKeys.push(chunkHash);
     }
   }
@@ -1213,10 +1332,12 @@ export const pruneCache = (cache: ParseCache, usedHashes: ReadonlySet<string>): 
   return removed;
 };
 
-const emptyCache = (storagePath?: string): ParseCache => ({
+export const emptyParseCache = (storagePath?: string): ParseCache => ({
   version: PARSE_CACHE_VERSION,
   entries: new Map<string, ParseWorkerResult[]>(),
   usedKeys: new Set<string>(),
   storagePath,
   onDiskKeys: storagePath ? new Set<string>() : undefined,
 });
+
+const emptyCache = emptyParseCache;
