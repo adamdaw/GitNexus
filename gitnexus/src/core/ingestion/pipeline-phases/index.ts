@@ -12,6 +12,7 @@ export { structurePhase, type StructureOutput } from './structure.js';
 export { markdownPhase, type MarkdownOutput } from './markdown.js';
 export { cobolPhase, type CobolOutput } from './cobol.js';
 export { parsePhase, type ParseOutput } from './parse.js';
+export { salesforceMetadataPhase, type SalesforceMetadataOutput } from './salesforce-metadata.js';
 export { routesPhase, type RoutesOutput, type RouteEntry } from './routes.js';
 export { toolsPhase, type ToolsOutput, type ToolDef } from './tools.js';
 export { ormPhase, type ORMOutput } from './orm.js';

@@ -57,6 +57,7 @@ import {
   isSpringAutoConfigurationSyntheticClass,
 } from '../ingestion/frameworks/spring/auto-configuration.js';
 import { isSpringAopEvidenceNode } from '../ingestion/frameworks/spring/aop.js';
+import { isSalesforceResolvedRelationship } from '../ingestion/salesforce-metadata-processor.js';
 
 /**
  * `Destination` is graph-wide for the same reason as the Spring AOP evidence
@@ -119,6 +120,11 @@ const isGraphWideNode = (node: GraphNode): boolean =>
 // an unchanged declaration, so they need the same global re-extract contract.
 // DECLARES itself is generic, however: only the two Spring-owned reasons are
 // graph-wide, leaving future metadata systems under their own lifecycle.
+//
+// Salesforce metadata edges resolved by name are the same class: a third file
+// declaring the same field or object changes which definition a name binds
+// to, between two files that never changed. Selected by reason, because the
+// types they ride on (CONTAINS / USES) are shared with every language.
 const isGraphWideRelationship = (relationship: GraphRelationship): boolean =>
   relationship.type === 'TAINT_PATH' ||
   relationship.type === 'CALL_SUMMARY' ||
@@ -127,7 +133,8 @@ const isGraphWideRelationship = (relationship: GraphRelationship): boolean =>
   // can alter annotation-name visibility or the set matched by a wildcard,
   // even when neither endpoint file changed.
   relationship.type === 'ADVISED_BY' ||
-  isSpringAutoConfigurationDeclaration(relationship);
+  isSpringAutoConfigurationDeclaration(relationship) ||
+  isSalesforceResolvedRelationship(relationship);
 
 /**
  * Build a Map<nodeId, filePath> for every File-bound node in the graph.

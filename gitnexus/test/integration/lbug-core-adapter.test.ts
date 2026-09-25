@@ -332,6 +332,38 @@ withTestLbugDB(
         expect(Number((left[0] as { cnt: number }).cnt)).toBe(1);
       });
 
+      it('deleteSalesforceResolvedEdges: removes only name-resolved Salesforce edges', async () => {
+        const { executeQuery: coreExecuteQuery, deleteSalesforceResolvedEdges } =
+          await import('../../src/core/lbug/lbug-adapter.js');
+
+        await expect(deleteSalesforceResolvedEdges()).resolves.toEqual({ edgesDeleted: 0 });
+        const fns = (await coreExecuteQuery('MATCH (n:Function) RETURN n.id AS id')) as Array<{
+          id: string;
+        }>;
+        expect(fns.length).toBe(2);
+        const edge = (type: string, reason: string) =>
+          coreExecuteQuery(
+            `MATCH (a:Function {id: '${fns[0].id}'}), (b:Function {id: '${fns[1].id}'}) ` +
+              `CREATE (a)-[:CodeRelation {type: '${type}', confidence: 1.0, reason: '${reason}', step: 0}]->(b)`,
+          );
+        await edge('CONTAINS', 'salesforce-field-of-object');
+        await edge('USES', 'salesforce-rule-references-field');
+        // The File anchor is owned by its file, not resolved by name: it stays.
+        await edge('CONTAINS', 'salesforce-metadata');
+        // A listed reason on an unlisted type is not one of these edges: it stays.
+        await edge('ACCESSES', 'salesforce-rule-references-field');
+
+        await expect(deleteSalesforceResolvedEdges()).resolves.toEqual({ edgesDeleted: 2 });
+        const left = await coreExecuteQuery(
+          `MATCH ()-[r:CodeRelation]->() WHERE r.reason STARTS WITH 'salesforce-' ` +
+            `RETURN r.type AS type, r.reason AS reason ORDER BY type`,
+        );
+        expect(left).toEqual([
+          { type: 'ACCESSES', reason: 'salesforce-rule-references-field' },
+          { type: 'CONTAINS', reason: 'salesforce-metadata' },
+        ]);
+      });
+
       it('deleteSpringAutoConfigurationSyntheticClasses: removes only metadata placeholders (#2415)', async () => {
         const { executeQuery: coreExecuteQuery, deleteSpringAutoConfigurationSyntheticClasses } =
           await import('../../src/core/lbug/lbug-adapter.js');
