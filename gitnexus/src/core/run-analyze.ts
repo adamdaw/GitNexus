@@ -78,6 +78,7 @@ import {
   deleteSpringAopEvidenceNodes,
   deleteSpringAutoConfigurationDeclarations,
   deleteSpringAutoConfigurationSyntheticClasses,
+  deleteSalesforceResolvedEdges,
   queryImportersBatch,
   loadFTSExtension,
   wipeLbugDbFiles,
@@ -3502,6 +3503,12 @@ async function runFullAnalysisInner(
         //     synthetic nodes are graph-wide in extractChangedSubgraph, so this
         //     also removes an orphan when a newly-added real class takes over.
         await deleteSpringAutoConfigurationSyntheticClasses();
+        // 2d-bis. Drop Salesforce metadata edges resolved by name. A file that
+        //     declares a second field or object of the same name changes what
+        //     an unchanged rule binds to; the salesforceMetadata phase
+        //     recomputes the full set each run and extractChangedSubgraph
+        //     re-includes all of it (isGraphWideRelationship).
+        await deleteSalesforceResolvedEdges();
         // 2e. Drop interprocedural TAINT_PATH edges (#2084 M4 U6) when pdg is on
         //     — their validity is a whole-program property (an A→C flow can be
         //     invalidated by a change to an intermediate function on a third
