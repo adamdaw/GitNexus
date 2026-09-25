@@ -3505,7 +3505,7 @@ async function runFullAnalysisInner(
         await deleteSpringAutoConfigurationSyntheticClasses();
         // 2d-bis. Drop Salesforce metadata edges resolved by name. A file that
         //     declares a second field or object of the same name changes what
-        //     an unchanged rule binds to; the salesforceMetadata phase
+        //     an unchanged rule or flow binds to; the salesforceMetadata phase
         //     recomputes the full set each run and extractChangedSubgraph
         //     re-includes all of it (isGraphWideRelationship).
         await deleteSalesforceResolvedEdges();
