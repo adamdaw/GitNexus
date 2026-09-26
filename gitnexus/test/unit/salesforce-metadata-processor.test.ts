@@ -10,6 +10,7 @@ const OBJ = 'pkgs/acme/main/default/objects/Contact/Contact.object-meta.xml';
 const FIELD = 'pkgs/acme/main/default/objects/Contact/fields/External_Id__c.field-meta.xml';
 const RULE =
   'pkgs/acme/main/default/objects/Contact/validationRules/Name_Required.validationRule-meta.xml';
+const FLOW = 'pkgs/acme/main/default/flows/Example_Flow.flow-meta.xml';
 
 const objectXml = `<?xml version="1.0" encoding="UTF-8"?>
 <CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
@@ -31,6 +32,20 @@ const ruleXml = `<?xml version="1.0" encoding="UTF-8" ?>
     <errorDisplayField>FirstName</errorDisplayField>
 </ValidationRule>`;
 
+const flowXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <actionCalls>
+        <name>Log_It</name>
+        <actionName>AuditLogger</actionName>
+        <actionType>apex</actionType>
+    </actionCalls>
+    <actionCalls>
+        <name>Send_It</name>
+        <actionName>emailSimple</actionName>
+        <actionType>emailSimple</actionType>
+    </actionCalls>
+</Flow>`;
+
 /** Every metadata file already has a File node by the time this phase runs. */
 function withFiles(graph: KnowledgeGraph, paths: string[]): void {
   for (const p of paths) {
@@ -42,11 +57,22 @@ function withFiles(graph: KnowledgeGraph, paths: string[]): void {
   }
 }
 
+function addApexClass(graph: KnowledgeGraph, name: string, filePath: string): string {
+  const id = generateId('Class', `${filePath}:${name}`);
+  graph.addNode({
+    id,
+    label: 'Class',
+    properties: { name, filePath, startLine: 0, endLine: 10, isExported: true },
+  });
+  return id;
+}
+
 function allFiles(): { path: string; content: string }[] {
   return [
     { path: OBJ, content: objectXml },
     { path: FIELD, content: fieldXml },
     { path: RULE, content: ruleXml },
+    { path: FLOW, content: flowXml },
   ];
 }
 
@@ -66,17 +92,22 @@ function recordId(graph: KnowledgeGraph, name: string): string {
 describe('processSalesforceMetadata', () => {
   it('creates a Record node per declarative entity, keyed by object where the path qualifies it', () => {
     const graph = createKnowledgeGraph();
-    withFiles(graph, [OBJ, FIELD, RULE]);
+    withFiles(graph, [OBJ, FIELD, RULE, FLOW]);
 
     const result = processSalesforceMetadata(graph, allFiles());
 
-    expect(result).toMatchObject({ objects: 1, fields: 1, validationRules: 1 });
+    expect(result).toMatchObject({ objects: 1, fields: 1, validationRules: 1, flows: 1 });
 
     const ids = [...graph.iterNodes()]
       .filter((n) => n.label === 'Record')
       .map((n) => n.properties.name)
       .sort();
-    expect(ids).toEqual(['Contact', 'Contact.External_Id__c', 'Contact.Name_Required']);
+    expect(ids).toEqual([
+      'Contact',
+      'Contact.External_Id__c',
+      'Contact.Name_Required',
+      'Example_Flow',
+    ]);
   });
 
   it('skips an entity whose File node is absent rather than dangling its anchor', () => {
@@ -97,7 +128,7 @@ describe('processSalesforceMetadata', () => {
 
   it('anchors each Record to its own File node', () => {
     const graph = createKnowledgeGraph();
-    withFiles(graph, [OBJ, FIELD, RULE]);
+    withFiles(graph, [OBJ, FIELD, RULE, FLOW]);
     processSalesforceMetadata(graph, allFiles());
 
     const contains = [...graph.iterRelationships()].filter(
@@ -155,7 +186,8 @@ describe('processSalesforceMetadata', () => {
 
   it('emits only edge types impact() traverses by default', () => {
     const graph = createKnowledgeGraph();
-    withFiles(graph, [OBJ, FIELD, RULE]);
+    withFiles(graph, [OBJ, FIELD, RULE, FLOW]);
+    addApexClass(graph, 'AuditLogger', 'pkgs/x/classes/AuditLogger.cls');
     processSalesforceMetadata(graph, allFiles());
 
     // The blast-radius edges must be inside impact()'s default relation set or
@@ -178,9 +210,51 @@ describe('processSalesforceMetadata', () => {
     }
   });
 
+  it('links a flow to the Apex class an apex action invokes, matching case-insensitively', () => {
+    const graph = createKnowledgeGraph();
+    withFiles(graph, [FLOW]);
+    // Class casing deliberately differs from the flow's <actionName>AuditLogger:
+    // identical strings on both sides would pass without any fold at all.
+    const classId = addApexClass(graph, 'auditlogger', 'pkgs/x/classes/auditlogger.cls');
+
+    processSalesforceMetadata(graph, [{ path: FLOW, content: flowXml }]);
+
+    const flowId = recordId(graph, 'Example_Flow');
+    const calls = edgesFrom(graph, flowId).filter((r) => r.type === 'CALLS');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].targetId).toBe(classId);
+  });
+
+  it('ignores non-apex action types rather than inventing an edge', () => {
+    const graph = createKnowledgeGraph();
+    withFiles(graph, [FLOW]);
+    addApexClass(graph, 'emailSimple', 'pkgs/x/classes/emailSimple.cls');
+
+    processSalesforceMetadata(graph, [{ path: FLOW, content: flowXml }]);
+
+    const flowId = recordId(graph, 'Example_Flow');
+    expect(edgesFrom(graph, flowId).filter((r) => r.type === 'CALLS')).toEqual([]);
+  });
+
+  it('drops an apex action whose class is not in the graph instead of dangling', () => {
+    const graph = createKnowledgeGraph();
+    withFiles(graph, [FLOW]);
+
+    processSalesforceMetadata(graph, [{ path: FLOW, content: flowXml }]);
+
+    const flowId = recordId(graph, 'Example_Flow');
+    expect(edgesFrom(graph, flowId)).toEqual([]);
+    // and every edge that IS emitted must resolve to a real node
+    for (const r of graph.iterRelationships()) {
+      expect(graph.getNode(r.sourceId), `dangling source ${r.sourceId}`).toBeDefined();
+      expect(graph.getNode(r.targetId), `dangling target ${r.targetId}`).toBeDefined();
+    }
+  });
+
   it('emits only node-label pairs the relation schema declares', () => {
     const graph = createKnowledgeGraph();
-    withFiles(graph, [OBJ, FIELD, RULE]);
+    withFiles(graph, [OBJ, FIELD, RULE, FLOW]);
+    addApexClass(graph, 'AuditLogger', 'pkgs/x/classes/AuditLogger.cls');
     processSalesforceMetadata(graph, allFiles());
 
     const declared = parseRelationSchemaPairs(RELATION_SCHEMA);
@@ -247,6 +321,69 @@ describe('processSalesforceMetadata', () => {
     );
   });
 
+  it("binds a flow's DML and subflow to its own package when another package defines the same names", () => {
+    const graph = createKnowledgeGraph();
+    const OBJ_B = 'pkgs/vendored/main/default/objects/Contact/Contact.object-meta.xml';
+    const FIELD_B =
+      'pkgs/vendored/main/default/objects/Contact/fields/External_Id__c.field-meta.xml';
+    const CHILD = 'pkgs/acme/main/default/flows/Child_Flow.flow-meta.xml';
+    const CHILD_B = 'pkgs/vendored/main/default/flows/Child_Flow.flow-meta.xml';
+    const callerXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <recordLookups>
+        <name>Get_Contact</name>
+        <filters>
+            <field>External_Id__c</field>
+        </filters>
+        <object>Contact</object>
+    </recordLookups>
+    <subflows>
+        <name>Run_Child</name>
+        <flowName>Child_Flow</flowName>
+    </subflows>
+</Flow>`;
+    // The other package's definitions come first, so a first-match lookup
+    // would bind to them.
+    withFiles(graph, [OBJ_B, OBJ, FIELD_B, FIELD, CHILD_B, CHILD, FLOW]);
+    processSalesforceMetadata(graph, [
+      { path: OBJ_B, content: objectXml },
+      { path: OBJ, content: objectXml },
+      { path: FIELD_B, content: fieldXml },
+      { path: FIELD, content: fieldXml },
+      { path: CHILD_B, content: '<Flow/>' },
+      { path: CHILD, content: '<Flow/>' },
+      { path: FLOW, content: callerXml },
+    ]);
+
+    const targets = [...graph.iterRelationships()]
+      .filter((r) => r.sourceId === recordId(graph, 'Example_Flow') && r.type !== 'CONTAINS')
+      .map((r) => `${r.type}:${graph.getNode(r.targetId)?.properties.filePath}`)
+      .sort();
+    expect(targets).toEqual([`CALLS:${CHILD}`, `USES:${OBJ}`, `USES:${FIELD}`]);
+  });
+
+  it('binds a name defined once, even in another package', () => {
+    const graph = createKnowledgeGraph();
+    const OTHER_FLOW = 'pkgs/other/main/default/flows/Example_Flow.flow-meta.xml';
+    const dmlXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <recordLookups>
+        <name>Get_Contact</name>
+        <object>Contact</object>
+    </recordLookups>
+</Flow>`;
+    withFiles(graph, [OBJ, OTHER_FLOW]);
+    processSalesforceMetadata(graph, [
+      { path: OBJ, content: objectXml },
+      { path: OTHER_FLOW, content: dmlXml },
+    ]);
+
+    const uses = edgesFrom(graph, recordId(graph, 'Example_Flow'))
+      .filter((r) => r.type === 'USES')
+      .map((r) => graph.getNode(r.targetId)?.properties.filePath);
+    expect(uses).toEqual([OBJ]);
+  });
+
   it('binds a rule to a field defined once, even in another package', () => {
     const graph = createKnowledgeGraph();
     const RULE_C =
@@ -284,6 +421,45 @@ describe('processSalesforceMetadata', () => {
     expect(uses).toEqual([]);
   });
 
+  it('refuses to bind a flow action when two classes share the name', () => {
+    const graph = createKnowledgeGraph();
+    withFiles(graph, [FLOW]);
+    addApexClass(graph, 'AuditLogger', 'pkgs/a/classes/AuditLogger.cls');
+    addApexClass(graph, 'AuditLogger', 'pkgs/b/classes/AuditLogger.cls');
+
+    processSalesforceMetadata(graph, [{ path: FLOW, content: flowXml }]);
+
+    const flowId = recordId(graph, 'Example_Flow');
+    expect(edgesFrom(graph, flowId).filter((r) => r.type === 'CALLS')).toEqual([]);
+  });
+
+  it('binds a flow action only to a top-level class, not an inner class of the same name', () => {
+    const graph = createKnowledgeGraph();
+    withFiles(graph, [FLOW]);
+    // The parser emits an inner class as a Class node on its outer class's
+    // file. A flow can only name a top-level class, which Apex names for its file.
+    addApexClass(graph, 'AuditLogger', 'pkgs/x/classes/Utils.cls');
+    const topLevel = addApexClass(graph, 'AuditLogger', 'pkgs/y/classes/AuditLogger.CLS');
+
+    processSalesforceMetadata(graph, [{ path: FLOW, content: flowXml }]);
+
+    const calls = edgesFrom(graph, recordId(graph, 'Example_Flow')).filter(
+      (r) => r.type === 'CALLS',
+    );
+    expect(calls.map((r) => r.targetId)).toEqual([topLevel]);
+  });
+
+  it('never binds a flow action to a non-Apex class of the same name', () => {
+    const graph = createKnowledgeGraph();
+    withFiles(graph, [FLOW]);
+    addApexClass(graph, 'AuditLogger', 'src/logging/AuditLogger.ts');
+
+    processSalesforceMetadata(graph, [{ path: FLOW, content: flowXml }]);
+
+    const flowId = recordId(graph, 'Example_Flow');
+    expect(edgesFrom(graph, flowId).filter((r) => r.type === 'CALLS')).toEqual([]);
+  });
+
   it('does not bind a cross-object formula reference to the local same-named field', () => {
     const graph = createKnowledgeGraph();
     const LOCAL_STATUS = 'pkgs/acme/main/default/objects/Contact/fields/Status__c.field-meta.xml';
@@ -308,7 +484,7 @@ describe('processSalesforceMetadata', () => {
     expect(uses).toEqual([]);
   });
 
-  it('ignores references that are commented out', () => {
+  it('ignores references and actions that are commented out', () => {
     const graph = createKnowledgeGraph();
     const COMMENTED_RULE =
       'pkgs/acme/main/default/objects/Contact/validationRules/Commented.validationRule-meta.xml';
@@ -317,17 +493,27 @@ describe('processSalesforceMetadata', () => {
     <fullName>Commented</fullName>
     <errorConditionFormula><!-- ISBLANK(External_Id__c) --> TRUE</errorConditionFormula>
 </ValidationRule>`;
-    withFiles(graph, [OBJ, FIELD, COMMENTED_RULE]);
+    const commentedFlowXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <!-- <actionCalls>
+        <actionName>AuditLogger</actionName>
+        <actionType>apex</actionType>
+    </actionCalls> -->
+</Flow>`;
+    withFiles(graph, [OBJ, FIELD, COMMENTED_RULE, FLOW]);
+    addApexClass(graph, 'AuditLogger', 'pkgs/x/classes/AuditLogger.cls');
 
     processSalesforceMetadata(graph, [
       { path: OBJ, content: objectXml },
       { path: FIELD, content: fieldXml },
       { path: COMMENTED_RULE, content: commentedRuleXml },
+      { path: FLOW, content: commentedFlowXml },
     ]);
 
-    // A commented-out clause is not live; it must not keep a blast radius.
+    // A commented-out clause or action is not live; it must not keep a blast radius.
     const rels = [...graph.iterRelationships()];
     expect(rels.filter((r) => r.type === 'USES')).toEqual([]);
+    expect(rels.filter((r) => r.type === 'CALLS')).toEqual([]);
   });
 
   it('ignores field references inside formula comments', () => {
@@ -389,14 +575,15 @@ describe('processSalesforceMetadata', () => {
 
   it('spans each Record to the end of its file, so an edit anywhere in the body touches it', () => {
     const graph = createKnowledgeGraph();
-    withFiles(graph, [OBJ, FIELD]);
+    withFiles(graph, [OBJ, FIELD, FLOW]);
     processSalesforceMetadata(graph, [
       { path: OBJ, content: objectXml },
       { path: FIELD, content: fieldXml },
+      { path: FLOW, content: flowXml },
     ]);
 
     // `detect_changes` maps diff hunks to symbols by line overlap, and each
-    // metadata file declares exactly one entity. Objects carry no
+    // metadata file declares exactly one entity. Objects and flows carry no
     // `<fullName>`, so they start at their root element.
     const span = (path: string) => {
       const n = [...graph.iterNodes()].find(
@@ -408,6 +595,7 @@ describe('processSalesforceMetadata', () => {
     const rootLine = (xml: string, tag: string) =>
       xml.split('\n').findIndex((l) => l.startsWith(tag));
     expect(span(OBJ)).toEqual([rootLine(objectXml, '<CustomObject'), lastLine(objectXml)]);
+    expect(span(FLOW)).toEqual([rootLine(flowXml, '<Flow'), lastLine(flowXml)]);
     expect(span(FIELD)[1]).toBe(lastLine(fieldXml));
   });
 
@@ -428,6 +616,234 @@ describe('processSalesforceMetadata', () => {
     // the line the node points at.
     const node = [...graph.iterNodes()].find((n) => n.label === 'Record')!;
     expect(withComment.split('\n')[node.properties.startLine as number]).toContain('<fullName>');
+  });
+
+  it('links a flow to the subflow it invokes', () => {
+    const graph = createKnowledgeGraph();
+    const TARGET = 'pkgs/acme/main/default/flows/Child_Flow.flow-meta.xml';
+    const callerXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <subflows>
+        <name>Create_Child_Record</name>
+        <flowName>Child_Flow</flowName>
+    </subflows>
+</Flow>`;
+    withFiles(graph, [FLOW, TARGET]);
+    processSalesforceMetadata(graph, [
+      { path: FLOW, content: callerXml },
+      { path: TARGET, content: '<Flow/>' },
+    ]);
+
+    const calls = edgesFrom(graph, recordId(graph, 'Example_Flow')).filter(
+      (r) => r.type === 'CALLS',
+    );
+    expect(calls.map((r) => graph.getNode(r.targetId)?.properties.name)).toEqual(['Child_Flow']);
+  });
+
+  it('links a flow to an Apex plugin class', () => {
+    const graph = createKnowledgeGraph();
+    const pluginXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apexPluginCalls>
+        <name>Legacy</name>
+        <apexClass>AuditLogger</apexClass>
+    </apexPluginCalls>
+</Flow>`;
+    withFiles(graph, [FLOW]);
+    const classId = addApexClass(graph, 'AuditLogger', 'pkgs/x/classes/AuditLogger.cls');
+    processSalesforceMetadata(graph, [{ path: FLOW, content: pluginXml }]);
+
+    const calls = edgesFrom(graph, recordId(graph, 'Example_Flow')).filter(
+      (r) => r.type === 'CALLS',
+    );
+    expect(calls.map((r) => r.targetId)).toEqual([classId]);
+  });
+
+  it('links a flow to the object and fields its record operations touch', () => {
+    const graph = createKnowledgeGraph();
+    const STATUS = 'pkgs/acme/main/default/objects/Contact/fields/Status__c.field-meta.xml';
+    const dmlXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <recordLookups>
+        <name>Get_Contact</name>
+        <filters>
+            <field>Status__c</field>
+        </filters>
+        <object>Contact</object>
+    </recordLookups>
+</Flow>`;
+    withFiles(graph, [OBJ, STATUS, FLOW]);
+    processSalesforceMetadata(graph, [
+      { path: OBJ, content: objectXml },
+      { path: STATUS, content: fieldXml },
+      { path: FLOW, content: dmlXml },
+    ]);
+
+    // The block declares its own <object>, so unlike a validation-rule formula
+    // the bare field name here is qualified by real metadata, not a guess.
+    const uses = edgesFrom(graph, recordId(graph, 'Example_Flow'))
+      .filter((r) => r.type === 'USES')
+      .map((r) => graph.getNode(r.targetId)?.properties.name)
+      .sort();
+    expect(uses).toEqual(['Contact', 'Contact.Status__c']);
+  });
+
+  it.each(['recordCreates', 'recordUpdates', 'recordDeletes'])(
+    'links a flow to the object and fields a %s block touches',
+    (element) => {
+      const graph = createKnowledgeGraph();
+      const STATUS = 'pkgs/acme/main/default/objects/Contact/fields/Status__c.field-meta.xml';
+      const dmlXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <${element}>
+        <name>Touch_Contact</name>
+        <inputAssignments>
+            <field>Status__c</field>
+        </inputAssignments>
+        <object>Contact</object>
+    </${element}>
+</Flow>`;
+      withFiles(graph, [OBJ, STATUS, FLOW]);
+      processSalesforceMetadata(graph, [
+        { path: OBJ, content: objectXml },
+        { path: STATUS, content: fieldXml },
+        { path: FLOW, content: dmlXml },
+      ]);
+
+      const uses = edgesFrom(graph, recordId(graph, 'Example_Flow'))
+        .filter((r) => r.type === 'USES')
+        .map((r) => graph.getNode(r.targetId)?.properties.name)
+        .sort();
+      expect(uses).toEqual(['Contact', 'Contact.Status__c']);
+    },
+  );
+
+  it("qualifies a DML block's fields by that block's own object, not another block's", () => {
+    const graph = createKnowledgeGraph();
+    const STATUS = 'pkgs/acme/main/default/objects/Contact/fields/Status__c.field-meta.xml';
+    const mixedXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <recordLookups>
+        <name>Get_Contact</name>
+        <object>Contact</object>
+    </recordLookups>
+    <recordUpdates>
+        <name>Update_It</name>
+        <inputReference>someVar</inputReference>
+        <inputAssignments>
+            <field>Status__c</field>
+        </inputAssignments>
+    </recordUpdates>
+</Flow>`;
+    withFiles(graph, [OBJ, STATUS, FLOW]);
+    processSalesforceMetadata(graph, [
+      { path: OBJ, content: objectXml },
+      { path: STATUS, content: fieldXml },
+      { path: FLOW, content: mixedXml },
+    ]);
+
+    const uses = edgesFrom(graph, recordId(graph, 'Example_Flow'))
+      .filter((r) => r.type === 'USES')
+      .map((r) => graph.getNode(r.targetId)?.properties.name);
+    expect(uses).toEqual(['Contact']);
+  });
+
+  it('resolves flow references to objects, fields and subflows regardless of case', () => {
+    const graph = createKnowledgeGraph();
+    const STATUS = 'pkgs/acme/main/default/objects/Contact/fields/Status__c.field-meta.xml';
+    const CHILD = 'pkgs/acme/main/default/flows/Child_Flow.flow-meta.xml';
+    const upperXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <recordLookups>
+        <name>Get_Contact</name>
+        <filters>
+            <field>STATUS__C</field>
+        </filters>
+        <object>CONTACT</object>
+    </recordLookups>
+    <subflows>
+        <name>Run_Child</name>
+        <flowName>CHILD_FLOW</flowName>
+    </subflows>
+</Flow>`;
+    withFiles(graph, [OBJ, STATUS, FLOW, CHILD]);
+    processSalesforceMetadata(graph, [
+      { path: OBJ, content: objectXml },
+      { path: STATUS, content: fieldXml },
+      { path: FLOW, content: upperXml },
+      { path: CHILD, content: '<Flow/>' },
+    ]);
+
+    const targets = edgesFrom(graph, recordId(graph, 'Example_Flow'))
+      .filter((r) => r.type === 'USES' || r.type === 'CALLS')
+      .map((r) => `${r.type}:${graph.getNode(r.targetId)?.properties.name}`)
+      .sort();
+    expect(targets).toEqual(['CALLS:Child_Flow', 'USES:Contact', 'USES:Contact.Status__c']);
+  });
+
+  it('does not link a flow that invokes itself as a subflow', () => {
+    const graph = createKnowledgeGraph();
+    const selfXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <subflows>
+        <name>Recurse</name>
+        <flowName>Example_Flow</flowName>
+    </subflows>
+</Flow>`;
+    withFiles(graph, [FLOW]);
+    const result = processSalesforceMetadata(graph, [{ path: FLOW, content: selfXml }]);
+
+    expect([...graph.iterRelationships()].filter((r) => r.type === 'CALLS')).toEqual([]);
+    expect(result.edges).toBe(graph.relationshipCount);
+  });
+
+  it('counts an edge once when several operations link the same pair', () => {
+    const graph = createKnowledgeGraph();
+    const STATUS = 'pkgs/acme/main/default/objects/Contact/fields/Status__c.field-meta.xml';
+    const lookup = (name: string) => `
+    <recordLookups>
+        <name>${name}</name>
+        <filters>
+            <field>Status__c</field>
+        </filters>
+        <object>Contact</object>
+    </recordLookups>`;
+    const dmlXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">${lookup('Get_One')}${lookup('Get_Two')}
+</Flow>`;
+    withFiles(graph, [OBJ, STATUS, FLOW]);
+    const result = processSalesforceMetadata(graph, [
+      { path: OBJ, content: objectXml },
+      { path: STATUS, content: fieldXml },
+      { path: FLOW, content: dmlXml },
+    ]);
+
+    // Edge ids are derived from (type, source, target), so the second lookup
+    // re-links pairs the graph already holds; the reported count must not count it.
+    expect(result.edges).toBe(graph.relationshipCount);
+  });
+
+  it('does not bind record-operation fields when the block declares no object', () => {
+    const graph = createKnowledgeGraph();
+    const STATUS = 'pkgs/acme/main/default/objects/Contact/fields/Status__c.field-meta.xml';
+    const noObjectXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <recordUpdates>
+        <name>Update_It</name>
+        <inputReference>someVar</inputReference>
+        <inputAssignments>
+            <field>Status__c</field>
+        </inputAssignments>
+    </recordUpdates>
+</Flow>`;
+    withFiles(graph, [OBJ, STATUS, FLOW]);
+    processSalesforceMetadata(graph, [
+      { path: OBJ, content: objectXml },
+      { path: STATUS, content: fieldXml },
+      { path: FLOW, content: noObjectXml },
+    ]);
+
+    expect([...graph.iterRelationships()].filter((r) => r.type === 'USES')).toEqual([]);
   });
 
   it('links a formula field to the fields its formula reads', () => {
@@ -493,7 +909,7 @@ describe('processSalesforceMetadata', () => {
       { path: 'pom.xml', content: '<project><name>x</name></project>' },
     ]);
 
-    expect(result).toMatchObject({ objects: 0, fields: 0, validationRules: 0 });
+    expect(result).toMatchObject({ objects: 0, fields: 0, validationRules: 0, flows: 0 });
     expect([...graph.iterNodes()].filter((n) => n.label === 'Record')).toEqual([]);
   });
 });

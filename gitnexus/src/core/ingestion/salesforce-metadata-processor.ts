@@ -1,24 +1,24 @@
 /**
  * Salesforce Declarative Metadata Processor
  *
- * A Salesforce org defines objects, fields and validation rules as declarative
- * XML, not code. Those files were already scanned — every `-meta.xml` gets a
- * `File` node — but nothing looked inside them, so a field rename had no blast
- * radius at all.
+ * A Salesforce org defines objects, fields, validation rules and flows as
+ * declarative XML, not code. Those files were already scanned — every
+ * `-meta.xml` gets a `File` node — but nothing looked inside them, so a field
+ * rename had no blast radius at all.
  *
  * Fields and validation rules are named `Object.Field__c`, because a bare
  * `<fullName>` collides across objects. Symbol resolution is an exact match on
  * `name` (`local-backend.ts`), so `impact` answers on the qualified form;
  * the bare `Foo__c` a formula or an Apex expression would use does NOT resolve
- * to a field. Objects are named bare and resolve directly.
+ * to a field. Objects and flows are named bare and resolve directly.
  *
  * Regex, not tree-sitter, and no XML parser: the elements read here do not
  * nest within their own kind, and `markdown-processor.ts` set the precedent
  * that a non-code file format does not need a grammar to earn graph edges.
  *
  * WHY `Record`. The relation schema must declare every pair emitted here
- * (`rel-pair-routing` aborts `analyze` outright on an undeclared one): `File`
- * and `Record` targets. `Record` and `CodeElement` both qualify, so the
+ * (`rel-pair-routing` aborts `analyze` outright on an undeclared one): `File`,
+ * `Record` and `Class` targets. `Record` and `CodeElement` both qualify, so the
  * schema does not decide it. `Record` is what `cobol-processor.ts` already uses
  * for entities that are real but not source code — DB tables, queues, IMS
  * segments — which is exactly what an object or a field is here.
@@ -33,10 +33,11 @@ const FIELD_PATH_RE = /(?:^|\/)objects\/([^/]+)\/fields\/([^/]+)\.field-meta\.xm
 const RULE_PATH_RE =
   /(?:^|\/)objects\/([^/]+)\/validationRules\/([^/]+)\.validationRule-meta\.xml$/;
 const OBJECT_PATH_RE = /(?:^|\/)objects\/([^/]+)\/[^/]+\.object-meta\.xml$/;
+const FLOW_PATH_RE = /(?:^|\/)flows\/([^/]+)\.flow-meta\.xml$/;
 
 /** True for exactly the paths `classify` can turn into an entity. */
 export const isSalesforceEntityPath = (p: string): boolean =>
-  [FIELD_PATH_RE, RULE_PATH_RE, OBJECT_PATH_RE].some((re) => re.test(p));
+  [FIELD_PATH_RE, RULE_PATH_RE, OBJECT_PATH_RE, FLOW_PATH_RE].some((re) => re.test(p));
 
 /** Stripped before any extraction — see `classify`. */
 const XML_COMMENT_RE = /<!--[\s\S]*?-->/g;
@@ -67,6 +68,27 @@ function declaringLine(content: string): number {
   const byRoot = lines.findIndex((l) => /^\s*<[A-Za-z]/.test(l) && !l.includes('<?xml'));
   return byRoot === -1 ? 0 : byRoot;
 }
+
+/** `<actionName>X</actionName>` … `<actionType>apex</actionType>` within one actionCalls block. */
+const ACTION_CALL_RE = /<actionCalls>([\s\S]*?)<\/actionCalls>/g;
+const ACTION_NAME_RE = /<actionName>([^<]+)<\/actionName>/;
+const ACTION_TYPE_RE = /<actionType>([^<]+)<\/actionType>/;
+
+/** `<subflows>` names its target in `<flowName>`, not in `<name>` (that is the element's own id). */
+const SUBFLOW_RE = /<subflows>([\s\S]*?)<\/subflows>/g;
+const FLOW_NAME_RE = /<flowName>([^<]+)<\/flowName>/;
+
+/** The legacy Apex-plugin invocation, separate from `actionCalls`. */
+const APEX_PLUGIN_RE = /<apexPluginCalls>([\s\S]*?)<\/apexPluginCalls>/g;
+const APEX_CLASS_RE = /<apexClass>([^<]+)<\/apexClass>/;
+
+/**
+ * A flow's DML elements, each closed on its own tag. Every block carries its
+ * own `<object>` and fields, which are read per block rather than per file.
+ */
+const RECORD_OP_RE = /<(recordLookups|recordUpdates|recordCreates|recordDeletes)>([\s\S]*?)<\/\1>/g;
+const OBJECT_EL_RE = /<object>([^<]+)<\/object>/;
+const FIELD_EL_RE = /<field>([^<]+)<\/field>/g;
 
 /** A formula field's own expression, which reads other fields on the same object. */
 const FIELD_FORMULA_RE = /<formula>([\s\S]*?)<\/formula>/g;
@@ -101,6 +123,7 @@ export interface SalesforceMetadataResult {
   objects: number;
   fields: number;
   validationRules: number;
+  flows: number;
   edges: number;
 }
 
@@ -116,10 +139,14 @@ export const SALESFORCE_RESOLVED_REASONS = [
   'salesforce-rule-guards-object',
   'salesforce-formula-references-field',
   'salesforce-rule-references-field',
+  'salesforce-flow-invokes-apex',
+  'salesforce-flow-invokes-subflow',
+  'salesforce-flow-uses-object',
+  'salesforce-flow-uses-field',
 ] as const;
 
 /** Edge types the resolved reasons are carried on. */
-export const SALESFORCE_RESOLVED_TYPES = ['CONTAINS', 'USES'] as const;
+export const SALESFORCE_RESOLVED_TYPES = ['CONTAINS', 'USES', 'CALLS'] as const;
 
 type ResolvedReason = (typeof SALESFORCE_RESOLVED_REASONS)[number];
 
@@ -131,11 +158,11 @@ export const isSalesforceResolvedRelationship = (
   relationship: Pick<GraphRelationship, 'type' | 'reason'>,
 ): boolean => RESOLVED_TYPES.has(relationship.type) && RESOLVED_REASONS.has(relationship.reason);
 
-type EntityKind = 'object' | 'field' | 'validationrule';
+type EntityKind = 'object' | 'field' | 'validationrule' | 'flow';
 
 interface Entity {
   kind: EntityKind;
-  /** Display name — `Contact`, `Contact.External_Id__c`. */
+  /** Display name — `Contact`, `Contact.External_Id__c`, `Example_Flow`. */
   name: string;
   /** Owning object API name, where the path qualifies it. */
   object?: string;
@@ -147,11 +174,11 @@ interface Entity {
    * 0-based last line of the file. A metadata file declares exactly one
    * entity, and `detect_changes` maps diff hunks to symbols by line overlap,
    * so the span runs to the end of the file: an edit anywhere in the body
-   * (a formula, say) touches the entity.
+   * (a formula, an action) touches the entity.
    */
   lastLine: number;
   /**
-   * Directory holding the metadata-type folders (`objects/`) —
+   * Directory holding the metadata-type folders (`objects/`, `flows/`) —
    * `pkgs/acme/main/default` for `pkgs/acme/main/default/objects/…`. Two
    * entities with the same one belong to the same package source tree.
    */
@@ -171,6 +198,25 @@ interface Entity {
 const nodeIdFor = (kind: EntityKind, name: string, filePath: string): string =>
   generateId('Record', `${filePath}:<sf-${kind}>:${name}`);
 
+/**
+ * Tombstone for a name claimed by two entities — the pattern
+ * `scope-resolution/graph-bridge/node-lookup.ts` uses for position keys. A
+ * second write marks the key ambiguous rather than letting scan order pick a
+ * winner, and an ambiguous lookup yields no edge: emitting nothing beats
+ * minting a binding that points at the wrong class.
+ */
+const AMBIGUOUS = '';
+
+/** Record a name, marking it ambiguous if something already claimed it. */
+const claim = (index: Map<string, string>, key: string, id: string): void => {
+  index.set(key, index.has(key) ? AMBIGUOUS : id);
+};
+
+const resolved = (index: Map<string, string>, key: string): string | undefined => {
+  const hit = index.get(key);
+  return hit === undefined || hit === AMBIGUOUS ? undefined : hit;
+};
+
 /** Every entity claiming a Salesforce name, with the source tree it lives in. */
 type ScopedIndex = Map<string, { id: string; sourceDir: string }[]>;
 
@@ -183,8 +229,7 @@ const claimScoped = (index: ScopedIndex, key: string, id: string, sourceDir: str
 /**
  * A unique name resolves directly. A name several packages define resolves to
  * the one in the referrer's own source tree — the path answers it, so this is
- * not a guess — and otherwise yields no edge: emitting nothing beats minting a
- * binding that points at the wrong package.
+ * not a guess — and otherwise yields no edge, like `resolved`.
  */
 const resolvedFrom = (index: ScopedIndex, key: string, sourceDir: string): string | undefined => {
   const hits = index.get(key);
@@ -202,7 +247,7 @@ const resolvedFrom = (index: ScopedIndex, key: string, sourceDir: string): strin
  */
 function classify(file: SalesforceMetadataFile): Entity | undefined {
   const p = file.path;
-  // A commented-out clause is not live, so it must not keep a blast radius.
+  // A commented-out clause or action is not live, so it must not keep a blast radius.
   const content = stripComments(file.content);
   // Each path regex anchors on the metadata-type folder, so the match starts
   // where the source tree ends.
@@ -231,7 +276,43 @@ function classify(file: SalesforceMetadataFile): Entity | undefined {
   if (object) {
     return { kind: 'object', name: object[1], object: object[1], ...common(object) };
   }
+  const flow = FLOW_PATH_RE.exec(p);
+  if (flow) {
+    return { kind: 'flow', name: flow[1], ...common(flow) };
+  }
   return undefined;
+}
+
+/**
+ * Apex is case-insensitive, so the flow's `<actionName>` need not match class
+ * casing.
+ *
+ * Restricted to top-level `.cls` classes. A `Class` node can come from any
+ * language the walker parsed, and a Salesforce repo can carry LWC and Node
+ * tooling beside `force-app/`: without the extension check a flow action named
+ * `Logger` binds to a TypeScript `Logger`, minting a fabricated `CALLS` edge
+ * into `impact`. And an inner class is emitted with its bare name, so without
+ * the file-name check an action binds to a nested class it cannot invoke.
+ *
+ * Ambiguous names are tombstoned rather than resolved first-wins. A repo can
+ * hold two same-named classes — a vendored package and a local test double,
+ * for instance — and picking by scan order can point every caller at the
+ * double.
+ */
+function buildApexClassIndex(graph: KnowledgeGraph): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const node of graph.iterNodes()) {
+    if (node.label !== 'Class') continue;
+    const { name, filePath } = node.properties;
+    if (typeof name !== 'string') continue;
+    if (typeof filePath !== 'string') continue;
+    // A flow names a top-level class, and Apex names a top-level class for its
+    // file; an inner class is emitted on its outer class's file, so it fails.
+    const fileName = filePath.slice(filePath.lastIndexOf('/') + 1).toLowerCase();
+    if (fileName !== `${name.toLowerCase()}.cls`) continue;
+    claim(index, name.toLowerCase(), node.id);
+  }
+  return index;
 }
 
 export const processSalesforceMetadata = (
@@ -242,6 +323,7 @@ export const processSalesforceMetadata = (
     objects: 0,
     fields: 0,
     validationRules: 0,
+    flows: 0,
     edges: 0,
   };
 
@@ -257,6 +339,7 @@ export const processSalesforceMetadata = (
     object: 'objects',
     field: 'fields',
     validationrule: 'validationRules',
+    flow: 'flows',
   } as const;
 
   // ── Nodes ────────────────────────────────────────────────────────
@@ -336,6 +419,8 @@ export const processSalesforceMetadata = (
   const objectId = (name: string | undefined, from: string): string | undefined =>
     name ? resolvedFrom(byName, `object:${name.toLowerCase()}`, from) : undefined;
 
+  let apexIndex: Map<string, string> | undefined;
+
   /** Bare field name qualified by the object it is being read on. */
   const fieldId = (object: string | undefined, field: string, from: string): string | undefined =>
     object ? resolvedFrom(byName, `field:${`${object}.${field}`.toLowerCase()}`, from) : undefined;
@@ -387,6 +472,51 @@ export const processSalesforceMetadata = (
           0.9,
         );
       }
+      continue;
+    }
+
+    if (entity.kind === 'flow') {
+      apexIndex ??= buildApexClassIndex(graph);
+      const invokes = [...apexActionNames(entity.content), ...apexPluginClasses(entity.content)];
+      for (const className of invokes) {
+        link(
+          sourceId,
+          resolved(apexIndex, className.toLowerCase()),
+          'CALLS',
+          'salesforce-flow-invokes-apex',
+          0.9,
+        );
+      }
+
+      for (const target of subflowNames(entity.content)) {
+        link(
+          sourceId,
+          resolvedFrom(byName, `flow:${target.toLowerCase()}`, entity.sourceDir),
+          'CALLS',
+          'salesforce-flow-invokes-subflow',
+          0.9,
+        );
+      }
+
+      // A flow's DML is where an object or field rename actually bites.
+      for (const op of recordOperations(entity.content)) {
+        link(
+          sourceId,
+          objectId(op.object, entity.sourceDir),
+          'USES',
+          'salesforce-flow-uses-object',
+          0.9,
+        );
+        for (const field of op.fields) {
+          link(
+            sourceId,
+            fieldId(op.object, field, entity.sourceDir),
+            'USES',
+            'salesforce-flow-uses-field',
+            0.9,
+          );
+        }
+      }
     }
   }
 
@@ -407,6 +537,71 @@ function customNamesIn(content: string, blockRe: RegExp): string[] {
     CUSTOM_NAME_RE.lastIndex = 0;
     let name: RegExpExecArray | null;
     while ((name = CUSTOM_NAME_RE.exec(text)) !== null) names.add(name[2]);
+  }
+  return [...names];
+}
+
+/** `<flowName>` targets of every `<subflows>` block. */
+function subflowNames(content: string): string[] {
+  return blockValues(content, SUBFLOW_RE, FLOW_NAME_RE);
+}
+
+/** `<apexClass>` targets of every `<apexPluginCalls>` block. */
+function apexPluginClasses(content: string): string[] {
+  return blockValues(content, APEX_PLUGIN_RE, APEX_CLASS_RE);
+}
+
+function blockValues(content: string, blockRe: RegExp, valueRe: RegExp): string[] {
+  const values = new Set<string>();
+  blockRe.lastIndex = 0;
+  let block: RegExpExecArray | null;
+  while ((block = blockRe.exec(content)) !== null) {
+    const value = valueRe.exec(block[1])?.[1];
+    if (value) values.add(value);
+  }
+  return [...values];
+}
+
+/**
+ * Objects and fields touched by a flow's DML elements.
+ *
+ * Fields are only reported when the block declares an `<object>`. A
+ * `recordUpdates` driven by `<inputReference>` names its fields bare with no
+ * object anywhere in the block, and guessing one would bind to whatever
+ * same-named field happened to exist.
+ */
+function recordOperations(content: string): { object: string; fields: string[] }[] {
+  const ops: { object: string; fields: string[] }[] = [];
+  RECORD_OP_RE.lastIndex = 0;
+  let block: RegExpExecArray | null;
+  while ((block = RECORD_OP_RE.exec(content)) !== null) {
+    const body = block[2];
+    const object = OBJECT_EL_RE.exec(body)?.[1];
+    if (!object) continue;
+    const fields = new Set<string>();
+    FIELD_EL_RE.lastIndex = 0;
+    let field: RegExpExecArray | null;
+    while ((field = FIELD_EL_RE.exec(body)) !== null) fields.add(field[1]);
+    ops.push({ object, fields: [...fields] });
+  }
+  return ops;
+}
+
+/**
+ * `<actionName>` values from `actionCalls` blocks whose `<actionType>` is
+ * `apex`. Matching per block matters: a flow mixes apex actions with
+ * `emailSimple` and record actions, and a file-wide scan for `<actionName>`
+ * would attribute every one of them to Apex.
+ */
+function apexActionNames(content: string): string[] {
+  const names = new Set<string>();
+  ACTION_CALL_RE.lastIndex = 0;
+  let block: RegExpExecArray | null;
+  while ((block = ACTION_CALL_RE.exec(content)) !== null) {
+    const body = block[1];
+    if (ACTION_TYPE_RE.exec(body)?.[1] !== 'apex') continue;
+    const name = ACTION_NAME_RE.exec(body)?.[1];
+    if (name) names.add(name);
   }
   return [...names];
 }

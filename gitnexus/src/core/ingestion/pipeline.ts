@@ -317,7 +317,8 @@ export interface PipelineOptions {
  *     → crossFile → scopeResolution → [springAutoConfiguration, springAop,
  *       springDestinations] → pruneLocalSymbols
  *     → mro → springAopInheritance → di → communities → processes
- *   structure → salesforceMetadata   (no phase depends on it)
+ *   parse → salesforceMetadata   (no declared dependant; communities reads its edges,
+ *     and runs later only by queue order)
  *
  * To add a new phase: create a file in pipeline-phases/, export the phase
  * object, and `.register()` it at the appropriate position below. Opt-in

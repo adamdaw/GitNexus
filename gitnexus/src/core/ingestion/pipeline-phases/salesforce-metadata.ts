@@ -1,12 +1,17 @@
 /**
  * Phase: salesforceMetadata
  *
- * Extracts Salesforce declarative metadata (objects, fields, validation rules)
- * from `-meta.xml` files.
+ * Extracts Salesforce declarative metadata (objects, fields, validation rules,
+ * flows) from `-meta.xml` files and links flows to the Apex they invoke.
  *
- * @deps    structure
- * @reads   scannedFiles (from structure phase)
- * @writes  graph (Record nodes + CONTAINS/USES edges)
+ * @deps    structure, parse
+ * @reads   scannedFiles (from structure phase), Class nodes (from parse)
+ * @writes  graph (Record nodes + CONTAINS/USES/CALLS edges)
+ *
+ * Depends on `parse` — not just `structure` — because the flow→Apex edge
+ * resolves against `Class` nodes, which only exist once the Apex files have
+ * been parsed. The runner orders phases by `deps`, so the dependency is what
+ * guarantees it.
  */
 
 import type { PipelinePhase, PipelineContext, PhaseResult } from './types.js';
@@ -33,6 +38,7 @@ const empty = (): SalesforceMetadataOutput => ({
   objects: 0,
   fields: 0,
   validationRules: 0,
+  flows: 0,
   edges: 0,
 });
 
@@ -44,7 +50,7 @@ const empty = (): SalesforceMetadataOutput => ({
  */
 export const salesforceMetadataPhase: PipelinePhase<SalesforceMetadataOutput> = {
   name: 'salesforceMetadata',
-  deps: ['structure'],
+  deps: ['structure', 'parse'],
 
   async execute(
     ctx: PipelineContext,
@@ -68,7 +74,7 @@ export const salesforceMetadataPhase: PipelinePhase<SalesforceMetadataOutput> = 
     if (isDev) {
       logger.info(
         `  Salesforce: ${result.objects} objects, ${result.fields} fields, ` +
-          `${result.validationRules} validation rules, ` +
+          `${result.validationRules} validation rules, ${result.flows} flows, ` +
           `${result.edges} edges from ${files.length} files`,
       );
     }
