@@ -99,6 +99,10 @@ import {
   SPRING_AUTO_CONFIGURATION_SYNTHETIC_ID_PREFIX,
 } from '../ingestion/frameworks/spring/auto-configuration.js';
 import { SPRING_AOP_EVIDENCE_ID_PREFIX } from '../ingestion/frameworks/spring/aop.js';
+import {
+  SALESFORCE_RESOLVED_REASONS,
+  SALESFORCE_RESOLVED_TYPES,
+} from '../ingestion/salesforce-metadata-processor.js';
 // ---------------------------------------------------------------------------
 // Relationship CSV splitting — extracted for testability (PR #818)
 // ---------------------------------------------------------------------------
@@ -3367,6 +3371,26 @@ export const deleteAllDestinations = async (): Promise<{ nodesDeleted: number }>
       );
     }
   });
+};
+
+/**
+ * Drop Salesforce metadata edges resolved by name before incremental
+ * writeback. Which definition a name binds to depends on every file declaring
+ * it, so the salesforceMetadata phase recomputes the full set each run. Exact
+ * reason filtering: the edge types are shared with every language.
+ */
+export const deleteSalesforceResolvedEdges = async (): Promise<{ edgesDeleted: number }> => {
+  let edgesDeleted = 0;
+  for (const relType of SALESFORCE_RESOLVED_TYPES) {
+    const result = await deleteAllRelationshipsOfType(
+      relType,
+      'salesforce-metadata',
+      'duplicate Salesforce metadata edges',
+      SALESFORCE_RESOLVED_REASONS,
+    );
+    edgesDeleted += result.edgesDeleted;
+  }
+  return { edgesDeleted };
 };
 
 /**

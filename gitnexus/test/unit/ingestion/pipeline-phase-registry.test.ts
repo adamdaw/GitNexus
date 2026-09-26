@@ -70,6 +70,7 @@ const FULL_ORDER = [
   'markdown',
   'cobol',
   'parse',
+  'salesforceMetadata',
   'routes',
   'tools',
   'orm',
