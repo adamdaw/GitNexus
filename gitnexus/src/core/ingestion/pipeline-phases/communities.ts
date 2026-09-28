@@ -70,7 +70,11 @@ export const communitiesPhase: PipelinePhase<CommunitiesOutput> = {
       });
     });
 
+    // Singleton communities get no node, but their memberships stay in the
+    // result for skill generation's folder grouping; only the edge is skipped.
+    const created = new Set(communityResult.communities.map((comm) => comm.id));
     communityResult.memberships.forEach((membership) => {
+      if (!created.has(membership.communityId)) return;
       ctx.graph.addRelationship({
         id: `${membership.nodeId}_member_of_${membership.communityId}`,
         type: 'MEMBER_OF',
