@@ -1,13 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { communitiesPhase } from '../../../src/core/ingestion/pipeline-phases/communities.js';
-import type {
-  PipelineContext,
-  PhaseResult,
-} from '../../../src/core/ingestion/pipeline-phases/types.js';
+import type { PhaseResult } from '../../../src/core/ingestion/pipeline-phases/types.js';
 import { createKnowledgeGraph } from '../../../src/core/graph/graph.js';
-import type { GraphNode } from '../../../src/core/graph/types.js';
+import type { GraphNode, NodeLabel } from 'gitnexus-shared';
 
-function node(id: string, label: GraphNode['label']): GraphNode {
+function node(id: string, label: NodeLabel): GraphNode {
   return {
     id,
     label,
@@ -44,7 +41,7 @@ describe('communitiesPhase', () => {
     });
 
     const { communityResult } = await communitiesPhase.execute(
-      { repoPath: '/', graph, onProgress: () => {}, pipelineStart: 0 } as PipelineContext,
+      { repoPath: '/', graph, onProgress: () => {}, pipelineStart: 0 },
       deps,
     );
 
