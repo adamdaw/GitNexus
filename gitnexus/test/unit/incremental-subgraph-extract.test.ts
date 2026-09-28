@@ -306,6 +306,47 @@ describe('extractChangedSubgraph', () => {
 
     expect(sub.relationships).toEqual([]);
   });
+
+  it('always includes resolved Salesforce edges between unchanged metadata files', () => {
+    // Whether a name resolves depends on every file that declares it, so a
+    // third file declaring the same field can invalidate this rule→field edge.
+    const g = createKnowledgeGraph();
+    g.addNode(makeFileNode('rule:File', '/repo/objects/C/validationRules/R.xml', 'File'));
+    g.addNode(makeFileNode('rule:Record', '/repo/objects/C/validationRules/R.xml', 'Record'));
+    g.addNode(makeFileNode('field:Record', '/repo/objects/C/fields/F__c.xml', 'Record'));
+    g.addRelationship(
+      makeRel('uses1', 'rule:Record', 'field:Record', 'USES', 'salesforce-rule-references-field'),
+    );
+    g.addRelationship(
+      makeRel('anchor1', 'rule:File', 'rule:Record', 'CONTAINS', 'salesforce-metadata'),
+    );
+
+    const sub = extractChangedSubgraph(g, new Set(['/repo/unrelated.ts']));
+
+    // The File→Record anchor is owned by its file and stays under the ordinary rule.
+    expect(sub.relationships.map((relationship) => relationship.id)).toEqual(['uses1']);
+  });
+
+  it('does not make a Salesforce reason graph-wide on an edge type its delete-all skips', () => {
+    // The writeback deletes by type × reason; re-including an edge it never
+    // deletes would append a copy on every incremental run.
+    const g = createKnowledgeGraph();
+    g.addNode(makeFileNode('rule:Record', '/repo/objects/C/validationRules/R.xml', 'Record'));
+    g.addNode(makeFileNode('field:Record', '/repo/objects/C/fields/F__c.xml', 'Record'));
+    g.addRelationship(
+      makeRel(
+        'acc1',
+        'rule:Record',
+        'field:Record',
+        'ACCESSES',
+        'salesforce-rule-references-field',
+      ),
+    );
+
+    const sub = extractChangedSubgraph(g, new Set(['/repo/unrelated.ts']));
+
+    expect(sub.relationships).toEqual([]);
+  });
 });
 
 describe('computeEffectiveWriteSet (Finding 1)', () => {

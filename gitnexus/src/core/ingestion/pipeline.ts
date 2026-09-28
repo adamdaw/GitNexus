@@ -29,6 +29,7 @@ import {
   markdownPhase,
   cobolPhase,
   parsePhase,
+  salesforceMetadataPhase,
   routesPhase,
   toolsPhase,
   ormPhase,
@@ -316,6 +317,7 @@ export interface PipelineOptions {
  *     → crossFile → scopeResolution → [springAutoConfiguration, springAop,
  *       springDestinations] → pruneLocalSymbols
  *     → mro → springAopInheritance → di → communities → processes
+ *   structure → salesforceMetadata   (no phase depends on it)
  *
  * To add a new phase: create a file in pipeline-phases/, export the phase
  * object, and `.register()` it at the appropriate position below. Opt-in
@@ -336,6 +338,7 @@ export function buildPhaseList(options?: PipelineOptions): PipelinePhase[] {
       .register(markdownPhase)
       .register(cobolPhase)
       .register(parsePhase)
+      .register(salesforceMetadataPhase)
       .register(routesPhase)
       .register(toolsPhase)
       .register(ormPhase)

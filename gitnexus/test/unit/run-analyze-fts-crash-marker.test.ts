@@ -132,6 +132,7 @@ const mockLbugAdapter = async () => {
     deleteSpringAopEvidenceNodes: vi.fn(async () => undefined),
     deleteSpringAutoConfigurationDeclarations: vi.fn(async () => undefined),
     deleteSpringAutoConfigurationSyntheticClasses: vi.fn(async () => undefined),
+    deleteSalesforceResolvedEdges: vi.fn(async () => undefined),
     queryImporters: vi.fn(async () => []),
     queryImportersBatch: vi.fn(async () => []),
     loadFTSExtension: vi.fn(async () => true),
@@ -390,6 +391,16 @@ describe('runFullAnalysis FTS crash marker', () => {
       expect(sequence.indexOf('checkpoint')).toBeLessThan(sequence.indexOf('stamp-fts'));
       expect(sequence.indexOf('stamp-fts')).toBeLessThan(sequence.indexOf('build'));
       expect(checkpointOnce).toHaveBeenCalled();
+      // The graph-wide re-include of name-resolved Salesforce edges is only
+      // sound with its delete-all: without it every incremental run appends
+      // another copy (CodeRelation has no PK).
+      const adapter = await import('../../src/core/lbug/lbug-adapter.js');
+      const deleted = vi.mocked(adapter.deleteSalesforceResolvedEdges).mock.invocationCallOrder;
+      const loaded = vi.mocked(adapter.loadGraphToLbug).mock.invocationCallOrder;
+      expect(deleted).toHaveLength(1);
+      expect(loaded.length).toBeGreaterThan(0);
+      // After the load it would wipe the edges just written.
+      expect(deleted[0]).toBeLessThan(Math.min(...loaded));
 
       const finalMeta = await loadMeta(storagePath);
       expect(finalMeta?.incrementalInProgress).toBeUndefined();
