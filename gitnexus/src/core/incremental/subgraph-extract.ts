@@ -124,7 +124,7 @@ const isGraphWideNode = (node: GraphNode): boolean =>
 // Salesforce metadata edges resolved by name are the same class: a third file
 // declaring the same field or object changes which definition a name binds
 // to, between two files that never changed. Selected by reason, because the
-// types they ride on (CONTAINS / USES) are shared with every language.
+// types they ride on (CONTAINS / USES / CALLS) are shared with every language.
 const isGraphWideRelationship = (relationship: GraphRelationship): boolean =>
   relationship.type === 'TAINT_PATH' ||
   relationship.type === 'CALL_SUMMARY' ||

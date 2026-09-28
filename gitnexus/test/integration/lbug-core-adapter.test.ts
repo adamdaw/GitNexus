@@ -348,18 +348,19 @@ withTestLbugDB(
           );
         await edge('CONTAINS', 'salesforce-field-of-object');
         await edge('USES', 'salesforce-rule-references-field');
+        await edge('CALLS', 'salesforce-flow-invokes-apex');
         // The File anchor is owned by its file, not resolved by name: it stays.
         await edge('CONTAINS', 'salesforce-metadata');
         // A listed reason on an unlisted type is not one of these edges: it stays.
-        await edge('ACCESSES', 'salesforce-rule-references-field');
+        await edge('ACCESSES', 'salesforce-flow-invokes-apex');
 
-        await expect(deleteSalesforceResolvedEdges()).resolves.toEqual({ edgesDeleted: 2 });
+        await expect(deleteSalesforceResolvedEdges()).resolves.toEqual({ edgesDeleted: 3 });
         const left = await coreExecuteQuery(
           `MATCH ()-[r:CodeRelation]->() WHERE r.reason STARTS WITH 'salesforce-' ` +
             `RETURN r.type AS type, r.reason AS reason ORDER BY type`,
         );
         expect(left).toEqual([
-          { type: 'ACCESSES', reason: 'salesforce-rule-references-field' },
+          { type: 'ACCESSES', reason: 'salesforce-flow-invokes-apex' },
           { type: 'CONTAINS', reason: 'salesforce-metadata' },
         ]);
       });

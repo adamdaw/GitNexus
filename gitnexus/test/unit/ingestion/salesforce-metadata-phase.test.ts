@@ -61,6 +61,7 @@ function repoWith(files: Record<string, string>): string {
 
 const FIELD = 'objects/Contact/fields/External_Id__c.field-meta.xml';
 const PROFILE = 'profiles/Admin.profile-meta.xml';
+const FLOW = 'flows/Example_Flow.flow-meta.xml';
 const OBJECT = 'objects/Contact/Contact.object-meta.xml';
 const RULE = 'objects/Contact/validationRules/Name_Required.validationRule-meta.xml';
 const fieldXml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -69,6 +70,14 @@ const fieldXml = `<?xml version="1.0" encoding="UTF-8"?>
 </CustomField>`;
 
 describe('salesforceMetadataPhase', () => {
+  it('declares parse as a dependency, not just structure', () => {
+    // Load-bearing: the flow->Apex edge resolves against Class nodes, which do
+    // not exist until parse has run. The registry test asserts REGISTRATION
+    // order, which cannot catch this — the runner orders by deps.
+    expect(salesforceMetadataPhase.deps).toContain('parse');
+    expect(salesforceMetadataPhase.deps).toContain('structure');
+  });
+
   it('returns a fresh zero result when the repo has no Salesforce metadata', async () => {
     const graph = createKnowledgeGraph();
     const root = repoWith({ 'pom.xml': '<project><name>x</name></project>' });
@@ -82,7 +91,7 @@ describe('salesforceMetadataPhase', () => {
       structureDeps(['pom.xml']),
     );
 
-    expect(first).toEqual({ objects: 0, fields: 0, validationRules: 0, edges: 0 });
+    expect(first).toEqual({ objects: 0, fields: 0, validationRules: 0, flows: 0, edges: 0 });
     // A shared module-level constant handed out by reference lets one caller's
     // mutation corrupt every later run.
     expect(first).not.toBe(second);
@@ -95,6 +104,7 @@ describe('salesforceMetadataPhase', () => {
       [FIELD]: fieldXml,
       [OBJECT]: '<CustomObject/>',
       [RULE]: '<ValidationRule/>',
+      [FLOW]: '<Flow/>',
     };
     const root = repoWith({
       ...entities,
@@ -117,11 +127,16 @@ describe('salesforceMetadataPhase', () => {
 
     const read = vi.mocked(readFileContents).mock.calls.flatMap(([, paths]) => paths);
     expect(read).toEqual(Object.keys(entities));
-    expect(result).toMatchObject({ objects: 1, fields: 1, validationRules: 1 });
+    expect(result).toMatchObject({ objects: 1, fields: 1, validationRules: 1, flows: 1 });
     const names = [...graph.iterNodes()]
       .filter((n) => n.label === 'Record')
       .map((n) => n.properties.name)
       .sort();
-    expect(names).toEqual(['Contact', 'Contact.External_Id__c', 'Contact.Name_Required']);
+    expect(names).toEqual([
+      'Contact',
+      'Contact.External_Id__c',
+      'Contact.Name_Required',
+      'Example_Flow',
+    ]);
   });
 });
