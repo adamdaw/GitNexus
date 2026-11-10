@@ -123,13 +123,21 @@ export function collectDeferredIndirectSites(
   return collectDeferredIndirectCollection(parsedFiles, scopes).sites;
 }
 
-/** One `referenceSites` walk for deferred keys and call-signature evidence. */
+/** Collect signatures only for argument facts consumed by indirect-call flow. */
 export function collectDeferredIndirectCollection(
   parsedFiles: readonly ParsedFile[],
   scopes?: ScopeResolutionIndexes,
 ): DeferredIndirectCollection {
   const out = new Set<string>();
   const callSignaturesBySite = new Map<string, CallableFlowExpectedSignature>();
+  // Ordinary methods also produce formal/argument facts. Without an invoke
+  // there is no indirect edge to resolve; indexing every direct call here kept
+  // an otherwise unused signature object and position string per call (#3695).
+  if (
+    !parsedFiles.some((parsed) => parsed.callableFlowSites?.some((site) => site.kind === 'invoke'))
+  ) {
+    return { sites: out, callSignaturesBySite };
+  }
   const flowCells = new Set<string>();
   if (scopes !== undefined) {
     for (const parsed of parsedFiles) {
@@ -144,11 +152,21 @@ export function collectDeferredIndirectCollection(
     }
   }
   for (const parsed of parsedFiles) {
+    const invokeKeys = new Set<string>();
+    const argumentKeys = new Set<string>();
+    for (const site of parsed.callableFlowSites ?? []) {
+      if (site.kind === 'invoke')
+        invokeKeys.add(callableFlowSiteKey(parsed.filePath, site.callSite));
+      if (site.kind === 'argument')
+        argumentKeys.add(callableFlowSiteKey(parsed.filePath, site.callSite));
+    }
+    if (invokeKeys.size === 0 && argumentKeys.size === 0) continue;
     const canonical = new Set<string>();
     for (const site of parsed.referenceSites) {
       if (site.kind !== 'call') continue;
       const key = callableFlowSiteKey(parsed.filePath, site.atRange);
-      canonical.add(key);
+      if (invokeKeys.has(key)) canonical.add(key);
+      if (!argumentKeys.has(key)) continue;
       const signature: CallableFlowExpectedSignature = {
         ...(site.arity !== undefined ? { parameterCount: site.arity } : {}),
         ...(site.argumentTypes !== undefined ? { parameterTypes: site.argumentTypes } : {}),
@@ -175,6 +193,7 @@ export function collectDeferredIndirectCollection(
       }
     }
   }
+  if (out.size === 0) callSignaturesBySite.clear();
   return { sites: out, callSignaturesBySite };
 }
 
@@ -213,7 +232,9 @@ export function emitCallableValueFlow(input: EmitCallableValueFlowInput): Callab
       }
     }
   }
-  if (facts.length === 0 && invokes.length === 0) {
+  // Facts propagate values only to the fixed set of canonical invokes. If it
+  // is empty, building whole-workspace callable indexes cannot emit an edge.
+  if (invokes.length === 0) {
     return { emitted: 0, resolvedInvokes: 0, ambiguousInvokes: 0, unmatchedInvokes, iterations: 0 };
   }
 
@@ -814,7 +835,7 @@ export function buildGraphTargetIndex(
   graph: KnowledgeGraph,
 ): ReadonlyMap<string, Target> {
   const out = new Map<string, Target>();
-  const { byAnchor, callableByPosition } = buildGraphCallableIndexes(graph);
+  const { byAnchor, callableByPosition, callableNames } = buildGraphCallableIndexes(graph);
   for (const def of scopes.defs.byId.values()) {
     const callableDef = isCallable(def) || providerTarget?.(def) === true;
     if (!callableDef) {
@@ -837,7 +858,7 @@ export function buildGraphTargetIndex(
       // A closure binding IS its callable node: same file, same line, same
       // name. An aliasing local is not. So look the node up by position and
       // admit only an exact hit.
-      const positionalKey = valueBindingPositionKey(def);
+      const positionalKey = valueBindingPositionKey(def, callableNames);
       const positionalId =
         positionalKey === undefined ? undefined : callableByPosition.get(positionalKey);
       // `''` marks an ambiguous position (two callables claiming one
@@ -873,12 +894,20 @@ const withoutSigil = (name: string): string => name.replace(/^[$@]+/, '');
  * in `buildGraphCallableIndexes`. Definition lines come from the def id and are
  * 1-based; graph `startLine` is 0-based, which is the `+ 1` there.
  */
-function valueBindingPositionKey(def: SymbolDefinition): string | undefined {
+function valueBindingPositionKey(
+  def: SymbolDefinition,
+  callableNames: ReadonlySet<string>,
+): string | undefined {
   if (!VALUE_BINDING_DEF_TYPES.has(def.type)) return undefined;
-  const line = definitionIdPosition(def.nodeId, def.filePath)?.line;
   const name = simpleQualifiedName(def);
-  if (line === undefined || name === undefined) return undefined;
-  return `${def.filePath}\0${line}\0${withoutSigil(name)}`;
+  if (name === undefined) return undefined;
+  const normalizedName = withoutSigil(name);
+  // Reject ordinary values before parsing IDs or allocating positional keys.
+  // A name hit still requires the exact file/line/name join.
+  if (!callableNames.has(normalizedName)) return undefined;
+  const line = definitionIdPosition(def.nodeId, def.filePath)?.line;
+  if (line === undefined) return undefined;
+  return `${def.filePath}\0${line}\0${normalizedName}`;
 }
 
 /**
@@ -1064,6 +1093,7 @@ function declarationSignatureCompatible(
 interface GraphCallableIndexes {
   /** Callable graph nodes by `file\0label\0line\0name` — the definition anchor. */
   readonly byAnchor: ReadonlyMap<string, readonly string[]>;
+  readonly callableNames: ReadonlySet<string>;
   /**
    * Callable graph nodes by `file\0line\0name` — the same anchor WITHOUT the
    * label, because a value binding's def type never matches its callable node's
@@ -1079,6 +1109,7 @@ interface GraphCallableIndexes {
 function buildGraphCallableIndexes(graph: KnowledgeGraph): GraphCallableIndexes {
   const byAnchor = new Map<string, string[]>();
   const callableByPosition = new Map<string, string>();
+  const callableNames = new Set<string>();
   for (const node of graph.iterNodes()) {
     if (node.label !== 'Function' && node.label !== 'Method' && node.label !== 'Constructor') {
       continue;
@@ -1094,7 +1125,9 @@ function buildGraphCallableIndexes(graph: KnowledgeGraph): GraphCallableIndexes 
       continue;
     }
     const oneBasedLine = zeroBasedLine + 1;
-    const positionKey = `${filePath}\0${oneBasedLine}\0${withoutSigil(name)}`;
+    const normalizedName = withoutSigil(name);
+    callableNames.add(normalizedName);
+    const positionKey = `${filePath}\0${oneBasedLine}\0${normalizedName}`;
     const existing = callableByPosition.get(positionKey);
     // First wins would be order-dependent; mark the collision instead so an
     // ambiguous position admits nothing rather than something arbitrary.
@@ -1104,7 +1137,7 @@ function buildGraphCallableIndexes(graph: KnowledgeGraph): GraphCallableIndexes 
     if (bucket === undefined) byAnchor.set(key, [node.id]);
     else bucket.push(node.id);
   }
-  return { byAnchor, callableByPosition };
+  return { byAnchor, callableByPosition, callableNames };
 }
 
 function definitionAnchorKey(def: SymbolDefinition): string | undefined {

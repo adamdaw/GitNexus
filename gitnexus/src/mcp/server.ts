@@ -22,10 +22,16 @@ import {
   ListResourceTemplatesRequestSchema,
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
+  type ServerNotification,
 } from '@modelcontextprotocol/sdk/types.js';
-import { GITNEXUS_TOOLS, REPO_SCOPED_TOOLS } from './tools.js';
+import {
+  findToolDefinition,
+  GITNEXUS_TOOLS,
+  REFRESH_INDEX_TOOL,
+  REPO_SCOPED_TOOLS,
+} from './tools.js';
 import { installGlobalStdoutSentinel } from './stdio-context.js';
-import type { LocalBackend } from './local/local-backend.js';
+import type { LocalBackend, McpToolCallContext } from './local/local-backend.js';
 import { getResourceDefinitions, getResourceTemplates, readResource } from './resources.js';
 import {
   assertMcpReadOnlyResource,
@@ -36,12 +42,18 @@ import {
   resolveMcpReadOnlyMode,
   toolForReadOnlyMcp,
 } from './read-only-policy.js';
+import { assertMcpRefreshToolCall, MCP_REFRESH_TOOL } from './refresh-policy.js';
 import {
   createMcpRepositoryPolicy,
   McpRepositoryPolicy,
   mcpRepositoryPolicyConfigured,
 } from './repository-policy.js';
 import { applyMcpMaxTokens, resolveMcpMaxTokens, withoutMcpBudgetArg } from './output-budget.js';
+import {
+  ImpactBudgetExceededError,
+  shapeImpactForAgent,
+  withImpactAgentDefaults,
+} from './impact-agent-output.js';
 import { assertKnownMcpToolArguments, schemaSourceToolName } from './tool-arguments.js';
 import {
   applyMcpResponseFilter,
@@ -124,6 +136,12 @@ export function getNextStepHint(
     case 'overview':
       return `\n\n---\n**Next:** To drill into an area, READ gitnexus://repo/${repoPath}/cluster/{name}. To see execution flows, READ gitnexus://repo/${repoPath}/processes.`;
 
+    case 'refresh_index':
+      // Dry runs and refusals come back as plain results; only a rebuild changes what to do next.
+      return (toolResult as { status?: unknown } | null)?.status === 'refreshed'
+        ? `\n\n---\n**Next:** Re-run the call that reported the stale index; it now reads the refreshed one.`
+        : '';
+
     default:
       return '';
   }
@@ -140,14 +158,45 @@ function formatMcpToolError(error: unknown): string {
 }
 
 /**
+ * Relay `refresh_index` worker progress as MCP progress notifications when the
+ * client asked for them. Values only move forward, as the protocol requires,
+ * and a failed send never fails the refresh.
+ */
+function refreshProgress(
+  progressToken: string | number | undefined,
+  extra: { sendNotification: (notification: ServerNotification) => Promise<void> },
+): McpToolCallContext | undefined {
+  if (progressToken === undefined) return undefined;
+  let last = -1;
+  return {
+    onProgress: (percent, message) => {
+      const progress = Math.min(100, Math.max(last, percent));
+      if (progress === last) return;
+      last = progress;
+      void extra
+        .sendNotification({
+          method: 'notifications/progress',
+          params: { progressToken, progress, total: 100, message },
+        })
+        .catch(() => {});
+    },
+  };
+}
+
+/**
  * Create a configured MCP Server with all handlers registered.
  * Transport-agnostic — caller connects the desired transport.
  */
 export function createMCPServer(
   backend: LocalBackend,
-  options: { repositoryPolicy?: McpRepositoryPolicy } = {},
+  options: {
+    repositoryPolicy?: McpRepositoryPolicy;
+    /** Expose `refresh_index`; only the local `gitnexus mcp` command passes it (#3524). */
+    refreshIndex?: boolean;
+  } = {},
 ): Server {
   const readOnly = resolveMcpReadOnlyMode();
+  const refreshEnabled = options.refreshIndex === true && !readOnly;
   if (!options.repositoryPolicy && mcpRepositoryPolicyConfigured()) {
     throw new Error('Configured MCP repository policy must be validated before server creation.');
   }
@@ -237,19 +286,21 @@ export function createMCPServer(
     const { readOnlyRequiresRepo, mutatingRequiresRepo } =
       await repositoryPolicy.toolSchemaRepoRequirements(backend);
     return {
-      tools: GITNEXUS_TOOLS.filter(
-        (tool) =>
-          (!readOnly || MCP_READ_ONLY_TOOLS.has(tool.name)) &&
-          repositoryPolicy.toolAllowed(tool.name),
-      )
-        .map((tool) => toolForReadOnlyMcp(repositoryPolicy.toolForMcp(tool), readOnly))
+      tools: (refreshEnabled ? [...GITNEXUS_TOOLS, REFRESH_INDEX_TOOL] : GITNEXUS_TOOLS)
+        .filter(
+          (tool) =>
+            (!readOnly || MCP_READ_ONLY_TOOLS.has(tool.name)) &&
+            repositoryPolicy.toolAllowed(tool.name),
+        )
+        .map((tool) => repositoryPolicy.toolForMcp(toolForReadOnlyMcp(tool, readOnly)))
         .map((tool) => ({
           name: tool.name,
           description: tool.description,
           inputSchema:
             // Read-only `rename` is preview-only, so it follows the read-tool rule.
-            (tool.name === 'rename' && !readOnly ? mutatingRequiresRepo : readOnlyRequiresRepo) &&
-            REPO_SCOPED_TOOLS.has(tool.name)
+            ((tool.name === 'rename' && !readOnly) || tool.name === MCP_REFRESH_TOOL
+              ? mutatingRequiresRepo
+              : readOnlyRequiresRepo) && REPO_SCOPED_TOOLS.has(tool.name)
               ? {
                   ...tool.inputSchema,
                   required: [...new Set([...tool.inputSchema.required, 'repo'])],
@@ -261,30 +312,51 @@ export function createMCPServer(
   });
 
   // Handle tool calls — append next-step hints to guide agent workflow
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
     let maxTokens: number | undefined;
 
     try {
       const typedArgs = args as Record<string, unknown> | undefined;
       assertMcpReadOnlyToolCall(name, typedArgs, readOnly);
+      assertMcpRefreshToolCall(name, refreshEnabled);
       const schemaSource = schemaSourceToolName(name);
-      const advertisedTool = GITNEXUS_TOOLS.find((tool) => tool.name === schemaSource);
+      const advertisedTool = findToolDefinition(schemaSource);
       if (advertisedTool) {
-        const listed = toolForReadOnlyMcp(repositoryPolicy.toolForMcp(advertisedTool), readOnly);
+        const listed = repositoryPolicy.toolForMcp(toolForReadOnlyMcp(advertisedTool, readOnly));
         assertKnownMcpToolArguments(name, typedArgs, listed.inputSchema.properties);
       }
       const responseFilter = resolveMcpResponseFilter(schemaSource, typedArgs);
       maxTokens = resolveMcpMaxTokens(name, typedArgs);
-      const backendArgs = withoutMcpResponseFilterArgs(
+      const isImpact = schemaSource === 'impact';
+      const strippedArgs = withoutMcpResponseFilterArgs(
         withoutMcpBudgetArg(typedArgs),
         responseFilter,
       );
-      const result = applyMcpResponseFilter(
-        await scopedBackend.callTool(name, backendArgs),
+      const backendArgs = isImpact ? withImpactAgentDefaults(strippedArgs) : strippedArgs;
+      // Only a refresh with a progress token takes a context; every other call
+      // keeps its exact arguments.
+      const callContext =
+        name === MCP_REFRESH_TOOL
+          ? refreshProgress(request.params._meta?.progressToken, extra)
+          : undefined;
+      const rawResult = applyMcpResponseFilter(
+        await (callContext
+          ? scopedBackend.callTool(name, backendArgs, callContext)
+          : scopedBackend.callTool(name, backendArgs)),
         responseFilter,
       );
-      const hint = getNextStepHint(name, args as Record<string, any> | undefined, readOnly, result);
+      const hint = getNextStepHint(
+        name,
+        args as Record<string, any> | undefined,
+        readOnly,
+        rawResult,
+      );
+      // Trim whole impact records to the budget so the JSON stays valid; the
+      // byte cap below remains the backstop for everything else.
+      const result = isImpact
+        ? shapeImpactForAgent(rawResult, maxTokens, Buffer.byteLength(hint, 'utf8'))
+        : rawResult;
       const resultText =
         name === 'query' && result !== null && typeof result === 'object' && !Array.isArray(result)
           ? JSON.stringify({ ...result, next: hint })
@@ -303,7 +375,10 @@ export function createMCPServer(
         content: [
           {
             type: 'text',
-            text: applyMcpMaxTokens(formatMcpToolError(error), maxTokens),
+            text:
+              error instanceof ImpactBudgetExceededError
+                ? error.toJSONText()
+                : applyMcpMaxTokens(formatMcpToolError(error), maxTokens),
           },
         ],
         isError: true,
@@ -433,12 +508,43 @@ export function installSignalShutdown(
   on('SIGTERM', () => void shutdown(SHUTDOWN_EXIT_CODES.SIGTERM));
 }
 
+/** Stdio can outlive its launcher when another process holds the pipe open. */
+export function installParentShutdown(
+  shutdown: (exitCode?: number) => unknown,
+  parentPid = process.ppid,
+): () => void {
+  if (parentPid <= 1) return () => {};
+  const timer = setInterval(() => {
+    // Reparenting also detects death when the original PID has been reused.
+    let parentGone = process.ppid !== parentPid;
+    if (!parentGone) {
+      try {
+        process.kill(parentPid, 0);
+      } catch (error) {
+        // EPERM (or any unrecognized failure) is not proof of parent death.
+        parentGone = (error as NodeJS.ErrnoException).code === 'ESRCH';
+      }
+    }
+    if (parentGone) {
+      clearInterval(timer);
+      void shutdown(0);
+    }
+  }, 1_000);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
 export async function startMCPServer(
   backend: LocalBackend,
   repositoryPolicy?: McpRepositoryPolicy,
+  options: { refreshIndex?: boolean } = {},
 ): Promise<void> {
+  const parentPid = process.ppid;
   const validatedRepositoryPolicy = repositoryPolicy ?? (await createMcpRepositoryPolicy(backend));
-  const server = createMCPServer(backend, { repositoryPolicy: validatedRepositoryPolicy });
+  const server = createMCPServer(backend, {
+    repositoryPolicy: validatedRepositoryPolicy,
+    refreshIndex: options.refreshIndex,
+  });
 
   // Idempotent global sentinel install. cli/mcp.ts calls this first thing
   // (before warnMissingOptionalGrammars / backend.init can emit to stdout);
@@ -473,6 +579,7 @@ export async function startMCPServer(
   const shutdown = async (exitCode = 0) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stopParentWatch();
     // Safety net: if backend.disconnect()/server.close() hangs, still exit so a
     // SIGINT/SIGTERM reliably terminates the process. Unref'd so the timer alone
     // never keeps the event loop alive.
@@ -489,6 +596,7 @@ export async function startMCPServer(
     clearTimeout(forceExit);
     process.exit(exitCode);
   };
+  const stopParentWatch = installParentShutdown(shutdown, parentPid);
 
   // Handle graceful shutdown. Node invokes signal listeners with the signal
   // NAME (e.g. 'SIGTERM') as the first argument; registering `shutdown`

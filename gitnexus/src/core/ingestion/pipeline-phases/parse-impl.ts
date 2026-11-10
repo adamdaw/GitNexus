@@ -1628,6 +1628,11 @@ export async function runChunkedParseAndResolve(
   allFetchWrapperDefs = resolvedFetchWrappers.definitions;
   allFetchWrapperCalls = resolvedFetchWrappers.calls;
 
+  // User route configuration is applied here, on the main thread: workers only
+  // emit configuration-free candidates, so a config change never stales the
+  // parse cache.
+  const routeHookConfig = options?.routeHookConfig;
+
   // A resolver's identity defines a fact family, including providers sharing
   // one language implementation. Shared ingestion never inspects the payload.
   const routeFactGroups = new Map<
@@ -1643,7 +1648,10 @@ export async function runChunkedParseAndResolve(
   }
   const resolvedRoutesByFile = new Map<string, ExtractedDecoratorRoute[]>();
   for (const [resolve, files] of routeFactGroups) {
-    for (const route of resolve(files, { resolveImportTargets: resolveRouteModuleTargets })) {
+    for (const route of resolve(files, {
+      resolveImportTargets: resolveRouteModuleTargets,
+      routeHookConfig,
+    })) {
       const routes = resolvedRoutesByFile.get(route.filePath) ?? [];
       routes.push(route);
       resolvedRoutesByFile.set(route.filePath, routes);
@@ -2031,6 +2039,7 @@ export async function runChunkedParseAndResolve(
       resolveImportTarget: resolveRouteImportTarget,
       resolveImportTargets: resolveRouteImportTargets,
       providerRouteHandler: (filePath) => getProviderForFile(filePath)?.resolveRouteHandler,
+      routeHookConfig,
       isExportedSymbol: (nodeId: string) => graph.getNode(nodeId)?.properties.isExported === true,
       nodeStartLine: (id) => {
         const n = graph.getNode(id);
