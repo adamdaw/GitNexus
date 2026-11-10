@@ -66,7 +66,7 @@ empty impact results as exact.
 **Invalid symbol identity:** `query`, `context`, or `impact` can return
 `The index returned an invalid symbol identity` with recovery guidance instead
 of returning malformed results. Rebuild from the affected repository root with
-`npx gitnexus analyze --force`. If the error returns, retain the failing command,
+`gitnexus analyze --force`. If the error returns, retain the failing command,
 GitNexus/Node versions and `gitnexus doctor` output for investigation. This check
 detects blank IDs and NUL-containing identity fields; it does not prove that
 every otherwise plausible name, path or source range is correct.
@@ -135,13 +135,13 @@ costs; compare complete-source candidates separately from older capped inputs.
 
 **Important:** If you already had embeddings, a plain `npx gitnexus analyze` **preserves** them (Non-negotiable 5 in [GUARDRAILS.md](GUARDRAILS.md)) — pass `--embeddings` when you also want vectors generated for new or changed nodes, and `--drop-embeddings` only for a deliberate wipe. See `stats.embeddings` in `.gitnexus/gitnexus.json` (or its legacy `meta.json` mirror; 0 means none) — but that figure isn't always freshly measured: if a run's embedding-count query can't answer, it carries the previous run's number forward instead of writing a wrong zero. For a certified read, check `capabilities.vectorSearch.status` instead — it reads `unavailable` (never a stale count) whenever GitNexus can't vouch for the live vector index.
 
-**Embedding work interrupted after graph publication:** The graph and keyword index become available before embedding work starts. An embedding failure makes analyze exit nonzero while keeping that graph available and retaining acknowledged embedding work. `npx gitnexus status --json` reports graph freshness separately from embedding progress and vector readiness. Resume with:
+**Embedding work interrupted after graph publication:** The graph and keyword index become available before embedding work starts. An embedding failure makes analyze exit nonzero while keeping that graph available and retaining acknowledged embedding work. `gitnexus status --json` reports graph freshness separately from embedding progress and vector readiness. Resume with:
 
 ```bash
 npx gitnexus analyze
 ```
 
-No `--embeddings` flag is needed for a retained job. `npx gitnexus embeddings sync` also resumes work against an already published graph. Compatible acknowledged units do not call the provider again; a unit interrupted before acknowledgement may replay. A source or embedding-configuration change revalidates reuse, and changing worker counts or memory budgets does not invalidate paid vectors. `--drop-embeddings` deliberately abandons retained vectors. `--force` rebuilds the graph while retaining compatible paid work for reuse.
+No `--embeddings` flag is needed for a retained job. `gitnexus embeddings sync` also resumes work against an already published graph. Compatible acknowledged units do not call the provider again; a unit interrupted before acknowledgement may replay. A source or embedding-configuration change revalidates reuse, and changing worker counts or memory budgets does not invalidate paid vectors. `--drop-embeddings` deliberately abandons retained vectors. `--force` rebuilds the graph while retaining compatible paid work for reuse.
 
 Older indexes may instead carry an `embeddingCheckpoint` and report `embedding-checkpoint-pending`. Plain analyze recovers that checkpoint, including any explicitly referenced staging data, before migrating it. Historical vectors without verified provider/model provenance are retained without being relabeled as output from the current model.
 
@@ -158,7 +158,7 @@ If it recurs, the cause is almost always environmental rather than a code defect
 **Weak semantic recall despite existing embeddings:** If paraphrased queries look like keyword-only search, the distance cutoff may be too strict for the embedding model. CLI and MCP `query` default to `0.6`. From the indexed repository, try a broader cutoff:
 
 ```bash
-GITNEXUS_VECTOR_MAX_DISTANCE=0.8 npx gitnexus query "how are expired sessions removed" --limit 10
+GITNEXUS_VECTOR_MAX_DISTANCE=0.8 gitnexus query "how are expired sessions removed" --limit 10
 ```
 
 Compare target inclusion and ranking against the default; a broader cutoff also admits less relevant hits. Set the variable in the MCP/serve launch environment and restart that process when tuning a server. A cutoff change needs no reindex and setting it only during `analyze` does not persist it. If the index has no vectors, generate embeddings first; if the embedding model or dimensions differ between indexing and querying, align that configuration and regenerate vectors. See [Vector cutoff tuning](README.md#vector-cutoff-tuning) for validation rules and the limited `voyage-code-4` evidence from #3457.
@@ -176,7 +176,7 @@ Run `gitnexus analyze --force` to replace an index with a missing or invalid rec
 For examples of unverified identities, enable debug logging:
 
 ```bash
-GITNEXUS_LOG_LEVEL=debug npx gitnexus analyze --force 2>gitnexus-debug.log
+GITNEXUS_LOG_LEVEL=debug gitnexus analyze --force 2>gitnexus-debug.log
 ```
 
 `graph_reference_unverified` includes at most one example per reason per analysis: opaque IDs, collapsed IDs, point-only sites, extracted coordinates, and partial mappings. `graph_reference_rejected` identifies the invalid relationship, endpoints, source file, emission reason, and stack before the write is rejected. Source buffers are not logged; diagnostic IDs and emission reasons can contain source-derived names or literals. Concurrent edits and unreadable sources remain unverified (`sourceChanged` / `sourceUnavailable`, with the read error code); they do not abort analysis. A rejected record prevents a successful ingestion summary; the previous published index remains available when the failed run used staging.
@@ -307,7 +307,7 @@ reservation: the frontend, main heap, parser workers, native graph/vector pools,
 embedding model, bounded input queue, and headroom. For example:
 
 ```bash
-npx gitnexus analyze --embeddings --resource-budget 8192 --memory-budget 1024 --workers 2
+gitnexus analyze --embeddings --resource-budget 8192 --memory-budget 1024 --workers 2
 ```
 
 Node propagates the main V8 heap flag to parser workers, so each worker reserves
@@ -331,7 +331,7 @@ If the host has enough memory, set an explicit pool size in **bytes**, then
 rebuild. For example, 3 GiB is `3221225472` bytes:
 
 ```bash
-GITNEXUS_LBUG_BUFFER_POOL_SIZE=3221225472 npx gitnexus analyze --force
+GITNEXUS_LBUG_BUFFER_POOL_SIZE=3221225472 gitnexus analyze --force
 ```
 
 The override bypasses automatic pool sizing. Budget for the Node heap, parse

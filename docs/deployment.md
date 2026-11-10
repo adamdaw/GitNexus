@@ -34,7 +34,7 @@ Indexing is memory-bound. If `gitnexus-server` runs out of memory on a large rep
 
 ## Deploy to RepoCloud
 
-[![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploylobe.svg)](https://repocloud.io/details/gitnexus/)
+There is no RepoCloud template for this fork. RepoCloud's GitNexus template deploys upstream GitNexus, which has no Apex support, so it is not linked here. Use the Render Blueprint above or the [Docker](#docker) images built from this checkout.
 
 ## Docker
 

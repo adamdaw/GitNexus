@@ -107,8 +107,8 @@ codex plugin marketplace add abhigyanpatwari/GitNexus
 {
   "mcpServers": {
     "gitnexus": {
-      "command": "npx",
-      "args": ["-y", "gitnexus@latest", "mcp"]
+      "command": "gitnexus",
+      "args": ["mcp"]
     }
   }
 }
@@ -819,7 +819,7 @@ On a host with memory to spare, override the pool in **bytes** and rebuild:
 
 ```bash
 # 3 GiB native pool; leave room for Node, workers, other native memory, and the OS
-GITNEXUS_LBUG_BUFFER_POOL_SIZE=3221225472 npx gitnexus analyze --force
+GITNEXUS_LBUG_BUFFER_POOL_SIZE=3221225472 gitnexus analyze --force
 ```
 
 An explicit value bypasses automatic pool sizing and can exhaust the host if
@@ -946,7 +946,7 @@ The walker skips hidden paths, so symbols defined under a directory such as `.sc
 
 ```bash
 export GITNEXUS_INCLUDE_DOT_DIRS=.scallywag,.config
-npx gitnexus analyze
+gitnexus analyze
 ```
 
 Each name matches that directory at any depth (`pkg/.scallywag/` too). Hidden files and other dot directories inside it stay excluded. Ignore rules still apply (the built-in list covers `.github/`, so also add `!.github/` to `.gitnexusignore` to index it). Changing or removing the list takes effect on the next `analyze`, even on a clean checkout. The list is recorded with the index, so `status` compares against the same file set even if the variable changes later.
