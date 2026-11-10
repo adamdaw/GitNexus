@@ -3,12 +3,14 @@ import { createReadStream, createWriteStream, existsSync, constants as fsConstan
 import { createInterface } from 'readline';
 import { once } from 'events';
 import { finished } from 'stream/promises';
+import { setImmediate as yieldQueryRows } from 'node:timers/promises';
 import path from 'path';
 import lbug from '@ladybugdb/core';
 import { closeQueryResults } from './query-result-utils.js';
 import { chunk } from '../../lib/utils.js';
 import { warnIfQueryTextUnbounded } from './query-batch.js';
 import { escapeCypherString } from './cypher-escape.js';
+import { MODULE_MEMBERSHIP_REASON } from '../graph/edge-reasons.js';
 import { withConnLock } from './conn-lock.js';
 import { isWalDriverActive } from './wal-driver-state.js';
 import { KnowledgeGraph } from '../graph/types.js';
@@ -57,6 +59,7 @@ import { resolveFtsVersionPair } from './vendored-extension-path.js';
 import {
   classifyDeleteAllError,
   closeLbugConnection,
+  drainLbugResourceReleases,
   HANDLE_RELEASE_PROBE_ATTEMPTS,
   HANDLE_RELEASE_PROBE_DELAY_MS,
   isDbBusyError,
@@ -580,6 +583,7 @@ const refuseLargeWalQuarantine = async (
 const reopenReadOnlyAfterMissingShadow = async (
   dbPath: string,
   err: unknown,
+  resources: Pick<LbugInitOptions, 'bufferPoolBytes' | 'threads'> = {},
 ): Promise<LbugConnectionHandle> => {
   await refuseLargeWalQuarantine(dbPath, 'read-only', err);
   try {
@@ -592,7 +596,7 @@ const reopenReadOnlyAfterMissingShadow = async (
     throw new Error(renameFailureMessage(dbPath, renameErr));
   }
 
-  const reopened = await openLbugConnection(lbug, dbPath, { readOnly: true });
+  const reopened = await openLbugConnection(lbug, dbPath, { ...resources, readOnly: true });
   try {
     await queryAndDrain(reopened.conn, READ_ONLY_SHADOW_REPLAY_PROBE);
     return reopened;
@@ -626,6 +630,7 @@ const writableFtsCrashWalEvidence = async (
 const reopenWritableAfterMissingShadow = async (
   dbPath: string,
   err: unknown,
+  options: LbugInitOptions = {},
 ): Promise<LbugConnectionHandle> => {
   // Analyze writers may park a leftover in-place FTS abort WAL. Serve/embed
   // refuse first via assertReadOnlyFtsCrashSafe and must not pass this
@@ -646,12 +651,18 @@ const reopenWritableAfterMissingShadow = async (
     throw new Error(renameFailureMessage(dbPath, renameErr));
   }
 
-  return await openLbugConnection(lbug, dbPath);
+  return options.bufferPoolBytes !== undefined || options.threads !== undefined
+    ? await openLbugConnection(lbug, dbPath, {
+        bufferPoolBytes: options.bufferPoolBytes,
+        threads: options.threads,
+      })
+    : await openLbugConnection(lbug, dbPath);
 };
 
 const ensureReadOnlyConnectionUsable = async (
   dbPath: string,
   handle: LbugConnectionHandle,
+  resources: Pick<LbugInitOptions, 'bufferPoolBytes' | 'threads'> = {},
 ): Promise<LbugConnectionHandle> => {
   let shadowReplayErr: unknown;
   try {
@@ -660,7 +671,7 @@ const ensureReadOnlyConnectionUsable = async (
   } catch (err) {
     if (isMissingShadowSidecarError(err)) {
       await closeLbugConnection(handle);
-      return await reopenReadOnlyAfterMissingShadow(dbPath, err);
+      return await reopenReadOnlyAfterMissingShadow(dbPath, err, resources);
     }
     if (!isReadOnlyShadowReplayError(err) && !isReadOnlyCheckpointInProgressError(err)) {
       await closeLbugConnection(handle);
@@ -670,7 +681,7 @@ const ensureReadOnlyConnectionUsable = async (
   }
 
   await closeLbugConnection(handle);
-  return await recoverReadOnlyViaWritableOpen(dbPath, shadowReplayErr);
+  return await recoverReadOnlyViaWritableOpen(dbPath, shadowReplayErr, resources);
 };
 
 /**
@@ -690,10 +701,14 @@ const ensureReadOnlyConnectionUsable = async (
 const recoverReadOnlyViaWritableOpen = async (
   dbPath: string,
   triggeringErr: unknown,
+  resources: Pick<LbugInitOptions, 'bufferPoolBytes' | 'threads'> = {},
 ): Promise<LbugConnectionHandle> => {
   let writable: LbugConnectionHandle;
   try {
-    writable = await openLbugConnection(lbug, dbPath);
+    writable =
+      resources.bufferPoolBytes !== undefined || resources.threads !== undefined
+        ? await openLbugConnection(lbug, dbPath, resources)
+        : await openLbugConnection(lbug, dbPath);
   } catch (openErr) {
     const code = extractErrnoCode(openErr);
     if (code === 'EROFS' || code === 'EACCES' || code === 'EPERM') {
@@ -728,10 +743,10 @@ const recoverReadOnlyViaWritableOpen = async (
     await closeLbugConnection(writable);
   }
   if (missingShadowError) {
-    return await reopenReadOnlyAfterMissingShadow(dbPath, missingShadowError);
+    return await reopenReadOnlyAfterMissingShadow(dbPath, missingShadowError, resources);
   }
 
-  const reopened = await openLbugConnection(lbug, dbPath, { readOnly: true });
+  const reopened = await openLbugConnection(lbug, dbPath, { ...resources, readOnly: true });
   try {
     await queryAndDrain(reopened.conn, READ_ONLY_SHADOW_REPLAY_PROBE);
     return reopened;
@@ -804,8 +819,20 @@ const runSchemaCreationQueries = async (dbPath: string): Promise<unknown | null>
   return null;
 };
 
-export const initLbug = async (dbPath: string, options: { skipFts?: boolean } = {}) => {
-  return runWithSessionLock(() => ensureLbugInitialized(dbPath, options));
+export interface LbugInitOptions {
+  /** Open existing rows read-only; interrupted WAL recovery may reopen writable. */
+  readOnly?: boolean;
+  skipFts?: boolean;
+  bufferPoolBytes?: number;
+  threads?: number;
+}
+
+export const initLbug = async (dbPath: string, options: LbugInitOptions = {}) => {
+  return runWithSessionLock(async () => {
+    if (options.bufferPoolBytes !== undefined || options.threads !== undefined)
+      await drainLbugResourceReleases();
+    return ensureLbugInitialized(dbPath, options);
+  });
 };
 
 /**
@@ -858,34 +885,54 @@ export const withLbugDb = async <T>(
 };
 
 let currentDbSkipFts = false;
+let currentDbBufferPoolBytes: number | undefined;
+let currentDbThreads: number | undefined;
+let nativeCloseUnverified = false;
 
 const ensureLbugInitialized = async (
   dbPath: string,
-  options: { readOnly?: boolean; skipFts?: boolean } = {},
+  options: LbugInitOptions & { readOnly?: boolean } = {},
 ) => {
   const readOnly = options.readOnly === true;
   const skipFts = options.skipFts === true;
   if (
+    options.bufferPoolBytes !== undefined &&
+    (!Number.isSafeInteger(options.bufferPoolBytes) ||
+      (options.bufferPoolBytes !== 0 && options.bufferPoolBytes < 8 * 1024 * 1024))
+  )
+    throw new Error(
+      'Explicit LadybugDB buffer pool must be zero (native default) or at least 8 MiB',
+    );
+  if (
+    options.threads !== undefined &&
+    (!Number.isSafeInteger(options.threads) || options.threads < 1)
+  )
+    throw new Error('Explicit LadybugDB thread allocation must be a positive integer');
+  if (
     conn &&
+    !nativeCloseUnverified &&
     currentDbPath === dbPath &&
     currentDbReadOnly === readOnly &&
-    currentDbSkipFts === skipFts
+    currentDbSkipFts === skipFts &&
+    currentDbBufferPoolBytes === options.bufferPoolBytes &&
+    currentDbThreads === options.threads
   ) {
     return { db, conn };
   }
-  await doInitLbug(dbPath, { readOnly, skipFts });
+  await doInitLbug(dbPath, { ...options, readOnly, skipFts });
   return { db, conn };
 };
 
 const doInitLbug = async (
   dbPath: string,
-  options: { readOnly?: boolean; skipFts?: boolean } = {},
+  options: LbugInitOptions & { readOnly?: boolean } = {},
 ) => {
   const readOnly = options.readOnly === true;
   const skipFts = options.skipFts === true;
   // Different database requested — close the old one first
-  if (conn || db) {
-    await safeClose();
+  const resourceBound = options.bufferPoolBytes !== undefined || options.threads !== undefined;
+  if (conn || db || nativeCloseUnverified || (resourceBound && currentDbPath)) {
+    await safeClose({ strict: resourceBound });
     currentDbPath = null;
     ftsLoaded = false;
     vectorExtensionLoaded = false;
@@ -901,6 +948,9 @@ const doInitLbug = async (
   // create databases and don't need the lock.
   // ---------------------------------------------------------------------------
   if (readOnly) {
+    const resources = resourceBound
+      ? { bufferPoolBytes: options.bufferPoolBytes, threads: options.threads }
+      : {};
     await assertReadOnlyFtsCrashSafe(dbPath);
     await preflightLbugSidecars(dbPath, {
       mode: 'read-only',
@@ -910,12 +960,15 @@ const doInitLbug = async (
 
     let usable: Awaited<ReturnType<typeof ensureReadOnlyConnectionUsable>>;
     try {
-      const opened = await openLbugConnection(lbug, dbPath, { readOnly: true });
+      const opened = await openLbugConnection(lbug, dbPath, {
+        readOnly: true,
+        ...resources,
+      });
       // The storage-version check isn't necessarily enforced by the native
       // engine until the first real query runs (ensureReadOnlyConnectionUsable's
       // own probe query) — openLbugConnection alone can succeed on a
       // mismatched file. Wrap both.
-      usable = await ensureReadOnlyConnectionUsable(dbPath, opened);
+      usable = await ensureReadOnlyConnectionUsable(dbPath, opened, resources);
     } catch (err) {
       // An interrupted checkpoint can make the OPEN itself refuse read-only
       // ("Cannot open database in read-only mode while checkpoint is in
@@ -923,7 +976,7 @@ const doInitLbug = async (
       // then reopen read-only — the same self-heal the probe path applies.
       // Skip already-wrapped failures so we do not re-enter writable recovery.
       if (isReadOnlyCheckpointInProgressError(err) && !isReadOnlyRecoveryFailure(err)) {
-        usable = await recoverReadOnlyViaWritableOpen(dbPath, err);
+        usable = await recoverReadOnlyViaWritableOpen(dbPath, err, resources);
       } else {
         // Not retryable: the on-disk file's storage version doesn't change on
         // its own, so withLbugDb's retry loop (which only handles
@@ -1047,10 +1100,19 @@ const doInitLbug = async (
       });
 
       try {
-        const opened = await openLbugConnection(lbug, dbPath);
+        const opened = resourceBound
+          ? await openLbugConnection(lbug, dbPath, {
+              bufferPoolBytes: options.bufferPoolBytes,
+              threads: options.threads,
+            })
+          : await openLbugConnection(lbug, dbPath);
         db = opened.db;
         conn = opened.conn;
         currentDbReadOnly = false;
+        // Record the live allocation before schema work, so an initialization
+        // failure must also prove release before another native open.
+        currentDbBufferPoolBytes = options.bufferPoolBytes;
+        currentDbThreads = options.threads;
       } catch (err) {
         // Incremental analyze can hit a storage-version mismatch on construct
         // or (more often) on the first schema query below. Fail immediately
@@ -1068,7 +1130,7 @@ const doInitLbug = async (
     if (missingShadowError) {
       await safeClose();
       resetOpenConnectionState();
-      const reopened = await reopenWritableAfterMissingShadow(dbPath, missingShadowError);
+      const reopened = await reopenWritableAfterMissingShadow(dbPath, missingShadowError, options);
       db = reopened.db;
       conn = reopened.conn;
       currentDbReadOnly = false;
@@ -1096,36 +1158,105 @@ const doInitLbug = async (
   }
 
   currentDbSkipFts = skipFts;
+  currentDbBufferPoolBytes = options.bufferPoolBytes;
+  currentDbThreads = options.threads;
   currentDbPath = dbPath;
   return { db, conn };
 };
 
 export type LbugProgressCallback = (message: string) => void;
 
+const throwIfBufferPoolExhausted = (error: unknown, context?: string): void => {
+  const message = error instanceof Error ? error.message : String(error);
+  const remedy = bufferPoolExhaustionRemedy(message);
+  if (remedy) throw new Error(`${context ?? message} ${remedy}`, { cause: error });
+};
+
 /**
  * Run a COPY, retrying once with IGNORE_ERRORS=true (which skips row-level
- * errors) on first failure. On a second failure, hand the RAW retry error to
- * `onError` — each call site formats + slices its own message (#2226 F5: node
- * COPY slices to 200 chars and throws; relationship COPY slices to 80 and warns,
- * so the helper must not pre-format and lose that distinction). `onError` may
- * throw to propagate the failure.
+ * errors) on a non-resource first failure. Buffer exhaustion is fatal, including
+ * retained retry warnings, and bypasses the recoverable-error callback. Log the
+ * original failure and native COPY/warning receipts even when the retry succeeds.
+ * Node COPY requires every row; a skipped-node receipt is a failure. Call sites
+ * retain their own message limits and relationship fallback policy.
  */
 const copyCsvWithRetry = async (
   targetConn: lbug.Connection,
   copyQuery: string,
   onError: (retryErr: unknown) => void,
+  expectedRows?: number,
 ): Promise<void> => {
   try {
     await queryAndDrain(targetConn, copyQuery);
-  } catch {
+  } catch (firstError) {
+    throwIfBufferPoolExhausted(firstError);
+    logger.warn(
+      { err: firstError, copyQuery },
+      'First COPY failure; retrying with IGNORE_ERRORS=true',
+    );
     try {
       const retryQuery = copyQuery.replace(
         'auto_detect=false)',
         'auto_detect=false, IGNORE_ERRORS=true)',
       );
-      await queryAndDrain(targetConn, retryQuery);
+      // Keep COPY and its connection-local warning receipt in one critical
+      // section. Only project diagnostics, never skipped_line_or_record: that
+      // column contains source text. Warnings are retained at a bounded native
+      // limit, so their count is a lower bound, not the exact skipped total.
+      const retry = async () => {
+        await drainQueryResult(await targetConn.query('CALL CLEAR_WARNINGS()'));
+        const result = await readQueryRows(await targetConn.query(retryQuery));
+        const warnings = await readQueryRows(
+          await targetConn.query('CALL SHOW_WARNINGS() RETURN message, file_path, line_number'),
+        );
+        // The native warning limit can be zero; warning rows alone cannot
+        // prove that every CSV row landed. Node COPY exposes its copied count
+        // in the result receipt even when warning retention is disabled.
+        const countReceipt = result
+          .map((row) => String(row.result ?? ''))
+          .map((message) => /^(\d+) tuples have been copied/.exec(message))
+          .find(Boolean);
+        const copiedRows = countReceipt ? Number(countReceipt[1]) : undefined;
+        logger.warn(
+          {
+            copyQuery,
+            copyResult: result,
+            expectedRows,
+            copiedRows,
+            skippedRows:
+              expectedRows !== undefined && copiedRows !== undefined
+                ? Math.max(0, expectedRows - copiedRows)
+                : undefined,
+            retainedWarnings: warnings.length,
+            warningSamples: warnings.slice(0, 5),
+          },
+          'COPY retry completed; retained warnings describe skipped rows (a lower bound)',
+        );
+        // Inspect every retained warning, not just the diagnostic samples.
+        // Exhaustion cannot be recovered by discarding rows or replaying a
+        // partially committed relationship COPY through the fallback path.
+        const resourceWarning = warnings.find((warning) =>
+          bufferPoolExhaustionRemedy(String(warning.message ?? '')),
+        );
+        if (resourceWarning) throw new Error(String(resourceWarning.message));
+        if (expectedRows !== undefined && (copiedRows !== expectedRows || warnings.length > 0)) {
+          throw new Error(
+            `COPY retry skipped rows or could not verify a complete node load ` +
+              `(copied ${copiedRows ?? 'unknown'} of ${expectedRows}; ${warnings.length} retained warning(s))`,
+          );
+        }
+      };
+      await (isSharedSingletonConn(targetConn) ? withConnLock(retry) : retry());
     } catch (retryErr) {
-      onError(retryErr);
+      const firstMessage = firstError instanceof Error ? firstError.message : String(firstError);
+      const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+      const message = `COPY retry failed: ${retryMessage}; first failure: ${firstMessage}`;
+      throwIfBufferPoolExhausted(retryErr, message);
+      onError(
+        new Error(message, {
+          cause: retryErr,
+        }),
+      );
     }
   }
 };
@@ -1195,17 +1326,15 @@ const copyNodeCSVs = async (
     if (!(await stagingCsvExists(csvPath))) throw missingStagingCsvError(table, csvPath, rows);
 
     const copyQuery = getCopyQuery(table, normalizeCopyPath(csvPath));
-    await copyCsvWithRetry(targetConn, copyQuery, (retryErr) => {
-      const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
-      // Pool exhaustion gets a remedy (#2631): the raw binder text gives the
-      // operator nothing to act on, and on non-4K-page hosts (Ascend aarch64,
-      // Apple Silicon) the pool bills up to pageSize/4KiB x faster than the
-      // sizing was calibrated for — name the knob and the mechanism.
-      const remedy = bufferPoolExhaustionRemedy(retryMsg);
-      throw new Error(
-        `COPY failed for ${table}: ${retryMsg.slice(0, 200)}${remedy ? ` ${remedy}` : ''}`,
-      );
-    });
+    await copyCsvWithRetry(
+      targetConn,
+      copyQuery,
+      (retryErr) => {
+        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        throw new Error(`COPY failed for ${table}: ${retryMsg.slice(0, 200)}`);
+      },
+      rows,
+    );
   }
 };
 
@@ -1402,7 +1531,6 @@ export const loadGraphToLbug = async (
 
   const insertedRels = totalValidRels + (graphEmitManifest?.totalRows ?? 0);
   const warnings: string[] = [];
-  let poolRemedyIssued = false;
   if (insertedRels > 0) {
     log(`Loading edges: ${insertedRels.toLocaleString()} across ${copyJobs.length} CSV files`);
 
@@ -1435,17 +1563,6 @@ export const loadGraphToLbug = async (
       await copyCsvWithRetry(writeConn, copyQuery, (retryErr) => {
         const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
         warnings.push(`${fromLabel}->${toLabel} (${rows} edges): ${retryMsg.slice(0, 80)}`);
-        // One remedy per bulk load, not per pair (#2631): pool exhaustion
-        // repeats for every remaining pair once it starts. logger.warn, not
-        // just warnings.push — the returned warnings array has no consumer at
-        // any call site, so a push alone would leave the remedy invisible
-        // while the row-by-row fallback quietly degrades the load.
-        const remedy = poolRemedyIssued ? undefined : bufferPoolExhaustionRemedy(retryMsg);
-        if (remedy) {
-          poolRemedyIssued = true;
-          warnings.push(remedy);
-          logger.warn(remedy);
-        }
         failedPairEdges += rows;
         failedPairCsvPaths.add(pairCsvPath);
       });
@@ -1644,8 +1761,9 @@ export const fallbackRelationshipInserts = async (
         CREATE (a)-[:${REL_TABLE_NAME} {type: ${formatCypherValue(relType)}, confidence: ${confidence}, reason: ${formatCypherValue(reason)}, step: ${step}, staticGated: ${staticGated}}]->(b)
       `,
       );
-    } catch {
-      // skip
+    } catch (error) {
+      throwIfBufferPoolExhausted(error);
+      // Ordinary per-row failures remain skippable.
     }
   }
 };
@@ -1677,7 +1795,7 @@ export const getCopyQuery = (table: NodeTableName, filePath: string): string => 
     return `COPY ${t}(id, name, filePath, startLine, endLine, level, content, description) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
   if (table === 'Route') {
-    return `COPY ${t}(id, name, filePath, responseKeys, errorKeys, middleware, method, handlerSymbolId, runtimeConfirmed, runtimeSource, runtimeStatus) FROM "${filePath}" ${COPY_CSV_OPTS}`;
+    return `COPY ${t}(id, name, filePath, responseKeys, errorKeys, middleware, method, handlerSymbolId, runtimeConfirmed, runtimeSource, runtimeStatus, unverifiedConsumers) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
   if (table === 'Tool') {
     return `COPY ${t}(id, name, filePath, description) FROM "${filePath}" ${COPY_CSV_OPTS}`;
@@ -1689,7 +1807,7 @@ export const getCopyQuery = (table: NodeTableName, filePath: string): string => 
     // Taint/PDG substrate (issue #2080) — no name column. `callees` is the
     // statement-precise inter-procedural reach substrate (space-joined leaf names);
     // `calleeIds` is its SOUND parallel (space-joined resolved callee ids, #2227).
-    return `COPY ${t}(id, filePath, startLine, endLine, text, callees, calleeIds) FROM "${filePath}" ${COPY_CSV_OPTS}`;
+    return `COPY ${t}(id, filePath, startLine, endLine, text, callees, calleeIds, ownerId) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
   if (table === 'Class') {
     return `COPY ${t}(id, name, filePath, startLine, endLine, isExported, content, description, frameworkAnnotations) FROM "${filePath}" ${COPY_CSV_OPTS}`;
@@ -1752,7 +1870,7 @@ export const insertNodeToLbug = async (
     } else if (label === 'BasicBlock') {
       // Taint/PDG substrate (issue #2080) — no name column. `calleeIds` (#2227)
       // is the sound resolved-id parallel to the leaf-name `callees` set.
-      query = `CREATE (n:BasicBlock {id: ${formatCypherValue(properties.id)}, filePath: ${formatCypherValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, text: ${formatCypherValue(properties.text || '')}, callees: ${formatCypherValue(properties.callees || '')}, calleeIds: ${formatCypherValue(properties.calleeIds || '')}})`;
+      query = `CREATE (n:BasicBlock {id: ${formatCypherValue(properties.id)}, filePath: ${formatCypherValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, text: ${formatCypherValue(properties.text || '')}, callees: ${formatCypherValue(properties.callees || '')}, calleeIds: ${formatCypherValue(properties.calleeIds || '')}, ownerId: ${formatCypherValue(properties.ownerId || '')}})`;
     } else if (label === 'Class') {
       const descPart = properties.description
         ? `, description: ${formatCypherValue(properties.description)}`
@@ -1852,7 +1970,7 @@ export const batchInsertNodesToLbug = async (
         } else if (label === 'BasicBlock') {
           // Taint/PDG substrate (issue #2080) — no name column. `calleeIds`
           // (#2227) is the sound resolved-id parallel to the `callees` set.
-          query = `MERGE (n:BasicBlock {id: ${formatCypherValue(properties.id)}}) SET n.filePath = ${formatCypherValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.text = ${formatCypherValue(properties.text || '')}, n.callees = ${formatCypherValue(properties.callees || '')}, n.calleeIds = ${formatCypherValue(properties.calleeIds || '')}`;
+          query = `MERGE (n:BasicBlock {id: ${formatCypherValue(properties.id)}}) SET n.filePath = ${formatCypherValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.text = ${formatCypherValue(properties.text || '')}, n.callees = ${formatCypherValue(properties.callees || '')}, n.calleeIds = ${formatCypherValue(properties.calleeIds || '')}, n.ownerId = ${formatCypherValue(properties.ownerId || '')}`;
         } else if (label === 'Class') {
           const descPart = properties.description
             ? `, n.description = ${formatCypherValue(properties.description)}`
@@ -1903,6 +2021,57 @@ export const batchInsertNodesToLbug = async (
 // double-report the same query text (#2915).
 export const executeQuery = async (cypher: string): Promise<any[]> => {
   return await executePrepared(cypher, {});
+};
+
+/**
+ * Visit a single trusted, parameter-free query without retaining a JS row array.
+ * The visitor must be synchronous and must not issue another connection query.
+ * Keep the connection locked through yields and cursor close so a checkpoint
+ * cannot interleave with reading. Use direct execution: repeated prepared reads
+ * exhausted the native pool in the normal-GC identity scaling probe.
+ */
+export const forEachQueryRow = async (
+  cypher: string,
+  onRow: (row: any) => undefined,
+): Promise<void> => {
+  warnIfQueryTextUnbounded(cypher, 'forEachQueryRow', (message) => logger.warn(message));
+  const c = conn;
+  if (!c) throw new Error('LadybugDB not initialized. Call initLbug first.');
+
+  await withConnLock(async () => {
+    const queryResult = await c.query(cypher);
+    const results = Array.isArray(queryResult) ? queryResult : [queryResult];
+    let failed = false;
+    let failure: unknown;
+    try {
+      if (results.length !== 1 || !results[0]) {
+        throw new Error('forEachQueryRow requires exactly one query result');
+      }
+      const result = results[0];
+      let rows = 0;
+      while (result.hasNext()) {
+        const row = result.getNextSync();
+        if (row === null) throw new Error('Query cursor ended before its advertised next row');
+        onRow(row);
+        if (++rows % 1024 === 0) await yieldQueryRows();
+      }
+    } catch (error) {
+      failed = true;
+      failure = error;
+    } finally {
+      for (const result of results) {
+        try {
+          result?.close();
+        } catch (error) {
+          if (!failed) {
+            failed = true;
+            failure = error;
+          }
+        }
+      }
+    }
+    if (failed) throw failure;
+  });
 };
 
 export const streamQuery = async (
@@ -2170,7 +2339,10 @@ export const loadCachedEmbeddings = async (
           `MATCH (e:${EMBEDDING_TABLE_NAME}) RETURN e.nodeId AS nodeId, e.chunkIndex AS chunkIndex LIMIT 1`,
         );
         await readQueryRows(check);
-      } catch {
+      } catch (err) {
+        if (!isMissingColumnOrTableError(err instanceof Error ? err.message : String(err))) {
+          throw err;
+        }
         abortCachedEmbeddingsBuilder(builder);
         return emptyCachedEmbeddingsSnapshot();
       }
@@ -2296,7 +2468,9 @@ export const fetchExistingEmbeddingHashes = async (
  */
 export const flushWAL = async (): Promise<void> => {
   const c = conn;
-  if (!c) return;
+  // CHECKPOINT on a read-only connection can leave LadybugDB's checkpoint
+  // marker set even though the write is rejected, poisoning the next reader.
+  if (!c || currentDbReadOnly) return;
   try {
     await withConnLock(async () => {
       const checkpointResult = await c.query('CHECKPOINT');
@@ -2325,7 +2499,7 @@ export const flushWAL = async (): Promise<void> => {
  */
 export const tryFlushWAL = async (): Promise<boolean> => {
   const c = conn;
-  if (!c) return false;
+  if (!c || currentDbReadOnly) return false;
   // Runs on the periodic WAL-checkpoint driver. The lock makes this CHECKPOINT
   // wait for any in-flight COPY / writeback on the singleton connection instead
   // of executing concurrently with it (the `analyze --pdg` heap-corruption bug).
@@ -2346,7 +2520,13 @@ export const tryFlushWAL = async (): Promise<boolean> => {
  * @see flushWAL — CHECKPOINT-only (connection stays open)
  * @see closeLbug — safeClose + module state reset (full teardown)
  */
-export const safeClose = async (): Promise<void> => {
+export const safeClose = async (options: { strict?: boolean } = {}): Promise<void> => {
+  const strict =
+    options.strict === true ||
+    nativeCloseUnverified ||
+    currentDbBufferPoolBytes !== undefined ||
+    currentDbThreads !== undefined;
+  if (strict) nativeCloseUnverified = true;
   await flushWAL();
   // Capture before close — currentDbPath stays set so the Windows post-close
   // probe below knows which file to wait on.
@@ -2355,7 +2535,8 @@ export const safeClose = async (): Promise<void> => {
     try {
       // eslint-disable-next-line no-restricted-syntax -- sole authorised close site
       await conn.close();
-    } catch {
+    } catch (error) {
+      if (strict) throw error;
       /* best-effort */
     }
     conn = null;
@@ -2364,7 +2545,8 @@ export const safeClose = async (): Promise<void> => {
     try {
       // eslint-disable-next-line no-restricted-syntax -- sole authorised close site
       await db.close();
-    } catch {
+    } catch (error) {
+      if (strict) throw error;
       /* best-effort */
     }
     db = null;
@@ -2377,6 +2559,7 @@ export const safeClose = async (): Promise<void> => {
   if (process.platform === 'win32' && closingDbPath) {
     const released = await waitForWindowsHandleRelease(closingDbPath);
     if (!released) {
+      if (strict) throw new Error('LadybugDB native resource reservation has not been released');
       // Probe exhausted with a lock code still in flight. The next
       // openLbugConnection will absorb whatever residual lag remains, but
       // a chronic warning helps operators spot AV interference (Windows
@@ -2390,6 +2573,7 @@ export const safeClose = async (): Promise<void> => {
   if (closingDbPath) {
     await finalizeLbugSidecarsAfterClose(closingDbPath, { logger });
   }
+  nativeCloseUnverified = false;
 };
 
 /**
@@ -2425,13 +2609,24 @@ export const closeLbugBeforeExit = async (): Promise<void> => {
   // double-free.
 };
 
-export const closeLbug = async (): Promise<void> => {
-  await safeClose();
+export const closeLbug = async (options: { strict?: boolean } = {}): Promise<void> => {
+  await safeClose(options);
   currentDbPath = null;
+  currentDbBufferPoolBytes = undefined;
+  currentDbThreads = undefined;
   ftsLoaded = false;
   vectorExtensionLoaded = false;
   vectorIndexEnsured = false;
   ensuredFTSIndexes.clear();
+};
+
+/** A new analysis phase may reuse the prior phase's reservation only after its
+ * native handles are gone. Wait for session work; never close an active query. */
+export const drainAnalysisNativeResources = async (): Promise<void> => {
+  await runWithSessionLock(async () => {
+    if (conn || db || nativeCloseUnverified) await closeLbug({ strict: true });
+    await drainLbugResourceReleases();
+  });
 };
 
 /**
@@ -2982,6 +3177,30 @@ export const restoreDerivedRels = async (rels: readonly DerivedRelSnapshot[]): P
 export const getEmbeddingTableName = (): string => EMBEDDING_TABLE_NAME;
 
 /**
+ * The two importer queries for a `b.filePath <predicate>` target set:
+ *   1. direct importers — any IMPORTS edge into a target file;
+ *   2. module co-members — files with a `MODULE_MEMBERSHIP_REASON` edge to a
+ *      `Module` node that a target file also has one. Whole-module visibility
+ *      means a declaration added to one member can change how any other member
+ *      resolves, so co-members are importers of each other. The hub form keeps
+ *      this linear in module size (#3355).
+ */
+const importerCyphers = (targetPredicate: string): string[] => [
+  `
+    MATCH (a)-[r:${REL_TABLE_NAME}]->(b)
+    WHERE r.type = 'IMPORTS' AND b.filePath ${targetPredicate}
+    RETURN DISTINCT a.filePath AS importer
+  `,
+  `
+    MATCH (a:File)-[r1:${REL_TABLE_NAME}]->(m:Module)<-[r2:${REL_TABLE_NAME}]-(b:File)
+    WHERE r1.type = 'IMPORTS' AND r1.reason = '${MODULE_MEMBERSHIP_REASON}'
+      AND r2.type = 'IMPORTS' AND r2.reason = '${MODULE_MEMBERSHIP_REASON}'
+      AND b.filePath ${targetPredicate} AND a.filePath <> b.filePath
+    RETURN DISTINCT a.filePath AS importer
+  `,
+];
+
+/**
  * Return the distinct repo-relative paths of files that import
  * `targetFilePath` according to the IMPORTS edges currently in the
  * DB. Used by the incremental writeback path to expand the
@@ -3002,31 +3221,29 @@ export const queryImporters = async (targetFilePath: string): Promise<string[]> 
     throw new Error('LadybugDB not initialized. Call initLbug first.');
   }
   const escaped = escapeCypherString(targetFilePath);
-  const cypher = `
-    MATCH (a)-[r:${REL_TABLE_NAME}]->(b)
-    WHERE r.type = 'IMPORTS' AND b.filePath = '${escaped}'
-    RETURN DISTINCT a.filePath AS importer
-  `;
+  const cyphers = importerCyphers(`= '${escaped}'`);
   // Runs inside the connection lock: queryImporters is called in the importer-BFS
   // loop during incremental --pdg writeback while the WAL driver is live, so an
   // unlocked conn.query here could race a concurrent CHECKPOINT on the singleton.
   return withConnLock(async () => {
-    let queryResult: lbug.QueryResult | lbug.QueryResult[] | undefined;
-    try {
-      queryResult = await c.query(cypher);
-      const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
-      const rows = await result.getAll();
-      const out: string[] = [];
-      for (const row of rows) {
-        const v = (row as { importer?: unknown }).importer;
-        if (typeof v === 'string' && v.length > 0) out.push(v);
+    const out = new Set<string>();
+    for (const cypher of cyphers) {
+      let queryResult: lbug.QueryResult | lbug.QueryResult[] | undefined;
+      try {
+        queryResult = await c.query(cypher);
+        const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
+        const rows = await result.getAll();
+        for (const row of rows) {
+          const v = (row as { importer?: unknown }).importer;
+          if (typeof v === 'string' && v.length > 0) out.add(v);
+        }
+      } catch {
+        return [];
+      } finally {
+        if (queryResult) await closeQueryResults(queryResult);
       }
-      return out;
-    } catch {
-      return [];
-    } finally {
-      if (queryResult) await closeQueryResults(queryResult);
     }
+    return [...out];
   });
 };
 
@@ -3064,21 +3281,24 @@ export const queryImportersBatch = async (
   const importers = new Set<string>();
   for (const [chunkIndex, batch] of chunk(targetFilePaths, DELETE_FILES_CHUNK_SIZE).entries()) {
     const listLiteral = `[${batch.map((p) => `'${escapeCypherString(p)}'`).join(', ')}]`;
-    const cypher = `
-      MATCH (a)-[r:${REL_TABLE_NAME}]->(b)
-      WHERE r.type = 'IMPORTS' AND b.filePath IN ${listLiteral}
-      RETURN DISTINCT a.filePath AS importer
-    `;
     await withConnLock(async () => {
       let queryResult: lbug.QueryResult | lbug.QueryResult[] | undefined;
       try {
-        queryResult = await c.query(cypher);
-        const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
-        const rows = await result.getAll();
-        for (const row of rows) {
-          const v = (row as { importer?: unknown }).importer;
-          if (typeof v === 'string' && v.length > 0) importers.add(v);
+        // Collect into a chunk-local set so a failure on the second query
+        // drops the whole chunk, as it did when there was one query.
+        const found: string[] = [];
+        for (const cypher of importerCyphers(`IN ${listLiteral}`)) {
+          queryResult = await c.query(cypher);
+          const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
+          const rows = await result.getAll();
+          for (const row of rows) {
+            const v = (row as { importer?: unknown }).importer;
+            if (typeof v === 'string' && v.length > 0) found.push(v);
+          }
+          await closeQueryResults(queryResult);
+          queryResult = undefined;
         }
+        for (const v of found) importers.add(v);
       } catch (err) {
         // Degrade-don't-fail, mirroring queryImporters — but LOUDLY
         // (tri-review 4669518496 P2-5): a dropped chunk means every importer
@@ -3987,6 +4207,7 @@ export const buildFtsQueryCypher = (
  * @param query - Search query string
  * @param limit - Maximum results
  * @param conjunctive - If true, all terms must match (AND); if false, any term matches (OR)
+ * @param missingIndex - Preserve the empty-result default, or propagate missing indexes for diagnostics
  * @returns Array of { node properties, score }
  */
 export const queryFTS = async (
@@ -3995,6 +4216,7 @@ export const queryFTS = async (
   query: string,
   limit: number = 20,
   conjunctive: boolean = false,
+  missingIndex: 'empty' | 'throw' = 'empty',
 ): Promise<
   Array<{ nodeId: string; name: string; filePath: string; score: number; [key: string]: any }>
 > => {
@@ -4025,7 +4247,7 @@ export const queryFTS = async (
     // NEW-6 — this used to be a bare `.includes('does not exist')` check
     // that could not tell the two apart).
     const message = e instanceof Error ? e.message : String(e);
-    if (classifyFtsQueryError(message) === 'missing-index') {
+    if (missingIndex === 'empty' && classifyFtsQueryError(message) === 'missing-index') {
       return [];
     }
     throw e;

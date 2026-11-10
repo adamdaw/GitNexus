@@ -98,7 +98,7 @@ async function runWithOnDiskPdgState(options: {
     getCurrentCommit: vi.fn(async () => 'commit-1'),
     runAnalysis,
     registerRepo: vi.fn(async () => 'repo'),
-    loadState: vi.fn(async () => ({})),
+    loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
     saveState: vi.fn(async () => {}),
     writeCommitInfo: vi.fn(async () => {}),
     addRepoToGroup: vi.fn(async () => false),
@@ -145,11 +145,11 @@ describe('auto-sync runner', () => {
   it('runs clone, analyzes changed commits, registers the repo, and syncs changed groups', async () => {
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'qts_account'),
-      loadState: vi.fn(async () => ({
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({
         '/tmp/repos/gitee.com/qts_server/qts_account|master': {
           codeCommitId: 'commit-1',
           analyzedCommitId: 'commit-1',
@@ -223,6 +223,43 @@ describe('auto-sync runner', () => {
     ]);
   });
 
+  it('passes embeddings from .gitnexusrc into runAnalysis', async () => {
+    const targetDir = '/tmp/repos/gitee.com/qts_server/qts_account';
+    await fs.mkdir(targetDir, { recursive: true });
+    await fs.writeFile(path.join(targetDir, '.gitnexusrc'), '{"embeddings": true}');
+    const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
+      cloneOrPull: vi.fn(async () => targetDir),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
+      runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
+      registerRepo: vi.fn(async () => 'qts_account'),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
+      saveState: vi.fn(async () => {}),
+      writeCommitInfo: vi.fn(async () => {}),
+      addRepoToGroup: vi.fn(async () => false),
+      syncGroupByName: vi.fn(async () => {}),
+      getAvailableMemoryGB: vi.fn(() => 8),
+    });
+
+    try {
+      await runAutoSyncOnce(config, {
+        deps,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+
+      expect(deps.runAnalysis).toHaveBeenCalledWith(
+        targetDir,
+        expect.objectContaining({ embeddings: true }),
+        1_800_000,
+        undefined,
+        undefined,
+        1,
+      );
+    } finally {
+      await fs.rm(path.join(targetDir, '.gitnexusrc'), { force: true });
+    }
+  });
+
   it('enables PDG atomically at an unchanged commit when project configuration opts in', async () => {
     const pdgConfig: AutoSyncConfig = {
       ...config,
@@ -231,12 +268,12 @@ describe('auto-sync runner', () => {
     const stateKey = '/tmp/repos/gitee.com/qts_server/qts_account|master';
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-1'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-1'),
       getExistingPdgMode: vi.fn(async () => false),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'qts_account'),
-      loadState: vi.fn(async () => ({
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({
         [stateKey]: {
           codeCommitId: 'commit-1',
           analyzedCommitId: 'commit-1',
@@ -281,12 +318,12 @@ describe('auto-sync runner', () => {
     };
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       getExistingPdgMode: vi.fn(async () => true),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'qts_account'),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -374,12 +411,12 @@ describe('auto-sync runner', () => {
     const warn = vi.fn();
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-1'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-1'),
       getExistingPdgMode: vi.fn(async () => true),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'qts_account'),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -415,7 +452,7 @@ describe('auto-sync runner', () => {
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'qts_account'),
       resolveBranchPlacement: vi.fn(async () => ({ branch: 'master' })),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => true),
@@ -443,11 +480,11 @@ describe('auto-sync runner', () => {
   it('syncs a group when a repo is newly added to the group', async () => {
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'qts_account'),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => true),
@@ -471,11 +508,11 @@ describe('auto-sync runner', () => {
   it('syncs a group after successful re-analysis even when membership already exists', async () => {
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-3'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-3'),
       runAnalysis: vi.fn(async () => ({ stats: { files: 2 } }) as any),
       registerRepo: vi.fn(async () => 'qts_account'),
-      loadState: vi.fn(async () => ({
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({
         '/tmp/repos/gitee.com/qts_server/qts_account|master': {
           codeCommitId: 'commit-2',
           analyzedCommitId: 'commit-2',
@@ -510,12 +547,14 @@ describe('auto-sync runner', () => {
       projects: [
         {
           localPath: '/tmp/repos-a',
+          overwriteLocalChanges: false,
           groupName: 'back_end',
           branches: ['main'],
           remoteUrls: ['git@github.com:team-a/service.git'],
         },
         {
           localPath: '/tmp/repos-b',
+          overwriteLocalChanges: false,
           groupName: 'back_end',
           branches: ['main'],
           remoteUrls: ['git@gitlab.com:team-b/service.git'],
@@ -528,11 +567,11 @@ describe('auto-sync runner', () => {
         root: localPath,
       })),
       cloneOrPull: vi.fn(async (_url, targetDir) => targetDir),
-      getCurrentBranch: vi.fn(() => 'main'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'main'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'service'),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => true),
@@ -573,16 +612,19 @@ describe('auto-sync runner', () => {
     expect(getAutoSyncRepoIdentity('git@GitHub.com:team/service.GIT')).toBe(
       'github.com/team/service',
     );
+    expect(getAutoSyncRepoIdentity('https://github.com/team/service.git')).toBe(
+      'github.com/team/service',
+    );
   });
 
   it('skips analysis when commit id has not changed', async () => {
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-1'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-1'),
       runAnalysis: vi.fn(),
       registerRepo: vi.fn(),
-      loadState: vi.fn(async () => ({
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({
         '/tmp/repos/gitee.com/qts_server/qts_account|master': {
           codeCommitId: 'commit-1',
           analyzedCommitId: 'commit-1',
@@ -624,11 +666,11 @@ describe('auto-sync runner', () => {
       .mockResolvedValueOnce(undefined);
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-1'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-1'),
       runAnalysis: vi.fn(),
       registerRepo: vi.fn(),
-      loadState: vi.fn(async () => structuredClone(persistedState)),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => structuredClone(persistedState)),
       saveState: vi.fn(async (state) => {
         persistedState = structuredClone(state);
       }),
@@ -665,11 +707,11 @@ describe('auto-sync runner', () => {
 
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'qts_account'),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -698,17 +740,99 @@ describe('auto-sync runner', () => {
     );
   });
 
+  it('clones an allowlisted self-hosted remote under its host path', async () => {
+    const selfHosted: AutoSyncConfig = {
+      ...config,
+      allowedHosts: ['gitlab.mycompany.com'],
+      projects: [
+        {
+          localPath: '/tmp/repos',
+          overwriteLocalChanges: false,
+          branches: ['main'],
+          remoteUrls: ['git@gitlab.mycompany.com:group/repo.git'],
+        },
+      ],
+    };
+    expect(
+      getConfiguredRepoPath(
+        selfHosted.projects[0],
+        'repo',
+        'git@gitlab.mycompany.com:group/repo.git',
+        selfHosted.allowedHosts,
+      ),
+    ).toBe('/tmp/repos/gitlab.mycompany.com/group/repo');
+
+    const cloneOrPull = vi.fn(async () => '/tmp/repos/gitlab.mycompany.com/group/repo');
+    const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
+      cloneOrPull,
+      getCurrentBranch: vi.fn(async () => 'main'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
+      runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
+      registerRepo: vi.fn(async () => 'repo'),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
+      saveState: vi.fn(async () => {}),
+      writeCommitInfo: vi.fn(async () => {}),
+      addRepoToGroup: vi.fn(async () => false),
+      syncGroupByName: vi.fn(async () => {}),
+      getAvailableMemoryGB: vi.fn(() => 8),
+    });
+
+    await runAutoSyncOnce(selfHosted, {
+      deps,
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    expect(cloneOrPull).toHaveBeenCalledWith(
+      'git@gitlab.mycompany.com:group/repo.git',
+      '/tmp/repos/gitlab.mycompany.com/group/repo',
+      undefined,
+      expect.objectContaining({
+        allowAutoSyncSsh: true,
+        autoSyncAllowedHosts: ['gitlab.mycompany.com'],
+        branch: 'main',
+        expectedRepoName: 'repo',
+      }),
+    );
+  });
+
+  it('skips a self-hosted remote that is not listed in allowed_hosts', async () => {
+    const selfHosted: AutoSyncConfig = {
+      ...config,
+      projects: [
+        {
+          localPath: '/tmp/repos',
+          overwriteLocalChanges: false,
+          branches: ['main'],
+          remoteUrls: ['git@gitlab.mycompany.com:group/repo.git'],
+        },
+      ],
+    };
+    const cloneOrPull = vi.fn(async () => '/tmp/repos/should-not-clone');
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const result = await runAutoSyncOnce(selfHosted, {
+      deps: withCloneRoot({
+        cloneOrPull,
+        getAvailableMemoryGB: vi.fn(() => 8),
+      }),
+      logger,
+    });
+
+    expect(result.failed).toBe(1);
+    expect(cloneOrPull).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('allowed_hosts'));
+  });
+
   it('passes watch cancellation controls to the isolated analysis runner', async () => {
     const controller = new AbortController();
     const onAnalysisCancellationRequested = vi.fn();
     const runAnalysis = vi.fn(async () => ({ stats: { files: 1 } }) as any);
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis,
       registerRepo: vi.fn(async () => 'qts_account'),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -751,11 +875,11 @@ describe('auto-sync runner', () => {
         if (options?.branch === 'missing') throw new Error('remote branch not found');
         return '/tmp/repos/gitee.com/qts_server/qts_account';
       }),
-      getCurrentBranch: vi.fn(() => 'develop'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'develop'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'qts_account'),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -818,7 +942,7 @@ describe('auto-sync runner', () => {
       getCurrentCommit: vi.fn(),
       runAnalysis: vi.fn(),
       registerRepo: vi.fn(),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -858,11 +982,11 @@ describe('auto-sync runner', () => {
     const warnLogger = vi.fn();
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'develop'),
+      getCurrentBranch: vi.fn(async () => 'develop'),
       getCurrentCommit: vi.fn(),
       runAnalysis: vi.fn(),
       registerRepo: vi.fn(),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => true),
@@ -888,11 +1012,11 @@ describe('auto-sync runner', () => {
     const warnLogger = vi.fn();
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => undefined),
+      getCurrentBranch: vi.fn(async () => undefined),
       getCurrentCommit: vi.fn(),
       runAnalysis: vi.fn(),
       registerRepo: vi.fn(),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => true),
@@ -933,13 +1057,13 @@ describe('auto-sync runner', () => {
         if (remoteUrl.includes('failing_sync')) throw new Error('sync failed');
         return '/tmp/repos/gitee.com/qts_server/qts_account';
       }),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => {
         throw new Error('analysis failed');
       }),
       registerRepo: vi.fn(),
-      loadState: vi.fn(async () => ({
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({
         '/tmp/repos/gitee.com/qts_server/qts_account|master': {
           codeCommitId: 'commit-1',
           analyzedCommitId: 'commit-1',
@@ -991,11 +1115,11 @@ describe('auto-sync runner', () => {
   it('records the resolved target directory when a post-sync operation fails', async () => {
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async (_url, targetDir) => targetDir),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => {
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => {
         throw new Error('git log failed');
       }),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       getAvailableMemoryGB: vi.fn(() => 8),
@@ -1031,11 +1155,11 @@ describe('auto-sync runner', () => {
         return cloneRoot;
       }),
       cloneOrPull: vi.fn(async (_url, targetDir) => targetDir),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'repo'),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -1058,13 +1182,13 @@ describe('auto-sync runner', () => {
     const errorLogger = vi.fn();
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async (_url, targetDir) => targetDir),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => {
         throw new Error('registry busy');
       }),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -1098,11 +1222,11 @@ describe('auto-sync runner', () => {
     const errorLogger = vi.fn();
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'qts_account'),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -1157,13 +1281,13 @@ describe('auto-sync runner', () => {
         events.push(`clone-end:${remoteUrl}`);
         return remoteUrl.includes('/one.git') ? '/tmp/repos/one' : '/tmp/repos/two';
       }),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn((repoPath) =>
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async (repoPath: string) =>
         repoPath.endsWith('/one') ? 'one-commit' : 'two-commit',
       ),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'repo'),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -1201,11 +1325,11 @@ describe('auto-sync runner', () => {
     };
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async (_url, targetDir) => targetDir),
-      getCurrentBranch: vi.fn(() => 'main'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'main'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async (_path, _meta, options) => options?.name ?? 'repo'),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -1238,41 +1362,52 @@ describe('auto-sync runner', () => {
     expect(deps.writeCommitInfo).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects non auto-sync SSH URLs at runner boundary', async () => {
-    const invalidConfig: AutoSyncConfig = {
+  it('clones allowlisted HTTPS remotes at the runner boundary', async () => {
+    const httpsConfig: AutoSyncConfig = {
       ...config,
       projects: [{ ...config.projects[0], remoteUrls: ['https://github.com/owner/repo.git'] }],
     };
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
-      cloneOrPull: vi.fn(),
-      loadState: vi.fn(async () => ({})),
+      cloneOrPull: vi.fn(async () => '/tmp/repos/github.com/owner/repo'),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
       syncGroupByName: vi.fn(async () => {}),
       getAvailableMemoryGB: vi.fn(() => 8),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'abc'),
+      runAnalysis: vi.fn(async () => ({ stats: {} })),
+      registerRepo: vi.fn(async () => 'repo'),
     });
 
-    const result = await runAutoSyncOnce(invalidConfig, {
+    const error = vi.fn();
+    const result = await runAutoSyncOnce(httpsConfig, {
       deps,
-      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      logger: { info: vi.fn(), warn: vi.fn(), error },
     });
 
-    expect(result.failed).toBe(1);
-    expect(deps.cloneOrPull).not.toHaveBeenCalled();
+    expect(error.mock.calls, JSON.stringify(error.mock.calls)).toEqual([]);
+    expect(result.failed).toBe(0);
+    expect(deps.cloneOrPull).toHaveBeenCalledWith(
+      'https://github.com/owner/repo.git',
+      '/tmp/repos/github.com/owner/repo',
+      undefined,
+      expect.any(Object),
+    );
   });
 
   it('resets consecutive analyze failures when the code commit changes, then records this failure', async () => {
     const errorLogger = vi.fn();
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => {
         throw new Error('parser crashed\nwith stack');
       }),
       registerRepo: vi.fn(),
-      loadState: vi.fn(async () => ({
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({
         '/tmp/repos/gitee.com/qts_server/qts_account|master': {
           codeCommitId: 'commit-1',
           analyzedCommitId: 'commit-1',
@@ -1319,6 +1454,67 @@ describe('auto-sync runner', () => {
     );
   });
 
+  it.each([
+    ['short', 'Cannot read from file: position: 4096, numBytesRead: 0'],
+    ['oversized', `native-start ${'n'.repeat(3000)}`],
+  ])(
+    'logs the whole analyze failure diagnosis but persists only a short summary for a %s native error (#3530)',
+    async (_label, nativeFailure) => {
+      const errorLogger = vi.fn();
+      // Realistic size: a remedy line plus seven evidence lines, about 1.3 KB — more
+      // than half the log cap, so an even head/tail split would cut the remedy.
+      const diagnosis = [
+        `start-of-remedy ${'A read reached end-of-file in the staged copy of the index. '.repeat(5)}`,
+        ...Array.from(
+          { length: 7 },
+          (_, i) => `Failure evidence — line ${i}: ${'staging copy apparent 4096 B, '.repeat(4)}`,
+        ),
+      ].join('\n');
+      const message = `${nativeFailure}\n${diagnosis}`;
+      const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
+        cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
+        getCurrentBranch: vi.fn(async () => 'master'),
+        getCurrentCommit: vi.fn(async () => 'commit-1'),
+        runAnalysis: vi.fn(async () => {
+          throw new Error(message);
+        }),
+        registerRepo: vi.fn(),
+        loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
+        saveState: vi.fn(async () => {}),
+        writeCommitInfo: vi.fn(async () => {}),
+        addRepoToGroup: vi.fn(async () => false),
+        syncGroupByName: vi.fn(async () => {}),
+        getAvailableMemoryGB: vi.fn(() => 8),
+      });
+
+      await runAutoSyncOnce(config, {
+        deps,
+        logger: { info: vi.fn(), warn: vi.fn(), error: errorLogger },
+        now: () => new Date('2026-06-30T00:00:00.000Z'),
+      });
+
+      expect(diagnosis.length).toBeGreaterThan(1000);
+      expect(errorLogger).toHaveBeenCalledWith(
+        expect.stringContaining(diagnosis.replace(/\s+/g, ' ')),
+      );
+      // The error payload (the part after the log prefix) stays within the 2000-character cap,
+      // separator included.
+      const logged: string = errorLogger.mock.calls[0][0];
+      const prefix =
+        '[auto-sync] Analysis failed for /tmp/repos/gitee.com/qts_server/qts_account; consecutive failures 1/3: ';
+      expect(logged.startsWith(prefix)).toBe(true);
+      expect(logged.length - prefix.length).toBeLessThanOrEqual(2000);
+      expect(errorLogger).toHaveBeenCalledWith(expect.stringContaining(nativeFailure.slice(0, 40)));
+      expect(deps.saveState).toHaveBeenCalledWith(
+        expect.objectContaining({
+          '/tmp/repos/gitee.com/qts_server/qts_account|master': expect.objectContaining({
+            lastAnalyzeError: message.replace(/\s+/g, ' ').slice(0, 240),
+          }),
+        }),
+      );
+    },
+  );
+
   it('does not count leftover-worker timeout toward the analyze failure threshold', async () => {
     const errorLogger = vi.fn();
     const leftover = new AutoSyncAnalysisError(
@@ -1327,13 +1523,13 @@ describe('auto-sync runner', () => {
     );
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-1'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-1'),
       runAnalysis: vi.fn(async () => {
         throw leftover;
       }),
       registerRepo: vi.fn(),
-      loadState: vi.fn(async () => ({
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({
         '/tmp/repos/gitee.com/qts_server/qts_account|master': {
           codeCommitId: 'commit-1',
           analyzedCommitId: 'commit-1',
@@ -1380,8 +1576,8 @@ describe('auto-sync runner', () => {
   it('does not count a retryable live-holder index-lock timeout toward the analyze failure threshold', async () => {
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-1'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-1'),
       runAnalysis: vi.fn(async () => {
         throw new AutoSyncAnalysisError('waited for the index lock', {
           code: 'index-lock-timeout',
@@ -1389,7 +1585,7 @@ describe('auto-sync runner', () => {
         });
       }),
       registerRepo: vi.fn(),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -1417,8 +1613,8 @@ describe('auto-sync runner', () => {
   it('still counts a non-retryable index-lock guard timeout toward the analyze failure threshold', async () => {
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-1'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-1'),
       runAnalysis: vi.fn(async () => {
         throw new AutoSyncAnalysisError('index lock guard timeout', {
           code: 'index-lock-timeout',
@@ -1426,7 +1622,7 @@ describe('auto-sync runner', () => {
         });
       }),
       registerRepo: vi.fn(),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -1453,13 +1649,13 @@ describe('auto-sync runner', () => {
   it('records a null analysis failure without masking it with a TypeError', async () => {
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => {
         throw null;
       }),
       registerRepo: vi.fn(),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({})),
       saveState: vi.fn(async () => {}),
       writeCommitInfo: vi.fn(async () => {}),
       addRepoToGroup: vi.fn(async () => false),
@@ -1488,11 +1684,11 @@ describe('auto-sync runner', () => {
     const errorLogger = vi.fn();
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'qts_account'),
-      loadState: vi.fn(async () => ({
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({
         '/tmp/repos/gitee.com/qts_server/qts_account|master': {
           codeCommitId: 'commit-1',
           analyzedCommitId: 'commit-1',
@@ -1540,11 +1736,11 @@ describe('auto-sync runner', () => {
   it('clears prior analyze failure count after a successful analyze', async () => {
     const deps: Partial<AutoSyncRunDeps> = withCloneRoot({
       cloneOrPull: vi.fn(async () => '/tmp/repos/gitee.com/qts_server/qts_account'),
-      getCurrentBranch: vi.fn(() => 'master'),
-      getCurrentCommit: vi.fn(() => 'commit-2'),
+      getCurrentBranch: vi.fn(async () => 'master'),
+      getCurrentCommit: vi.fn(async () => 'commit-2'),
       runAnalysis: vi.fn(async () => ({ stats: { files: 1 } }) as any),
       registerRepo: vi.fn(async () => 'qts_account'),
-      loadState: vi.fn(async () => ({
+      loadState: vi.fn<AutoSyncRunDeps['loadState']>(async () => ({
         '/tmp/repos/gitee.com/qts_server/qts_account|master': {
           codeCommitId: 'commit-1',
           analyzedCommitId: 'commit-1',

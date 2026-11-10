@@ -50,7 +50,7 @@ import {
   type AnalyzerRunnerIdentity,
   type RepoMeta,
 } from './repo-meta.js';
-import { LBUG_DIRECTORY } from './storage-constants.js';
+import { resolveGraphPath } from './shared-store.js';
 import {
   defaultStoragePath,
   ensureStoragePathWritable,
@@ -62,6 +62,7 @@ import {
   LIST_STORAGE_REQUIREMENTS,
   requireDeletableStoragePath,
   StorageDeletionError,
+  type StorageInspection,
   validateConfiguredStoragePath,
 } from './storage-resolver.js';
 
@@ -190,6 +191,11 @@ export interface RegistryEntry {
    * legacy registry shape.
    */
   branches?: BranchSummary[];
+  /**
+   * The checkout left sharing with `analyze --no-share` (#3352), so it does
+   * not join a sibling clone's store automatically. Cleared by `--share-with`.
+   */
+  shareOptOut?: true;
 }
 
 /** Path-only registry lookup. Canonicalizes `repoPath` once. Does not throw. */
@@ -211,11 +217,13 @@ const GITNEXUS_EXCLUDE_ENTRY = `${GITNEXUS_DIR}/`;
  * `storagePath` is ALWAYS the flat `<repo>/.gitnexus` — content-addressed
  * caches (`parse-cache/`, `parsedfile-store/`) live there and are shared
  * across branches (#2106 KTD7). When `branch` is provided, both `lbugPath`
- * and `metaPath` are scoped under `branches/<slug>/`. For the flat call
- * (no `branch`), `storagePath` and `lbugPath` remain byte-identical to the
- * pre-multi-branch behavior (#2106); `metaPath`'s FILENAME changed from
- * `meta.json` to `gitnexus.json` (PR #2363) — `saveMeta` keeps a `meta.json`
- * mirror in sync for consumers that still read the legacy name.
+ * and `metaPath` are scoped under `branches/<slug>/`. `lbugPath` resolves an
+ * owned private generation when metadata names one, otherwise the slot's
+ * `lbug`. A flat shared-store checkout slot can also resolve the immutable
+ * commit graph recorded in its metadata (`resolveGraphPath`, #3352).
+ * `metaPath`'s FILENAME changed from `meta.json` to `gitnexus.json`
+ * (PR #2363) — `saveMeta` keeps a `meta.json` mirror in sync for consumers
+ * that still read the legacy name.
  *
  * Each branch slot has its own metadata file:
  * - Primary/flat: <repo>/.gitnexus/gitnexus.json
@@ -234,7 +242,9 @@ export const getStoragePaths = (
   const baseDir = branch ? path.join(storagePath, BRANCHES_DIR, branchSlug(branch)) : storagePath;
   return {
     storagePath,
-    lbugPath: path.join(baseDir, LBUG_DIRECTORY),
+    // Private generations also work in branch slots. Only a flat shared-store
+    // slot may resolve to an immutable commit graph (#3352).
+    lbugPath: resolveGraphPath(baseDir),
     metaPath: path.join(baseDir, INDEX_METADATA_FILE), // Branch-specific metadata file
   };
 };
@@ -887,6 +897,12 @@ export interface RegisterRepoOptions {
    * analysis or index operation has begun.
    */
   storagePath?: string;
+  /**
+   * Drop recorded `branches[]` summaries on a primary run. Set when the entry
+   * moves to a different storage location (a shared-store slot, #3352): the
+   * summaries name `branches/<slug>` sub-indexes the new location does not hold.
+   */
+  dropBranches?: boolean;
 }
 
 /**
@@ -928,6 +944,7 @@ export class RegistryNameCollisionError extends Error {
 const hasCustomAlias = (entry: RegistryEntry, inferredName: string | null): boolean => {
   const resolved = path.resolve(entry.path);
   if (entry.name === path.basename(resolved)) return false;
+  if (inferredName && entry.name === inferredName) return false;
   // Canonical-root-derived names are not user aliases either (#1259):
   // a worktree registered under the canonical repo's basename
   // (e.g. `{name: 'repo', path: '/repo/wt-feature'}`) must re-register
@@ -939,7 +956,6 @@ const hasCustomAlias = (entry: RegistryEntry, inferredName: string | null): bool
   // — analyze canonical, then analyze worktree, then re-analyze worktree
   // — would break on the third call.
   if (entry.name === path.basename(resolveRepoIdentityRoot(resolved))) return false;
-  if (inferredName && entry.name === inferredName) return false;
   return true;
 };
 
@@ -1163,8 +1179,9 @@ const registerRepoUnlocked = async (
     // Primary run: apply our refreshed top-level, but defer to the FRESH
     // branches[] (a concurrent branch upsert or `clean --branch` wins).
     merged = { ...entry };
-    if (freshExisting?.branches) merged.branches = freshExisting.branches;
+    if (freshExisting?.branches && !opts?.dropBranches) merged.branches = freshExisting.branches;
     else delete merged.branches;
+    if (freshExisting?.shareOptOut) merged.shareOptOut = true;
   }
   if (freshIdx >= 0) {
     fresh[freshIdx] = merged;
@@ -1222,6 +1239,20 @@ const unregisterRepoUnlocked = async (repoPath: string): Promise<void> => {
 
 export const unregisterRepo = async (repoPath: string): Promise<void> =>
   withRegistryLock(() => unregisterRepoUnlocked(repoPath));
+
+/**
+ * Record (or clear) a checkout's opt-out from automatic clone sharing
+ * (#3352). A no-op when the checkout is not registered.
+ */
+export const setShareOptOut = async (repoPath: string, optOut: boolean): Promise<void> =>
+  withRegistryLock(async () => {
+    const entries = await readRegistryStrict();
+    const entry = findRegistryEntryByRepoPath(entries, repoPath);
+    if (!entry || !!entry.shareOptOut === optOut) return;
+    if (optOut) entry.shareOptOut = true;
+    else delete entry.shareOptOut;
+    await writeRegistry(entries);
+  });
 
 /**
  * Remove a single non-primary branch's summary from a repo's registry entry
@@ -1714,6 +1745,12 @@ export const listRegisteredRepos = async (opts?: {
   const prunedSlots = new Set<string>();
   const registrySlotKey = (entry: RegistryEntry): string =>
     `${canonicalizePath(entry.path)}\0${canonicalizePath(entry.storagePath)}`;
+  const isSafelyPrunable = (inspection: StorageInspection): boolean =>
+    !isTransientStorageInspection(inspection) &&
+    (inspection.state === 'missing' ||
+      inspection.state === 'empty' ||
+      (inspection.state === 'unowned' &&
+        inspection.reason === 'Storage directory contains data but no valid ownership metadata.'));
   const inspections = await mapPool(entries, inspectRegisteredStorage, 8);
   for (const [entry, inspection] of entries.map(
     (entry, i) => [entry, inspections[i]] as [RegistryEntry, (typeof inspections)[number]],
@@ -1723,12 +1760,7 @@ export const listRegisteredRepos = async (opts?: {
       (!LIST_STORAGE_REQUIREMENTS.requireCodeIndexDB || inspection.hasCodeIndexDB);
     if (meetsRequirements) {
       valid.push(entry);
-    } else if (
-      inspection.state === 'missing' ||
-      inspection.state === 'empty' ||
-      (inspection.state === 'unowned' &&
-        inspection.reason === 'Storage directory contains data but no valid ownership metadata.')
-    ) {
+    } else if (isSafelyPrunable(inspection)) {
       // A missing/empty directory or a registry slot with no ownership
       // metadata is not a usable index. Removing only the registry row is
       // safe; the storage directory itself is never deleted here.
@@ -1755,15 +1787,22 @@ export const listRegisteredRepos = async (opts?: {
   // only then. The validation walk above is read-only and can touch several
   // files per entry, so holding the global lock across it would serialize
   // every `gitnexus augment` behind unrelated registry work for no benefit.
-  // Re-read inside the lock and drop only the same provably-absent storage
-  // slots from that fresh snapshot, so a concurrent re-registration of the
-  // same repository path into another slot survives.
+  // Reinspect only deletion candidates under the lock: even the same slot
+  // with identical metadata may have been rebuilt and re-registered since
+  // the initial inspection (#3515). Other slots keep the lock-free read path.
   if (prunedSlots.size > 0) {
     try {
       await withRegistryLock(async () => {
-        const fresh = await readRegistry();
+        const fresh = await readRegistryStrictIfPresent();
+        if (!fresh) return;
+        const candidates = fresh.filter((entry) => prunedSlots.has(registrySlotKey(entry)));
+        const rechecked = await mapPool(candidates, inspectRegisteredStorage, 8);
+        const confirmedSlots = new Set(
+          candidates.filter((_, i) => isSafelyPrunable(rechecked[i])).map(registrySlotKey),
+        );
+        if (confirmedSlots.size === 0) return;
         await writeRegistry(
-          fresh.filter((entry) => !prunedSlots.has(registrySlotKey(entry))),
+          fresh.filter((entry) => !confirmedSlots.has(registrySlotKey(entry))),
           1,
         );
       });
@@ -1798,7 +1837,8 @@ export interface CLIConfig {
     | 'codex'
     | 'opencode'
     | 'grok'
-    | 'minimax';
+    | 'minimax'
+    | 'anthropic';
   cursorModel?: string;
   claudeModel?: string;
   codexModel?: string;
@@ -1808,6 +1848,8 @@ export interface CLIConfig {
   apiVersion?: string;
   /** Set true when the deployment is a reasoning model (o1, o3, o4-mini). Auto-detected for OpenAI; must be set for Azure deployments. */
   isReasoningModel?: boolean;
+  /** Completion-token limit for wiki LLM requests. Flag and GITNEXUS_MAX_COMPLETION_TOKENS win over this. */
+  maxCompletionTokens?: number;
 }
 
 /**

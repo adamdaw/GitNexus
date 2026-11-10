@@ -11,11 +11,13 @@ import {
   createLbugLazyAction,
 } from './lazy-action.js';
 import { EMBEDDING_DIMS_ERROR, normalizeEmbeddingDims } from './embedding-dims.js';
+import { IntegerOptionError, parseMemoryBudgetMb } from './int-option.js';
 import { registerGroupCommands } from './group.js';
 import { localizeCliHelp } from './help-i18n.js';
 import { t } from './i18n/index.js';
 import { writeCommandBanner } from './command-banner.js';
 import { runProcessCliUpdateNotice } from './update-notice.js';
+import { memoryAutopilotDisabled } from '../core/ingestion/utils/effective-ram.js';
 
 const program = new Command();
 
@@ -28,7 +30,7 @@ program.name('gitnexus').description('GitNexus local CLI and MCP server').versio
 program
   .command('setup')
   .description(
-    'One-time setup: configure MCP for Cursor, Claude Code, Antigravity, OpenCode, CodeBuddy, Qoder, Codex',
+    'One-time setup: configure MCP for Cursor, Claude Code, Antigravity, OpenCode, CodeBuddy, Qoder, Codex, Factory Droid',
   )
   .option(
     '-c, --coding-agent <agents>',
@@ -145,6 +147,18 @@ program
     'Register this repo even if another path already uses the same --name alias. ' +
       'Leaves `-r <name>` ambiguous for the two paths; use -r <path> to disambiguate.',
   )
+  .option(
+    '--share-with <repo>',
+    'Join the shared index store of a registered checkout of the same repository ' +
+      '(name or path); the remote URL must match. Clones join a sibling clone’s store ' +
+      'automatically; this names one explicitly and clears a --no-share opt-out.',
+  )
+  .option(
+    '--no-share',
+    'Clones only: leave the shared index store, index into <repo>/.gitnexus again, and stop ' +
+      'joining sibling clones automatically until --share-with (linked worktrees always share; ' +
+      'set GITNEXUS_SHARED_STORE=off instead)',
+  )
   .option('-v, --verbose', 'Enable verbose ingestion warnings (default: false)')
   .option(
     '--max-file-size <kb>',
@@ -158,6 +172,16 @@ program
     '--wal-checkpoint-threshold <bytes>',
     'LadybugDB WAL auto-checkpoint threshold in bytes during analyze ' +
       '(integer >= -1; default: 67108864 = 64 MiB; -1 keeps Ladybug stock ~16 MiB).',
+  )
+  .option(
+    '--memory-budget <mb>',
+    'Main-thread V8 heap size in MB for analyze (integer >= 200). Re-runs analyze with ' +
+      'exactly this heap, overriding the RAM/cgroup auto-sizer and any --max-old-space-size ' +
+      'pin; parse workers keep their own heap caps.',
+  )
+  .option(
+    '--resource-budget <mb>',
+    'Total analysis resource budget in MiB, including native pools, workers, model and supervisor.',
   )
   .option(
     '--workers <n>',
@@ -219,6 +243,18 @@ program
       process.stderr.write('\n  --debounce requires --watch\n\n');
       process.exit(1);
     }
+    // Validate --memory-budget here so analyze and --watch both reject a bad
+    // value before ensureHeap sizes (and possibly respawns) the heap (#3137).
+    const budgetOpt = analyzeOpts['memoryBudget'];
+    if (budgetOpt !== undefined) {
+      try {
+        parseMemoryBudgetMb(String(budgetOpt));
+      } catch (error) {
+        if (!(error instanceof IntegerOptionError)) throw error;
+        process.stderr.write(`\n  ${error.message}\n\n`);
+        process.exit(1);
+      }
+    }
     // ONLY GITNEXUS_EMBEDDING_DIMS must be set here: schema.ts reads it at
     // module-load time during the lazy import('./analyze.js') below (via the
     // static chain analyze.ts → run-analyze.ts → schema.ts), so deferring to
@@ -255,14 +291,48 @@ program
       process.env.GITNEXUS_EMBEDDING_DIMS = dimsEnvBaseline;
     }
   })
-  .action(
-    createAnalyzerLbugLazyAction(
+  .action(async (inputPath, options) => {
+    // The connected continuation only publishes the writer's prepared graph
+    // and embeds it. Its analyzer receipt is never used: the graph writer has
+    // already finalized provenance. Keep the native check, without repeating
+    // the complete analyzer identity snapshot in this separate process.
+    // An explicit heap budget without the budget-child marker always re-execs
+    // in ensureHeap before runFullAnalysis. Its parent receipt is unused too;
+    // the child still captures provenance before importing the analyzer.
+    const budgetSupervisor =
+      !options.watch &&
+      options.memoryBudget !== undefined &&
+      process.env.GITNEXUS_HEAP_LIMIT_SOURCE !== 'budget';
+    // An unconfigured automatic-heap parent also always re-execs with the
+    // admitted old/semi-space flags. Keep conservative capture for custom Node
+    // flags, manual heaps, test overrides and every analyzing child.
+    const autoSupervisor =
+      !options.watch &&
+      options.memoryBudget === undefined &&
+      process.env.GITNEXUS_ANALYSIS_SUPERVISED !== '1' &&
+      process.env.GITNEXUS_ANALYSIS_MANUAL_HEAP !== '1' &&
+      !memoryAutopilotDisabled() &&
+      process.env.GITNEXUS_TEST_RESPAWN_HEAP_MB === undefined &&
+      process.execArgv.length === 0 &&
+      !(process.env.NODE_OPTIONS ?? '').trim();
+    if (
+      budgetSupervisor ||
+      autoSupervisor ||
+      (process.env.GITNEXUS_ANALYSIS_CONTINUATION === '1' && process.connected)
+    ) {
+      await createLbugLazyAction(() => import('./analyze.js'), 'analyzeCommand')(
+        inputPath,
+        options,
+      );
+      return;
+    }
+    await createAnalyzerLbugLazyAction(
       () => import('../core/analyzer-identity.js'),
       () => import('./analyze.js'),
       'analyzeOrWatchCommandWithRunnerIdentity',
       import.meta.url,
-    ),
-  );
+    )(inputPath, options);
+  });
 
 program
   .command('index [path...]')
@@ -351,6 +421,14 @@ program
   .option('--branch <name>', 'Delete only the named branch index (not the workspace index)')
   .option('--stale', 'Reclaim leftover branch indexes that are not a live local head')
   .option(
+    '--gc',
+    'Drop shared-store checkouts no registry entry uses and delete commit graphs nothing references',
+  )
+  .option(
+    '--local-index',
+    'Delete the index left in <repo>/.gitnexus after this checkout moved into a shared store',
+  )
+  .option(
     '--lbug-sidecars',
     'Clean parked LadybugDB recovery sidecars (missing-shadow WAL quarantines and dirty-recovery parks)',
   )
@@ -371,7 +449,7 @@ program
   .option('-f, --force', 'Force full regeneration even if up to date')
   .option(
     '--provider <provider>',
-    'LLM provider: minimax, openai, openrouter, azure, custom, cursor, claude, codex, opencode, or grok (default: minimax)',
+    'LLM provider: minimax, anthropic, openai, openrouter, azure, custom, cursor, claude, codex, opencode, or grok (default: minimax)',
   )
   .option('--model <model>', 'LLM model or deployment name (default: MiniMax-M3)')
   .option(
@@ -388,6 +466,10 @@ program
   .option('--concurrency <n>', 'Parallel LLM calls (default: 3)', '3')
   .option('--timeout <seconds>', 'LLM request timeout in seconds (default: disabled)')
   .option('--retries <n>', 'Max LLM retry attempts per request (default: 3)')
+  .option(
+    '--max-completion-tokens <n>',
+    'Max completion tokens for each LLM request (default: 16384)',
+  )
   .option(
     '--allow-insecure-connection <host>',
     'Allow exact host(s) for http:// LLM base URLs (comma-separated; HTTPS is preferred)',
@@ -475,10 +557,14 @@ program
   .option('--include-tests', 'Include test files in results')
   .option(
     '-l, --limit <n>',
-    'Max symbols per depth level and affected processes/modules to return (default: 100)',
+    'Max symbols per depth level in callgraph mode (default: 30, GITNEXUS_IMPACT_DEFAULT_LIMIT=0 for all); explicit --limit also caps affected processes/modules/routes',
   )
   .option('--offset <n>', 'Skip N symbols per depth level for pagination')
   .option('--summary-only', 'Return counts and risk only, omit symbol list')
+  .option(
+    '--max-tokens <n>',
+    'Fit compact JSON into about N tokens; trim deepest callgraph symbols or fail if required content cannot fit. PDG/group results must fit intact',
+  )
   .action(createLbugLazyAction(() => import('./tool.js'), 'impactCommand'));
 
 program

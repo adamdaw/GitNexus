@@ -31,7 +31,7 @@ const execFileMock = vi.fn((...args: any[]) => {
 
 // By default, execFileSync throws (simulating `which gitnexus` not found)
 // so getMcpEntry() falls back to the npx path.
-const execFileSyncMock = vi.fn(() => {
+const execFileSyncMock = vi.fn((): string => {
   throw new Error('not found');
 });
 
@@ -138,6 +138,40 @@ describe('setupClaudeCode', () => {
     expect(config.existingKey).toBe('keep-me');
     expect(config.mcpServers.other).toEqual({ command: 'foo' });
     expect(config.mcpServers.gitnexus).toBeDefined();
+  });
+
+  it('keeps existing Claude and Cursor HTTP MCP entries while installing skills', async () => {
+    const claudePath = path.join(tempHome, '.claude.json');
+    const cursorDir = path.join(tempHome, '.cursor');
+    const cursorPath = path.join(cursorDir, 'mcp.json');
+    await fs.mkdir(cursorDir, { recursive: true });
+    const claudeRaw = `{
+  // Shared GitNexus server
+  "mcpServers": {
+    "gitnexus": { "type": "http", "url": "http://127.0.0.1:4748/mcp", "headers": { "Authorization": "Bearer $GITNEXUS_TOKEN" } }
+  }
+}`;
+    const cursorRaw = JSON.stringify({
+      mcpServers: {
+        gitnexus: {
+          url: 'http://127.0.0.1:4748/mcp',
+          headers: { Authorization: 'Bearer $GITNEXUS_TOKEN' },
+        },
+      },
+    });
+    await fs.writeFile(claudePath, claudeRaw, 'utf-8');
+    await fs.writeFile(cursorPath, cursorRaw, 'utf-8');
+
+    const { setupCommand } = await import('../../src/cli/setup.js');
+    await setupCommand({ codingAgent: ['claude', 'cursor'] });
+
+    expect(await fs.readFile(claudePath, 'utf-8')).toBe(claudeRaw);
+    expect(await fs.readFile(cursorPath, 'utf-8')).toBe(cursorRaw);
+    expect(logLines()).toContain('Claude Code (existing HTTP MCP entry kept)');
+    expect(logLines()).toContain('Cursor (existing HTTP MCP entry kept)');
+    expect(
+      await fs.stat(path.join(tempHome, '.claude', 'skills', 'gitnexus-guide', 'SKILL.md')),
+    ).toBeDefined();
   });
 
   it('handles missing ~/.claude.json (creates fresh)', async () => {
@@ -723,10 +757,87 @@ describe('setupQoder', () => {
   });
 });
 
+describe('setupDroid (Factory)', () => {
+  let tempHome: string;
+  let originalHome: string | undefined;
+  let originalUserProfile: string | undefined;
+
+  const configPath = () => path.join(tempHome, '.factory', 'mcp.json');
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+
+    originalHome = process.env.HOME;
+    originalUserProfile = process.env.USERPROFILE;
+    tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'gn-droid-setup-'));
+    process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
+
+    // Only create ~/.factory so other editors skip and don't pollute assertions.
+    await fs.mkdir(path.join(tempHome, '.factory'), { recursive: true });
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    // Assigning undefined would set the string "undefined"; delete instead.
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalUserProfile;
+    await fs.rm(tempHome, { recursive: true, force: true });
+  });
+
+  it('writes the MCP entry to ~/.factory/mcp.json under mcpServers', async () => {
+    const { setupCommand } = await import('../../src/cli/setup.js');
+    await setupCommand();
+
+    const config = JSON.parse(await fs.readFile(configPath(), 'utf-8'));
+    expect(config.mcpServers.gitnexus).toBeDefined();
+  });
+
+  it('preserves existing servers in ~/.factory/mcp.json', async () => {
+    await fs.writeFile(
+      configPath(),
+      JSON.stringify({ mcpServers: { other: { command: 'foo' } } }),
+      'utf-8',
+    );
+
+    const { setupCommand } = await import('../../src/cli/setup.js');
+    await setupCommand();
+
+    const config = JSON.parse(await fs.readFile(configPath(), 'utf-8'));
+    expect(config.mcpServers.other).toEqual({ command: 'foo' });
+    expect(config.mcpServers.gitnexus).toBeDefined();
+  });
+
+  it('skips when ~/.factory directory does not exist', async () => {
+    await fs.rm(path.join(tempHome, '.factory'), { recursive: true, force: true });
+
+    const { setupCommand } = await import('../../src/cli/setup.js');
+    await setupCommand();
+
+    await expect(fs.access(configPath())).rejects.toThrow();
+  });
+
+  it('leaves a corrupt ~/.factory/mcp.json untouched', async () => {
+    const corrupt = '{ this is not valid json !!!';
+    await fs.writeFile(configPath(), corrupt, 'utf-8');
+
+    const { setupCommand } = await import('../../src/cli/setup.js');
+    await setupCommand();
+
+    expect(await fs.readFile(configPath(), 'utf-8')).toBe(corrupt);
+  });
+});
+
 describe('Codex hooks (installClaudeSchemaHooks)', () => {
   let tempHome: string;
   let originalHome: string | undefined;
   let originalUserProfile: string | undefined;
+  let originalCodexHome: string | undefined;
 
   const hooksJsonPath = () => path.join(tempHome, '.codex', 'hooks.json');
 
@@ -736,6 +847,8 @@ describe('Codex hooks (installClaudeSchemaHooks)', () => {
 
     originalHome = process.env.HOME;
     originalUserProfile = process.env.USERPROFILE;
+    originalCodexHome = process.env.CODEX_HOME;
+    delete process.env.CODEX_HOME;
     tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'gn-codex-hooks-'));
     process.env.HOME = tempHome;
     process.env.USERPROFILE = tempHome;
@@ -751,6 +864,8 @@ describe('Codex hooks (installClaudeSchemaHooks)', () => {
     vi.restoreAllMocks();
     process.env.HOME = originalHome;
     process.env.USERPROFILE = originalUserProfile;
+    if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = originalCodexHome;
     await fs.rm(tempHome, { recursive: true, force: true });
   });
 
@@ -769,6 +884,28 @@ describe('Codex hooks (installClaudeSchemaHooks)', () => {
     await expect(
       fs.access(path.join(tempHome, '.codex', 'hooks', 'gitnexus', 'gitnexus-hook.cjs')),
     ).resolves.toBeUndefined();
+  });
+
+  it('installs hooks and skills for active CODEX_HOME without touching the default home', async () => {
+    const activeHome = path.join(tempHome, 'active-codex');
+    const defaultHooks = hooksJsonPath();
+    await fs.rm(path.join(tempHome, '.codex'), { recursive: true, force: true });
+    await fs.mkdir(activeHome);
+    process.env.CODEX_HOME = activeHome;
+
+    const { setupCommand } = await import('../../src/cli/setup.js');
+    await setupCommand({ codingAgent: 'codex' });
+
+    const hooks = JSON.parse(await fs.readFile(path.join(activeHome, 'hooks.json'), 'utf-8')).hooks;
+    expect(hooks.PreToolUse).toHaveLength(1);
+    expect(hooks.PostToolUse).toHaveLength(1);
+    await expect(
+      fs.access(path.join(activeHome, 'hooks', 'gitnexus', 'gitnexus-hook.cjs')),
+    ).resolves.toBeUndefined();
+    await expect(
+      fs.access(path.join(tempHome, '.agents', 'skills', 'gitnexus-guide', 'SKILL.md')),
+    ).resolves.toBeUndefined();
+    await expect(fs.access(defaultHooks)).rejects.toThrow();
   });
 
   it('is idempotent — a second setup run adds no duplicate entries', async () => {

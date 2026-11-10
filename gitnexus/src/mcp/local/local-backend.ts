@@ -6,10 +6,21 @@
  * LadybugDB connections are opened lazily per repo on first query.
  */
 
+import { resolveGraphPath } from '../../storage/shared-store.js';
+import { relationshipIntegrityForCaller } from '../../core/graph/relationship-integrity.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { createHash } from 'crypto';
-import { scoreImpactRisk, unusedAxesForImpactWalk, type ImpactRiskResult } from 'gitnexus-shared';
+import {
+  scoreImpactRisk,
+  unusedAxesForImpactWalk,
+  getLanguageFromFilename,
+  blockedRenameResult,
+  RenameFailure,
+  type ImpactRiskResult,
+  type GraphNode,
+  type NodeLabel,
+} from 'gitnexus-shared';
 import {
   initLbug,
   executeQuery,
@@ -19,17 +30,39 @@ import {
   isLbugReady,
   statDbIdentity,
   dbIdentityChanged,
+  getLbugDbIdentity,
+  pinRepo,
 } from '../../core/lbug/pool-adapter.js';
+import {
+  parseQueryRepositories,
+  mergeRepositoryQueries,
+  type RepositoryQueryResult,
+} from './multi-repo-query.js';
 import { queryClassBeanMetadata } from './bean-metadata.js';
+import { GUARD_TAINT_LIMITATION } from '../taint-limitations.js';
 import { querySpringAopMetadata } from './aop-metadata.js';
+import {
+  SYMBOL_IDENTITY_RECOVERY_SUGGESTION,
+  SymbolIdentityError,
+  assertSymbolIdentity,
+  assertSymbolFilePath,
+  queryRowValue,
+  assertIdentityFields,
+  assertQueryIdentity,
+  rethrowSymbolIdentityError,
+} from './query-result-integrity.js';
 import { queryConvexDispatchMetadata } from './convex-metadata.js';
 import { isValidQueryParams } from '../../core/lbug/query-params.js';
 import { toDisplayLine } from './line-display.js';
+import { shapeQueryProcessAttaches } from './query-process-attaches.js';
 import { LBUG_ID_PROBE_BATCH_SIZE, LBUG_QUERY_BATCH_SIZE } from '../../core/lbug/query-batch.js';
+import type { BM25SearchResult } from '../../core/search/bm25-index.js';
 import { chunk, mapConcurrent } from '../../lib/utils.js';
 import { pathSuffixOf } from './path-predicate.js';
+import { isCobolFile, isJclFile } from '../../core/ingestion/cobol/file-types.js';
 import { toOneBasedLine } from '../../core/ingestion/utils/line-base.js';
 import { isTestFilePath } from '../../core/ingestion/utils/test-file-path.js';
+import { isTemplateRouteCandidate } from '../../core/ingestion/utils/template-file.js';
 import { isWalCorruptionError, WAL_RECOVERY_SUGGESTION } from '../../core/lbug/lbug-config.js';
 // Embedding imports are lazy (dynamic import) to avoid loading onnxruntime-node
 // at MCP server startup — crashes on unsupported Node ABI versions (#89)
@@ -44,6 +77,8 @@ import {
   getGitRoot,
 } from '../../storage/git.js';
 import { realpathSync } from 'fs';
+import { parseGrepQuery, GREP_TIME_BUDGET_MS } from '../../server/grep-params.js';
+import { runGrepScanInWorker } from '../../server/grep-scan.js';
 import {
   listRegisteredRepos,
   canonicalizePath,
@@ -88,6 +123,7 @@ import {
   embeddingDimsMismatch,
 } from '../../core/lbug/schema.js';
 import { getExactScanLimit } from '../../core/platform/capabilities.js';
+import { metadataMatchesGraph, selectVectorGeneration } from '../../storage/vector-generation.js';
 import { PhaseTimer } from '../../core/search/phase-timer.js';
 import { ftsDegradedWarning, ftsQueryFailedWarning } from '../../core/search/fts-indexes.js';
 import { getFtsDisabledReason, type FtsDisabledReason } from '../../core/search/fts-policy.js';
@@ -104,6 +140,7 @@ import {
   isFullSourceAvailable,
 } from '../../core/content-retention.js';
 import { checkStalenessAsync, checkCwdMatch } from '../../core/git-staleness.js';
+import { MCP_REFRESH_TOOL, resolveMcpRefreshLimits } from '../refresh-policy.js';
 import {
   stalenessPayload,
   type IndexedRef,
@@ -127,24 +164,32 @@ import {
   QUERY_DEFAULT_MAX_SYMBOLS,
   QUERY_MAX_LIMIT,
   QUERY_MAX_MAX_SYMBOLS,
+  QUERY_CONTENT_MAX_CHARS,
   CONTEXT_CHAIN_MAX_DEPTH,
+  CHECKOUT_SOURCE_TOOLS,
+  READ_FILE_DEFAULT_MAX_LINES,
 } from '../tools.js';
+import { renameSymbol } from './rename/rename-plan.js';
 import { foldNumericToolArgumentAliases } from '../tool-arguments.js';
 import { findImportCycles, IMPORT_CYCLE_LIMIT } from '../../core/graph/import-cycles.js';
 import { decodeTaintPath } from '../../core/ingestion/taint/path-codec.js';
 import { decodeReachingDefReason } from '../../core/ingestion/cfg/reaching-def-reason-codec.js';
-import { EXTENSIONS } from '../../core/ingestion/import-resolvers/utils.js';
 import { compareCodeUnits } from '../../lib/utils.js';
 import {
   lookupExternalCallCount,
   lookupUnresolvedCallCount,
 } from '../../core/ingestion/scope-resolution/unresolved-receivers.js';
 import type { UnresolvedReceiverSummary } from '../../core/ingestion/scope-resolution/unresolved-receivers.js';
+import {
+  probeOverloadBoundaries,
+  type OverloadBoundary,
+} from '../../core/ingestion/scope-resolution/unresolved-overloads.js';
 import type { UndecidedSatisfactionSummary } from '../../core/ingestion/scope-resolution/undecided-satisfaction.js';
 import { scopeExtractionFailureTotal } from '../../core/ingestion/scope-resolution/scope-extraction-failures.js';
 import { lookupCount } from '../../core/ingestion/scope-resolution/summary-maps.js';
 import { VALUE_REF_EDGE_REASON } from '../../core/ingestion/scope-resolution/value-ref-edges.js';
 import {
+  DART_PACKAGE_IDENTITY_REASON,
   DEFERRED_IMPORT_REASON_SUFFIX,
   TYPE_ONLY_IMPORT_REASON_SUFFIX,
 } from '../../core/ingestion/scope-resolution/graph-bridge/imports-to-edges.js';
@@ -155,6 +200,7 @@ import {
   makePdgLayerDegradedResult,
   pdgLayerStatus,
   pdgStampForMode,
+  resolvePdgBlockAnchor,
   runImpactPDG,
   validateImpactMode,
   pdgBridgeEvidenceForImpact,
@@ -184,6 +230,22 @@ const VALUE_CANDIDATE_TYPES: ReadonlySet<string> = new Set(['Const', 'Variable',
  * only truncation signal available when the COUNT leg fails.
  */
 const CANDIDATE_WINDOW = 20;
+
+/**
+ * Most relationship rows `_runImpactBFS` reads per depth level (#3696). Real
+ * hub walks stay in the tens of thousands.
+ */
+export const IMPACT_FRONTIER_ROW_CAP = 100_000;
+
+/** The binder error from an index whose CodeRelation table predates `staticGated`. */
+export function isMissingStaticGatedError(error: unknown): boolean {
+  return error instanceof Error && /Cannot find property staticGated for r\b/i.test(error.message);
+}
+
+/** The impact frontier query with `staticGated` read as NULL, for older indexes. */
+export function withoutStaticGatedColumn(query: string): string {
+  return query.replace('r.staticGated AS staticGated', 'NULL AS staticGated');
+}
 
 /**
  * Concurrent BFS walks when `query()` attaches per-process `chain`. Each walk
@@ -270,18 +332,14 @@ function ambiguityReport(
   };
 }
 
-/** Real source-file extensions (`.ts`, `.py`, …) from the resolver's list,
- *  excluding the empty entry and the `/index.*` forms — used to decide whether
- *  an `explain` target is a file path vs a (possibly dotted) symbol name. */
-const SOURCE_FILE_EXTENSIONS: readonly string[] = EXTENSIONS.filter(
-  (e) => e.startsWith('.') && !e.includes('/'),
-);
-/** A target is path-ish if it has a path separator or ends in a known source
- *  extension. A bare dotted symbol (`UserController.create`) is NOT path-ish. */
-function looksLikeFilePath(target: string): boolean {
-  if (/[\\/]/.test(target)) return true;
+/** Recognize indexed source files and existing import suffixes; a bare dotted
+ *  symbol (`UserController.create`) remains a symbol target. */
+async function looksLikeFilePath(target: string): Promise<boolean> {
+  if (/[\\/]/.test(target) || getLanguageFromFilename(target) !== null) return true;
+  // Keep analyze-only language modules out of the MCP startup closure (#2802).
+  const { EXTENSIONS } = await import('../../core/ingestion/languages/import-candidates.js');
   const lower = target.toLowerCase();
-  return SOURCE_FILE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+  return EXTENSIONS.some((ext) => ext.startsWith('.') && !ext.includes('/') && lower.endsWith(ext));
 }
 
 /**
@@ -299,6 +357,81 @@ function resolveAliasString(canonical: unknown, legacy: unknown): string | undef
     if (typeof value === 'string' && value.trim()) return value;
   }
   return undefined;
+}
+
+/**
+ * A `*_uid` param as a lookup key: trimmed, or `undefined` when it is blank or
+ * not a string (#3354). Strict adapters send `" "`/`""` for an omitted optional
+ * string, and the MCP envelope is not type-validated.
+ */
+function nonBlankUid(value: unknown): string | undefined {
+  return typeof value === 'string' ? value.trim() || undefined : undefined;
+}
+
+function assertSymbolRowIdentity(row: unknown): void {
+  assertQueryIdentity(row, 'id', 0, [
+    ['name', 1],
+    ['type', 2],
+    ['filePath', 3],
+  ]);
+}
+
+function assertContextRefs(rows: unknown[]): void {
+  for (const row of rows) {
+    assertQueryIdentity(row, 'uid', 1, [
+      ['name', 2],
+      ['filePath', 3],
+      ['kind', 4],
+    ]);
+    assertSymbolIdentity(queryRowValue(row, 'relType', 0));
+  }
+}
+
+const RESPONSE_IDENTITY_FIELDS = new Set([
+  'id',
+  'uid',
+  'name',
+  'filePath',
+  'label',
+  'kind',
+  'type',
+  'relationType',
+  'processType',
+  'url',
+  'method',
+  'sourceId',
+  'targetId',
+  'symbolId',
+  'symbolName',
+  'symbolFilePath',
+  'adviceId',
+  'adviceName',
+  'adviceFilePath',
+  'advisedId',
+  'advisedName',
+  'advisedFilePath',
+  'evidenceId',
+]);
+
+/** Cover nested additive identity fields while leaving source/metadata text alone. */
+function assertResponseIdentities(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) assertResponseIdentities(item);
+  } else if (value !== null && typeof value === 'object') {
+    const row = value as Record<string, unknown>;
+    assertSymbolFilePath(row.id ?? row.uid, row.filePath);
+    for (const [key, field] of Object.entries(value)) {
+      if (key === 'seedBlocks' || key === 'reachableBlocks' || key === 'intraReachableBlocks') {
+        if (!Array.isArray(field)) throw new SymbolIdentityError();
+        for (const id of field) assertSymbolIdentity(id);
+        continue;
+      }
+      if (RESPONSE_IDENTITY_FIELDS.has(key)) assertIdentityFields(field);
+      if (key !== 'content' && key !== 'methodMetadata' && key !== 'bean') {
+        assertResponseIdentities(field);
+      }
+    }
+  }
 }
 
 interface StringAliasDefinition {
@@ -710,6 +843,12 @@ export interface EpistemicCauses {
    */
   readonly receiverTyping: number;
   /**
+   * Unique call sites whose overload or implementation targets were unresolved.
+   * Counted once across all queried candidates. A partial/unverified receipt
+   * can report zero with a boundary note; zero alone does not prove completeness.
+   */
+  readonly overloadResolution?: number;
+  /**
    * Symbols on or beyond a dispatch boundary that the traversal could not
    * attribute statically: implementations plus interface-level consumers.
    *
@@ -793,6 +932,37 @@ export interface EpistemicCauses {
   readonly callableValueReferences: number;
 }
 
+type EpistemicBoundary = {
+  graph_integrity?: ReturnType<typeof relationshipIntegrityForCaller>;
+  epistemic: 'exact' | 'lower-bound';
+  boundaries?: string[];
+  causes?: EpistemicCauses;
+  unresolved?: string;
+  anchorLanguages?: readonly string[];
+};
+
+function mergeOverloadBoundary(
+  existing: EpistemicBoundary,
+  overloads: OverloadBoundary,
+): EpistemicBoundary {
+  if (overloads.notes.length === 0) return existing;
+  return {
+    ...existing,
+    epistemic: 'lower-bound',
+    boundaries: [...(existing.boundaries ?? []), ...overloads.notes],
+    causes: {
+      scopeExtractionFiles: 0,
+      receiverTyping: 0,
+      dispatchBoundary: 0,
+      externalBoundary: 0,
+      undecidedSatisfaction: 0,
+      callableValueReferences: 0,
+      ...existing.causes,
+      overloadResolution: overloads.sites,
+    },
+  };
+}
+
 function epistemicFrom(dropped: {
   notes: readonly string[];
   sites: number;
@@ -868,9 +1038,9 @@ function scopeExtractionBoundaries(
  * Boundary notes for call sites the analyzer dropped because it could not type
  * their receiver, when the queried symbol's name is among them (#2744).
  *
- * Empty when the index records no drops for this name — including every index
- * written before the summary existed, which is why the schema version was
- * bumped rather than treating "absent" as "none".
+ * An absent name is uncertain when the in-program summary was truncated. Its
+ * omitted-name count cannot establish a dropped-call count for that name.
+ * Uncapped summaries and indexes predating the summary add no boundary.
  */
 function unresolvedReceiverBoundaries(
   summary: UnresolvedReceiverSummary | undefined,
@@ -879,7 +1049,20 @@ function unresolvedReceiverBoundaries(
   if (symName.length === 0) return { notes: [], sites: 0, external: 0 };
   const sites = lookupUnresolvedCallCount(summary, symName);
   const external = lookupExternalCallCount(summary, symName) ?? 0;
-  if (sites === undefined) return { notes: [], sites: 0, external };
+  if (sites === undefined) {
+    const omittedNames = summary?.omittedNames ?? 0;
+    return {
+      notes:
+        Number.isSafeInteger(omittedNames) && omittedNames > 0
+          ? [
+              `The unresolved-receiver member summary was truncated, so the dropped-call count ` +
+                `for \`${symName}\` cannot be determined. Actual impact may be higher.`,
+            ]
+          : [],
+      sites: 0,
+      external,
+    };
+  }
   return {
     notes: [
       `${sites} call ${sites === 1 ? 'site' : 'sites'} invoking \`${symName}\` ${
@@ -1083,6 +1266,18 @@ async function callableValueReferenceBoundaries(
   };
 }
 
+/** Per-call extras the MCP server hands to {@link LocalBackend.callTool}. */
+export interface McpToolCallContext {
+  /** `refresh_index` progress, as the analyze worker reports it (percent 0-100). */
+  onProgress?: (percent: number, message: string) => void;
+}
+
+/** An error's message as one sentence, so further sentences can follow it. */
+function asSentence(err: unknown): string {
+  const message = (err instanceof Error ? err.message : String(err)).trim();
+  return /[.!?]$/u.test(message) ? message : `${message}.`;
+}
+
 interface RepoHandle {
   id: string; // unique key = repo name (basename)
   name: string;
@@ -1101,6 +1296,9 @@ interface RepoHandle {
   branch?: string;
   /** Pinned `--branch` sub-indexes available for this repo, distinct from the flat workspace slot (#2106/#2354). */
   branches?: BranchSummary[];
+  /** Per-tool snapshot; never shared with the registry's cached handle. */
+  poolIdentity?: Awaited<ReturnType<typeof statDbIdentity>>;
+  generationUnknown?: boolean;
 }
 
 /** Resolve symlinks for path comparison; falls back to path.resolve on error.
@@ -1328,6 +1526,13 @@ interface ApiImpactRoute {
   middlewareDetection?: 'partial';
   middlewareNote?: string;
   consumers: Array<{ name: string; file: string; accesses: string[]; attributionNote?: string }>;
+  /**
+   * Callers of the function that sends the request, one level up (#3644).
+   * Present only when a FETCHES edge names that function; an index built before
+   * the attribution has none. Direct consumer files and the handler file are
+   * left out, so an entry is a file the direct count does not already cover.
+   */
+  indirectConsumers?: ApiImpactIndirectConsumer[];
   mismatches?: Array<{
     consumer: string;
     field: string;
@@ -1340,7 +1545,65 @@ interface ApiImpactRoute {
     affectedFlows: number;
     riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
     warning?: string;
+    epistemic?: 'lower-bound';
+    unverifiedConsumers?: number;
+    boundaries?: string[];
+    /** Distinct files among `indirectConsumers`; not part of `riskLevel`. */
+    indirectConsumers?: number;
   };
+}
+
+interface ApiImpactIndirectConsumer {
+  name: string;
+  file: string;
+  /** Name of the requesting function this caller reaches the route through. */
+  via: string;
+}
+
+/** A CALLS edge into one of the requesting functions a FETCHES reason names. */
+interface RequestFunctionCaller {
+  viaId: string;
+  viaName: string;
+  name: string;
+  filePath: string;
+}
+
+/**
+ * The one-level callers of a route's requesting functions that the direct
+ * consumer list does not already cover. `undefined` when no consumer edge of
+ * the route names a requesting function, so the field stays absent instead of
+ * claiming an empty result the index could not have produced.
+ */
+function indirectConsumersOf(
+  route: {
+    filePath: string;
+    consumers: Array<{ filePath: string; viaSymbolIds?: string[] }>;
+  },
+  callersByVia: ReadonlyMap<string, RequestFunctionCaller[]>,
+): ApiImpactIndirectConsumer[] | undefined {
+  const directFiles = new Set(route.consumers.map((c) => c.filePath));
+  const seen = new Set<string>();
+  const out: ApiImpactIndirectConsumer[] = [];
+  let attributed = false;
+  for (const consumer of route.consumers) {
+    for (const viaId of consumer.viaSymbolIds ?? []) {
+      attributed = true;
+      for (const caller of callersByVia.get(viaId) ?? []) {
+        if (caller.filePath === route.filePath || directFiles.has(caller.filePath)) continue;
+        const key = `${caller.filePath}\u0000${caller.name}\u0000${caller.viaName}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ name: caller.name, file: caller.filePath, via: caller.viaName });
+      }
+    }
+  }
+  if (!attributed) return undefined;
+  return out.sort(
+    (a, b) =>
+      compareCodeUnits(a.file, b.file) ||
+      compareCodeUnits(a.name, b.name) ||
+      compareCodeUnits(a.via, b.via),
+  );
 }
 
 interface RouteRuntimeEvidence {
@@ -1355,10 +1618,11 @@ const routeRuntimeEvidence = (route: RouteRuntimeEvidence) => ({
   ...(route.runtimeStatus === null ? {} : { status: route.runtimeStatus }),
 });
 
-const isMissingRouteRuntimePropertyError = (error: unknown): boolean => {
+/** An index built before a Route column existed lacks it; the query retries without. */
+const isMissingRouteOptionalPropertyError = (error: unknown): boolean => {
   const message = error instanceof Error ? error.message : String(error);
   return (
-    ['runtimeConfirmed', 'runtimeSource', 'runtimeStatus'].some((property) =>
+    ['runtimeConfirmed', 'runtimeSource', 'runtimeStatus', 'unverifiedConsumers'].some((property) =>
       message.includes(property),
     ) &&
     (/cannot find property/i.test(message) ||
@@ -1561,30 +1825,85 @@ export function attachToolStaleness(
   return { ...result, staleness };
 }
 
+/** Optional metadata must not prevent a healthy native index from answering. */
+async function loadOptionalMeta(storagePath: string) {
+  try {
+    return await loadMeta(storagePath);
+  } catch {
+    return null;
+  }
+}
+
 /** tri-review Residual-2: see `LocalBackend.lastObservedPoolState`'s doc comment. */
 interface PoolObservedState {
   indexedAt?: string;
   dbIdentity: Awaited<ReturnType<typeof statDbIdentity>>;
   ftsStatus?: string;
+  ref?: IndexedRef;
+  generationUnknown?: boolean;
+  awaitingMetadata?: boolean;
+  diskIndexedAt?: string;
+  metadata?: Awaited<ReturnType<typeof loadMeta>>;
 }
 
 export class LocalBackend {
+  // A selected handle belongs to one request. Reuse its metadata across
+  // freshness, retention and completeness checks without retaining it forever.
+  private readonly toolMetadata = new WeakMap<
+    RepoHandle,
+    Promise<Awaited<ReturnType<typeof loadMeta>>>
+  >();
+
+  private readToolMetadata(repo: RepoHandle): Promise<Awaited<ReturnType<typeof loadMeta>>> {
+    let pending = this.toolMetadata.get(repo);
+    if (!pending) {
+      pending = loadOptionalMeta(path.dirname(repo.lbugPath)).then((meta) => {
+        if (!meta) return null;
+        if (
+          (meta.graphPath !== undefined || meta.graphGeneration) &&
+          !metadataMatchesGraph(path.dirname(repo.lbugPath), meta, repo.lbugPath)
+        ) {
+          // A newer immutable path was published after this request resolved
+          // its handle. Keep the old reader's metadata, never mix generations.
+          const previous = this.lastObservedPoolState.get(repo.lbugPath);
+          if (previous?.metadata) return previous.metadata;
+          repo.generationUnknown = true;
+          return null;
+        }
+        // Readers never use ingestion manifests. Do not keep their per-file
+        // hashes/cache keys or pending embedding IDs in an opened snapshot.
+        return {
+          ...meta,
+          fileHashes: undefined,
+          cacheKeys: undefined,
+          embeddingCheckpoint: meta.embeddingCheckpoint
+            ? { ...meta.embeddingCheckpoint, pendingNodeIds: undefined, recovery: undefined }
+            : undefined,
+        };
+      });
+      this.toolMetadata.set(repo, pending);
+    }
+    return pending;
+  }
+
   private static readonly TOOL_STALENESS_TTL_MS = 5000;
   private repos: Map<string, RepoHandle> = new Map();
   private contextCache: Map<string, CodebaseContext> = new Map();
   private initializedRepos: Set<string> = new Set();
   private reinitPromises: Map<string, Promise<void>> = new Map();
-  private lastStalenessCheck: Map<string, number> = new Map();
   // #2655: commit-behind freshness for the hot read tools. Stores the IN-FLIGHT
   // promise (not just a timestamp) so N concurrent tool calls arriving before
   // the first `git rev-list` resolves share one subprocess instead of each
   // spawning their own; the resolved value is reused for TOOL_STALENESS_TTL_MS.
-  // Keyed by lbugPath (like lastStalenessCheck) — NOT repoPath — because flat
+  // Keyed by lbugPath — NOT repoPath — because flat
   // and branch handles for one repo share a repoPath but carry different
   // lastCommit values, so a repoPath key would serve one handle's freshness for
-  // the other; lbugPath is unique per flat/branch index.
-  private toolStalenessCache: Map<string, { at: number; value: Promise<StalenessInfo> }> =
-    new Map();
+  // the other. Shared graphs can serve several checkouts, so the generation
+  // also identifies the repoPath whose HEAD is measured.
+  private toolStalenessCache: Map<
+    string,
+    { at: number; generation: string; value: Promise<StalenessInfo> }
+  > = new Map();
   // tri-review Residual-2: consolidates what were three parallel per-poolKey
   // Maps (lastObservedIndexedAt / lastObservedDbIdentity / lastObservedFtsStatus)
   // touched in lockstep at every call site below — one Map, one delete, one
@@ -1632,33 +1951,7 @@ export class LocalBackend {
    * degradation is visible once instead of silent.
    */
   private warnedMissingEmbeddingStack = false;
-
-  /**
-   * Width the semantic lane last produced a QUERY vector at for an index, keyed
-   * by `lbugPath` (like `lastObservedPoolState`, and for the same reason: branch
-   * handles are rebuilt by `applyBranchScope` on every `resolveRepo`, so state
-   * hung off the handle would not survive to the next call).
-   *
-   * Exists so `query()` can raise the vector-column drift warning (#2798) ONLY
-   * where a width actually matters — a call that embedded something. The lane
-   * returns before importing the embedder when the index holds no vectors, and
-   * swallows an unavailable/pruned embedder into `[]`; a width complaint about
-   * either is noise about a comparison that never happened, and every index
-   * analyzed without `--embeddings` would carry it on every query.
-   *
-   * Recorded rather than recomputed at the warning site because the comparand
-   * must be the width the CAST actually binds — `getEmbeddingDims()` (the HTTP
-   * dimensions, else the local model's fixed 384), NOT `schema.ts`'s
-   * env-derived `EMBEDDING_DIMS`. Those two disagree exactly when
-   * `GITNEXUS_EMBEDDING_DIMS` is set on a server embedding LOCALLY, where the
-   * env value is the one the query path ignores — comparing against it would
-   * report drift on a lane that is working fine.
-   *
-   * Written only on definite outcomes (set once a vector exists, deleted where
-   * the lane provably embedded nothing), so concurrent queries against one
-   * index write the same value and an entry never outlives the fact it records.
-   */
-  private lastQueryEmbeddingDims: Map<string, number> = new Map();
+  private warnedNoEmbeddingVectors = false;
 
   /**
    * Cross-repo group tools (CLI). Shares logic with MCP `group_*` handlers.
@@ -1786,7 +2079,9 @@ export class LocalBackend {
     // Meta probe: layer present iff the flows cap is stamped. `false` is a
     // definitive absence (degrade to call-level); `undefined` is unreadable
     // meta (fall through and infer presence from rows found).
-    const pdgStamped = await pdgStampForMode(repo.lbugPath, 'flows');
+    const pdgStamped = await pdgStampForMode(repo.lbugPath, 'flows', () =>
+      this.readToolMetadata(repo),
+    );
     if (pdgStamped === false) return { available: false, hops: [] };
 
     // Resolve the anchor symbol (UID is precise; fall back to name/file).
@@ -1901,7 +2196,7 @@ export class LocalBackend {
       const id = this.assignRepoId(entry.name, entry.path, resolved, assigned);
 
       const storagePath = entry.storagePath;
-      const lbugPath = path.join(storagePath, 'lbug');
+      const lbugPath = resolveGraphPath(storagePath);
 
       const handle: RepoHandle = {
         id,
@@ -1960,7 +2255,6 @@ export class LocalBackend {
     for (const key of knownKeys) {
       if (liveLbugPaths.has(key)) continue;
       this.initializedRepos.delete(key);
-      this.lastStalenessCheck.delete(key);
       this.toolStalenessCache.delete(key);
       this.lastObservedPoolState.delete(key);
       this.reinitPromises.delete(key);
@@ -2109,7 +2403,24 @@ export class LocalBackend {
       this.maybeWarnSiblingDrift(result).catch(() => {
         /* best-effort; never throw from resolveRepo */
       });
-      return this.applyBranchScope(result, branch);
+      const repo = { ...(await this.applyBranchScope(this.followSharedGraph(result), branch)) };
+      // Checkout-only tools also need current metadata, without opening a native DB.
+      const meta = await this.readToolMetadata(repo);
+      if (meta) {
+        repo.indexedAt = meta.indexedAt ?? repo.indexedAt;
+        repo.lastCommit = meta.lastCommit ?? repo.lastCommit;
+        repo.branch = meta.branch ?? repo.branch;
+        // Shared graph metadata is branch-neutral. The checkout slot retains
+        // its branch while the immutable graph path moves between commits.
+        if (
+          !meta.branch &&
+          path.dirname(repo.lbugPath) !== repo.storagePath &&
+          repo.lbugPath === resolveGraphPath(repo.storagePath)
+        ) {
+          repo.branch = (await loadOptionalMeta(repo.storagePath))?.branch ?? repo.branch;
+        }
+      }
+      return repo;
     }
 
     // Still no match — throw with helpful message
@@ -2164,6 +2475,21 @@ export class LocalBackend {
    *   and restamped labels the cached handle predates resolve on the next
    *   call.
    */
+  /**
+   * A shared-store checkout (#3352) moves between immutable commit graphs and
+   * its private graph as it is re-analyzed, while the cached handle keeps the
+   * graph it resolved first. Re-resolve the flat graph (one stat when the slot
+   * metadata is unchanged) and update the cached handle when it moved, so the
+   * pool opens the graph the checkout reads now.
+   */
+  private followSharedGraph(handle: RepoHandle): RepoHandle {
+    const current = resolveGraphPath(handle.storagePath);
+    if (current === handle.lbugPath) return handle;
+    const moved = { ...handle, lbugPath: current };
+    if (this.repos.get(handle.id) === handle) this.repos.set(handle.id, moved);
+    return moved;
+  }
+
   private async applyBranchScope(handle: RepoHandle, branch?: string): Promise<RepoHandle> {
     if (!branch) return handle;
     // At most one cache refresh per resolution: enough for the NEXT call to
@@ -2178,7 +2504,10 @@ export class LocalBackend {
     // One small JSON read per scoped call; mid-run meta writes preserve the
     // old label until the end-of-run atomic stamp (run-analyze dirty stamps
     // spread the existing meta), so this read never runs ahead of the DB.
-    const flatMeta = await loadMeta(path.dirname(handle.lbugPath));
+    // The flat slot's own metadata, not the graph's directory: a shared-store
+    // checkout's graph sits in a commit directory whose metadata carries no
+    // branch label (#3352).
+    const flatMeta = await loadMeta(handle.storagePath);
     if (flatMeta?.branch && flatMeta.branch === branch) {
       // The disk meta decides routing, so it also supplies the metadata —
       // the cached handle's label/commit/stats can predate the restamp.
@@ -2404,109 +2733,118 @@ export class LocalBackend {
    */
   private async ensureInitialized(repo: RepoHandle): Promise<void> {
     const poolKey = repo.lbugPath;
-    // If a reinit is already in progress for this repo, wait for it
-    const pending = this.reinitPromises.get(poolKey);
-    if (pending) return pending;
-
-    // Check if the index was rebuilt since we opened the connection (#297).
-    // Throttle staleness checks to at most once per 5 seconds per repo to
-    // avoid an fs.readFile round-trip on every tool invocation.
-    if (this.initializedRepos.has(poolKey) && isLbugReady(poolKey)) {
-      const now = Date.now();
-      const lastCheck = this.lastStalenessCheck.get(poolKey) ?? 0;
-      if (now - lastCheck < 5000) return; // Checked recently — skip
-
-      this.lastStalenessCheck.set(poolKey, now);
-      try {
-        // Read the metadata that sits next to THIS handle's lbug. For the
-        // flat/primary handle this is `<storagePath>/gitnexus.json`; for a
-        // branch handle it is `<storagePath>/branches/<slug>/gitnexus.json`.
-        // loadMeta falls back to legacy meta.json during migration.
-        // Reading the flat meta for a branch handle would compare the branch
-        // index's indexedAt against the primary's and thrash the pool (#2106).
-        const meta = await loadMeta(path.dirname(repo.lbugPath));
-        const observedState = this.lastObservedPoolState.get(poolKey);
-        // Compare against the last indexedAt OBSERVED for this pool (keyed by
-        // lbugPath), not the handle's — branch handles are fresh spreads so a
-        // handle mutation would not persist and would reinit on every check.
-        const observed = observedState?.indexedAt ?? repo.indexedAt;
-        const stampChanged = !!meta?.indexedAt && meta.indexedAt !== observed;
-        // #2614 F1: also reinit on a file-identity change. An atomic swap (or an
-        // in-place incremental) changes the lbug inode; keying only on
-        // meta.indexedAt let a reader that reinited inside the pre-swap window
-        // latch on the old inode forever (its stamp already == meta.indexedAt).
-        const currentIdentity = await statDbIdentity(repo.lbugPath);
-        const identityChanged = dbIdentityChanged(
-          observedState?.dbIdentity ?? null,
-          currentIdentity,
-        );
-        // #2767: `--repair-fts` intentionally never restamps `indexedAt` (it
-        // doesn't regenerate the graph), so `stampChanged` alone can't notice
-        // a repair. `capabilities.fts.status` is the field repair-fts DOES
-        // write, so a change there is a third, independent reinit trigger —
-        // sibling to stampChanged/identityChanged, not a replacement for them
-        // (identityChanged still catches an in-place mutation even if the
-        // caps stamp were somehow missed).
-        const ftsStatus = meta?.capabilities?.fts?.status;
-        const ftsCapsChanged = observedState?.ftsStatus !== ftsStatus;
-        if (stampChanged || identityChanged || ftsCapsChanged) {
-          // Index was rebuilt/swapped — DELEGATE the close/reopen to the pool's
-          // initLbug, which refuses to evict (and close the shared Database)
-          // while a query is in flight (its checkedOut>0 guard). Calling
-          // closeLbug directly here bypassed that guard and could close a
-          // Database mid-query — a native use-after-free (#2614). Wrap in
-          // reinitPromises to serialize concurrent detectors.
-          const reinit = (async () => {
-            try {
-              const reopened = await initLbug(poolKey, repo.lbugPath);
-              // tri-review NEW-7: advance the observed stamp/caps watermarks
-              // only AFTER initLbug completes, not before calling it — still
-              // regardless of `reopened` true/false (a stamp/caps change with
-              // an unchanged file must not re-trigger on every check), but if
-              // initLbug THROWS the watermark must stay at its old value so
-              // the next staleness check retries, instead of a failed reinit
-              // silently latching as "already applied" and never trying again.
-              const patch: Partial<PoolObservedState> = { ftsStatus };
-              if (meta?.indexedAt) patch.indexedAt = meta.indexedAt;
-              // Advance the observed IDENTITY only when the pool actually rolled
-              // over. If a query was in flight, initLbug served the current
-              // handle and returned false; leaving the identity divergent
-              // re-triggers the reopen on a later idle check instead of latching.
-              if (reopened) patch.dbIdentity = await statDbIdentity(repo.lbugPath);
-              this.setObservedState(poolKey, patch);
-            } finally {
-              this.reinitPromises.delete(poolKey);
-            }
-          })();
-          this.reinitPromises.set(poolKey, reinit);
-          return reinit;
-        } else {
-          return; // Pool is current
-        }
-      } catch {
-        return; // Can't read meta — assume pool is fine
+    const bindSnapshot = (): void => {
+      const state = this.lastObservedPoolState.get(poolKey);
+      if (
+        repo.poolIdentity !== undefined &&
+        dbIdentityChanged(repo.poolIdentity, state?.dbIdentity ?? null)
+      ) {
+        repo.generationUnknown = true;
+        return;
       }
+      if (state?.ref) {
+        repo.lastCommit = state.ref.lastCommit;
+        repo.indexedAt = state.ref.indexedAt;
+        // Shared commit graphs have no branch label; preserve this caller's
+        // checkout branch instead of caching another checkout's fallback.
+        repo.branch = state.ref.branch ?? repo.branch;
+      }
+      repo.poolIdentity = state?.dbIdentity;
+      repo.generationUnknown ||= state?.generationUnknown;
+      this.toolMetadata.set(repo, Promise.resolve(state?.metadata ?? null));
+    };
+    const pending = this.reinitPromises.get(poolKey);
+    if (pending) {
+      await pending;
+      bindSnapshot();
+      return;
     }
 
-    try {
-      await initLbug(poolKey, repo.lbugPath);
-      this.initializedRepos.add(poolKey);
-      // #2767: ftsStatus is deliberately left unset (undefined) here rather
-      // than issuing an extra loadMeta read — every tool call already routes
-      // through ensureInitialized, so an extra per-cold-init read adds up,
-      // and the cost of skipping it is negligible: at most one redundant
-      // initLbug call on the first warm check (initLbug itself no-ops
-      // cheaply via a single fs.stat when the file identity is actually
-      // unchanged, per pool-adapter.ts's own "unchanged → reuse" guard), not
-      // a real reopen.
+    // Check metadata and file identity before serving a tool; only git freshness
+    // retains its five-second cache. A publication must not pair new data with an old ref.
+    const refresh = (async () => {
+      const warm = this.initializedRepos.has(poolKey) && isLbugReady(poolKey);
+      const previous = this.lastObservedPoolState.get(poolKey);
+      const meta = await this.readToolMetadata(repo);
+      const diskIdentity = await statDbIdentity(poolKey);
+      if (meta?.indexedAt && meta.indexedAt !== previous?.diskIndexedAt) {
+        // Even a deferred reader needs its old ref compared to the new HEAD.
+        // Invalidate once per publication; concurrent checks still deduplicate.
+        this.toolStalenessCache.delete(poolKey);
+      }
+      const stampChanged =
+        !!meta?.indexedAt && meta.indexedAt !== (previous?.indexedAt ?? repo.indexedAt);
+      const identityChanged = dbIdentityChanged(previous?.dbIdentity ?? null, diskIdentity);
+      const ftsStatus = meta?.capabilities?.fts?.status;
+      if (!warm || stampChanged || identityChanged || previous?.ftsStatus !== ftsStatus) {
+        await initLbug(poolKey, poolKey);
+        this.initializedRepos.add(poolKey);
+      }
+      const openedIdentity = getLbugDbIdentity(poolKey);
+      // The path can change after stat and before initLbug opens it. Track
+      // replacement against the reader we actually opened, not that snapshot.
+      // Same-inode auxiliary changes (FTS repair) do not replace the graph;
+      // in-place graph writes advertise incrementalInProgress below.
+      const graphReplaced =
+        !!previous?.dbIdentity &&
+        !!openedIdentity &&
+        previous.dbIdentity.ino !== openedIdentity.ino;
+      const publicationPending =
+        !!previous &&
+        !stampChanged &&
+        (previous.awaitingMetadata === true ||
+          (graphReplaced && previous.ref !== undefined && !previous.generationUnknown));
+      const deferred =
+        !!openedIdentity && (!diskIdentity || dbIdentityChanged(openedIdentity, diskIdentity));
+      if (deferred) {
+        // initLbug keeps a busy reader on the old inode. Never attach the new
+        // metadata to it, including when another backend opened that reader.
+        if (previous && !dbIdentityChanged(previous.dbIdentity, openedIdentity)) {
+          this.setObservedState(poolKey, { diskIndexedAt: meta?.indexedAt });
+          return;
+        }
+        // A mismatched reader can be older than the disk or have opened a
+        // replacement after our first stat. Only the latter must wait for a
+        // stamp newer than the metadata we just observed, even if that stamp
+        // already differed from the previous reader's. Old pinned readers
+        // can recover against the existing disk metadata after they reopen.
+        const currentIdentity = await statDbIdentity(poolKey);
+        const openedAfterStat =
+          !currentIdentity || !dbIdentityChanged(openedIdentity, currentIdentity);
+        this.setObservedState(poolKey, {
+          indexedAt: meta?.indexedAt ?? previous?.indexedAt ?? repo.indexedAt,
+          dbIdentity: openedIdentity,
+          ref: { lastCommit: '', indexedAt: '' },
+          generationUnknown: true,
+          awaitingMetadata: publicationPending || openedAfterStat,
+          diskIndexedAt: meta?.indexedAt,
+          metadata: null,
+        });
+        return;
+      }
+      const ref: IndexedRef = {
+        lastCommit: meta?.lastCommit ?? previous?.ref?.lastCommit ?? repo.lastCommit,
+        indexedAt: meta?.indexedAt ?? previous?.ref?.indexedAt ?? repo.indexedAt,
+        branch: meta?.branch,
+      };
+      const generationUnknown = deferred || publicationPending || !!meta?.incrementalInProgress;
       this.setObservedState(poolKey, {
-        indexedAt: repo.indexedAt,
-        dbIdentity: await statDbIdentity(repo.lbugPath),
+        indexedAt: meta?.indexedAt ?? previous?.indexedAt ?? repo.indexedAt,
+        dbIdentity: openedIdentity,
+        ftsStatus,
+        ref: generationUnknown ? { lastCommit: '', indexedAt: '' } : ref,
+        generationUnknown,
+        awaitingMetadata: publicationPending,
+        diskIndexedAt: meta?.indexedAt,
+        metadata: generationUnknown ? null : meta,
       });
-    } catch (err: any) {
-      // If lock error, mark as not initialized so next call retries
-      this.initializedRepos.delete(poolKey);
-      throw err;
+    })();
+    this.reinitPromises.set(poolKey, refresh);
+    try {
+      await refresh;
+      bindSnapshot();
+    } finally {
+      this.reinitPromises.delete(poolKey);
     }
   }
 
@@ -2753,25 +3091,77 @@ export class LocalBackend {
    * error-returning call pays nothing.
    *
    * #3291: the ref comes straight off the already-resolved handle, so naming
-   * the index costs no extra I/O — no git spawn, no metadata read, and the
-   * `stalenessForTool` TTL cache is untouched. `branch` is passed through as-is
+   * the index ref costs no extra I/O. Graph results also read ingestion
+   * metadata below; the `stalenessForTool` TTL cache is untouched. `branch` is passed through as-is
    * and is legitimately absent for a detached HEAD or a legacy index; the
    * always-present `lastCommit` is what identifies the index in that case.
    */
-  private async withToolStaleness(repo: RepoHandle, result: unknown): Promise<unknown> {
+  private async withToolStaleness(
+    repo: RepoHandle,
+    result: unknown,
+    graphResult = false,
+  ): Promise<unknown> {
     if (!canCarryStaleness(result)) return result;
+    // Install the TTL entry before metadata I/O can yield to another call.
+    const stalenessPromise = repo.generationUnknown
+      ? Promise.resolve(undefined)
+      : this.stalenessForTool(repo).catch(() => undefined);
+    // This envelope covers query/cypher too; context/impact also carry it for
+    // direct backend callers. Read failure or a mixed generation is unknown.
+    let integrityMeta: Awaited<ReturnType<typeof loadMeta>> | undefined;
+    let metadataUnreadable = false;
+    try {
+      if (graphResult) {
+        integrityMeta = (await this.readToolMetadata(repo)) ?? undefined;
+        metadataUnreadable = integrityMeta === undefined;
+      }
+    } catch {
+      metadataUnreadable = true;
+    }
     // Defensive: `checkStalenessAsync` self-catches today, but a rejection here
     // must never fail the tool — degrade to no-staleness. Paired with the
     // evict-on-reject in `stalenessForTool`, a transient failure also can't
     // poison the TTL cache entry (#2655 review F1). A rejection leaves `info`
     // undefined, and the builder returns nothing for that even with a ref, so
     // the degraded path still attaches no field.
-    const staleness = await this.stalenessForTool(repo).catch(() => undefined);
-    return attachToolStaleness(result, staleness, {
-      branch: repo.branch,
-      lastCommit: repo.lastCommit,
-      indexedAt: repo.indexedAt,
-    });
+    // Multiple reads may straddle an idle pool rollover. Do not certify mixed
+    // generations as current. A busy reader that stayed on its inode is known.
+    const changedDuringTool =
+      repo.poolIdentity !== undefined &&
+      dbIdentityChanged(repo.poolIdentity, getLbugDbIdentity(repo.lbugPath));
+    if (repo.generationUnknown || changedDuringTool) {
+      return attachToolStaleness(
+        graphResult
+          ? {
+              ...result,
+              graph_integrity: relationshipIntegrityForCaller(undefined, 'generation-changed'),
+            }
+          : result,
+        { status: 'unknown', isStale: false, commitsBehind: 0 },
+        {
+          lastCommit: '',
+          indexedAt: '',
+        },
+      );
+    }
+    const staleness = await stalenessPromise;
+    return attachToolStaleness(
+      graphResult
+        ? {
+            ...result,
+            graph_integrity: relationshipIntegrityForCaller(
+              integrityMeta?.relationshipIntegrity,
+              metadataUnreadable ? 'metadata-unreadable' : undefined,
+            ),
+          }
+        : result,
+      staleness,
+      {
+        branch: repo.branch,
+        lastCommit: repo.lastCommit,
+        indexedAt: repo.indexedAt,
+      },
+    );
   }
 
   /**
@@ -2787,8 +3177,15 @@ export class LocalBackend {
    */
   private stalenessForTool(repo: RepoHandle): Promise<StalenessInfo> {
     const now = Date.now();
+    const generation = JSON.stringify([
+      repo.repoPath,
+      repo.lastCommit,
+      repo.indexedAt,
+      repo.branch,
+      repo.poolIdentity,
+    ]);
     const cached = this.toolStalenessCache.get(repo.lbugPath);
-    if (cached && now - cached.at < LocalBackend.TOOL_STALENESS_TTL_MS) {
+    if (cached?.generation === generation && now - cached.at < LocalBackend.TOOL_STALENESS_TTL_MS) {
       return cached.value;
     }
     // Evict the entry if the check rejects so a transient failure isn't served
@@ -2797,8 +3194,9 @@ export class LocalBackend {
     // dedup is untouched (#2655 review F1). `Promise.resolve` wraps the call so a
     // non-thenable return can't throw at this boundary — a no-op for the real
     // async `checkStalenessAsync`, robust defense-in-depth otherwise.
-    const entry: { at: number; value: Promise<StalenessInfo> } = {
+    const entry: { at: number; generation: string; value: Promise<StalenessInfo> } = {
       at: now,
+      generation,
       // Only evict if THIS entry is still current — a later call may have
       // installed a fresh (resolving) entry for the same key before a slow
       // rejection lands, and that newer entry must not be dropped.
@@ -2813,7 +3211,10 @@ export class LocalBackend {
     return entry.value;
   }
 
-  async callTool(method: string, params: any): Promise<any> {
+  async callTool(method: string, params: any, context: McpToolCallContext = {}): Promise<any> {
+    if (Array.isArray(params?.repo) && method !== 'query' && method !== 'search') {
+      return { error: 'Repository arrays are supported only by query (and legacy search).' };
+    }
     if (method === 'list_repos') {
       // Paginated tool surface (#2119). `listRepos()` is unchanged for internal
       // callers; the tool wraps it in { repositories, pagination } and forwards
@@ -2828,6 +3229,8 @@ export class LocalBackend {
     const normalized = normalizeToolParams(method, params);
     if ('error' in normalized) return { error: normalized.error };
     const p = normalized.params;
+
+    if (Array.isArray(p.repo)) return this.queryRepositories(p);
 
     // #2175: Claude Code drops a tool-call argument named exactly "query", so the
     // query/cypher tools advertise "search_query"/"statement" while still accepting the
@@ -2846,29 +3249,51 @@ export class LocalBackend {
       return this.callToolAtGroupRepo(method, p);
     }
 
+    // These tools read the checkout, not a pinned index. `branch` would still
+    // rewrite lbugPath/lastCommit and withToolStaleness would label checkout
+    // bytes with that pin. Reject before selectToolRepository applies it.
+    if (CHECKOUT_SOURCE_TOOLS.has(method) && p.branch !== undefined && p.branch !== '') {
+      return {
+        error: `${method} follows the checked-out working tree and does not accept "branch". Omit it.`,
+      };
+    }
+
     // Resolve repo from optional param (re-reads registry on miss). An optional
     // `branch` param scopes the resolved handle to that branch's index (#2106).
+    // `rename` follows the read-tool omission rule (cwd-derived default) only for
+    // a call that cannot write: dry_run omitted or literally true. dry_run:false -
+    // and any malformed value, which the planner then rejects - keeps the stricter
+    // mutating rule: an explicit repo, one indexed repo, or an MCP default.
     const repo = await this.selectToolRepository(
       p.repo as string | undefined,
       p.branch as string | undefined,
-      { allowCwdDefault: method !== 'rename' },
+      {
+        allowCwdDefault:
+          method === MCP_REFRESH_TOOL
+            ? false
+            : method !== 'rename' || p.dry_run === undefined || p.dry_run === true,
+      },
     );
 
     switch (method) {
       case 'query':
-        return this.withToolStaleness(repo, await this.query(repo, p));
+        return this.withToolStaleness(repo, await this.query(repo, p), true);
       case 'cypher': {
         const raw = await this.cypher(repo, p);
-        return this.withToolStaleness(repo, this.formatCypherAsMarkdown(raw));
+        return this.withToolStaleness(repo, this.formatCypherAsMarkdown(raw), true);
       }
       case 'context':
-        return this.withToolStaleness(repo, await this.context(repo, p));
+        return this.withToolStaleness(repo, await this.context(repo, p), true);
       case 'explain':
         return this.explain(repo, p);
       case 'pdg_query':
         return this.pdgQuery(repo, p);
       case 'impact':
-        return this.withToolStaleness(repo, await this.impact(repo, p as unknown as ImpactParams));
+        return this.withToolStaleness(
+          repo,
+          await this.impact(repo, p as unknown as ImpactParams),
+          true,
+        );
       case 'detect_changes':
         return this.detectChanges(repo, p);
       case 'check':
@@ -2895,9 +3320,161 @@ export class LocalBackend {
         return this.apiImpact(repo, p);
       case 'trace':
         return this.trace(repo, p);
+      case 'read_file':
+        return this.withToolStaleness(repo, await this.readFile(repo, p));
+      case 'grep':
+        return this.withToolStaleness(repo, await this.grep(repo, p));
+      case MCP_REFRESH_TOOL:
+        return this.refreshIndex(repo, p, context);
       default:
         throw new Error(`Unknown tool: ${method}`);
     }
+  }
+
+  /** Indexes with a `refresh_index` run in flight, keyed by storage slot (#3524). */
+  private readonly refreshesInFlight = new Set<string>();
+
+  /**
+   * `refresh_index` (#3524): rebuild one registered index through the same
+   * forked worker and options auto-sync uses, so nothing in the repository is
+   * written and the analysis runs outside this process. The worker takes the
+   * index lock and publishes the way `analyze` does (atomic swap on POSIX; see
+   * run-analyze). The server only dispatches here when the local operator
+   * enabled the tool; see refresh-policy.ts.
+   */
+  private async refreshIndex(
+    repo: RepoHandle,
+    params: Record<string, unknown>,
+    context: McpToolCallContext,
+  ): Promise<unknown> {
+    if (params.dry_run !== undefined && typeof params.dry_run !== 'boolean') {
+      return { error: 'Parameter "dry_run" must be a boolean.' };
+    }
+    const { maxFiles, timeoutMs } = resolveMcpRefreshLimits();
+    const [{ runAutoSyncAnalysis }, { embeddingsFromGitnexusRc }, { countScanCandidates }] =
+      await Promise.all([
+        import('../../core/auto-sync/analysis-worker-launch.js'),
+        import('../../core/gitnexus-rc-embeddings.js'),
+        import('../../core/ingestion/filesystem-walker.js'),
+      ]);
+    let rcEmbeddings: Awaited<ReturnType<typeof embeddingsFromGitnexusRc>>;
+    // The working tree, not the last index, decides the rebuild's size: a stale
+    // index is exactly the one that may have fallen far behind it. Counting
+    // stops one past the limit, so a huge tree costs no more than a small one.
+    let treeFiles: number | undefined;
+    try {
+      rcEmbeddings = await embeddingsFromGitnexusRc(repo.repoPath);
+      if (maxFiles > 0) treeFiles = await countScanCandidates(repo.repoPath, maxFiles);
+    } catch (err) {
+      return { error: `Cannot refresh ${repo.name}: ${asSentence(err)}` };
+    }
+    const previous = await this.refreshSnapshot(repo);
+    const lastIndexedFiles = repo.stats?.files ?? null;
+    const refusal =
+      treeFiles !== undefined && treeFiles > maxFiles
+        ? `${repo.name} has more than ${maxFiles} files in its working tree${
+            lastIndexedFiles === null ? '' : ` (${lastIndexedFiles} at its last index)`
+          }, over this server's refresh limit of ${maxFiles} (GITNEXUS_MCP_REFRESH_MAX_FILES). Run \`gitnexus analyze\` in the repository instead.`
+        : undefined;
+    const running = this.refreshesInFlight.has(repo.storagePath);
+
+    if (params.dry_run === true) {
+      return {
+        status: 'dry_run',
+        repo: repo.name,
+        ...previous,
+        // Exact up to the limit; past it, only "more than maxFiles" is known.
+        estimatedFiles: treeFiles === undefined || refusal ? null : treeFiles,
+        lastIndexedFiles,
+        maxFiles,
+        // `.gitnexusrc` can ask for embeddings, which the file limit does not bound.
+        embeddings: rcEmbeddings.embeddings === true,
+        wouldRefresh: refusal === undefined && !running,
+        ...(refusal ? { refusal } : {}),
+        ...(running ? { inProgress: true } : {}),
+      };
+    }
+    if (running) {
+      return { error: `A refresh of ${repo.name} is already running; wait for it to finish.` };
+    }
+    if (refusal) return { error: refusal };
+
+    // No abort signal is passed: the worker never interrupts an analysis it has
+    // started (analyze-worker.ts), so a cancelled call would only free this slot
+    // while the rebuild runs on. Holding it keeps "already running" and
+    // `inProgress` true until the worker is done.
+    this.refreshesInFlight.add(repo.storagePath);
+    const startedAt = Date.now();
+    let analysis: Awaited<ReturnType<typeof runAutoSyncAnalysis>>;
+    let workerExited: Promise<void> | undefined;
+    try {
+      analysis = await runAutoSyncAnalysis(
+        repo.repoPath,
+        {
+          skipAgentsMd: true,
+          skipSkills: true,
+          preserveExistingPdg: true,
+          atomicIncremental: true,
+          ...rcEmbeddings,
+        },
+        timeoutMs,
+        undefined,
+        undefined,
+        undefined,
+        context.onProgress,
+      );
+    } catch (err) {
+      const failure = err as {
+        abandonedWorker?: boolean;
+        workerExited?: Promise<void>;
+      } | null;
+      // The request can time out before its worker releases the index lock.
+      if (failure?.abandonedWorker) workerExited = failure.workerExited;
+      const leftRunning =
+        failure?.abandonedWorker === true
+          ? ' Its worker keeps running until the analysis finishes; another refresh is refused until it exits.'
+          : '';
+      return {
+        error: `Refresh of ${repo.name} failed: ${asSentence(err)}${leftRunning} Run \`gitnexus analyze\` in the repository for the full log.`,
+      };
+    } finally {
+      const releaseSlot = () => this.refreshesInFlight.delete(repo.storagePath);
+      if (workerExited) void workerExited.then(releaseSlot);
+      else releaseSlot();
+    }
+
+    await this.refreshRepos();
+    // Same verdict as `gitnexus analyze` and `serve`: most edges are missing,
+    // so this is a failure, not a refresh.
+    if (analysis.graphWriteCollapsed) {
+      const { expected, persisted } = analysis.graphWriteCollapsed;
+      return {
+        error: `${repo.name} was indexed INCOMPLETELY: only ${persisted} of ${expected} expected relationships are readable, so queries will answer with missing edges. Run \`gitnexus analyze --force\` in the repository; if it recurs, check disk space and run \`gitnexus doctor\`.`,
+      };
+    }
+    const refreshed = this.resolveRepoFromCache(repo.repoPath) ?? repo;
+    return {
+      status: 'refreshed',
+      repo: refreshed.name,
+      previous,
+      ...(await this.refreshSnapshot(refreshed)),
+      stats: refreshed.stats ?? {},
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+  private async refreshSnapshot(repo: RepoHandle) {
+    const info = await checkStalenessAsync(repo.repoPath, repo.lastCommit).catch(() => undefined);
+    return {
+      indexedAt: repo.indexedAt,
+      lastCommit: repo.lastCommit,
+      // `stalenessPayload` omits `current`; this result always states it, and a
+      // check that could not run is `unknown`, never `current`.
+      staleness:
+        info === undefined
+          ? { status: 'unknown' }
+          : (stalenessPayload(info, { includeUnknown: true }) ?? { status: 'current' }),
+    };
   }
 
   // ─── Tool Implementations ────────────────────────────────────────
@@ -2914,20 +3491,25 @@ export class LocalBackend {
     const rows = await executeParameterized(
       repo.lbugPath,
       // A cycle here means "these modules cannot be initialized in any order".
-      // Only edges that force initialization count, so four kinds are excluded:
+      // Only edges that force initialization count, so five kinds are excluded:
       // Swift implicit module visibility and markdown links (never code
-      // dependencies at all); imports reachable only through `import()` or a
+      // dependencies at all); Dart package-identity edges, which point at
+      // pubspec.yaml so a manifest edit invalidates importers and cannot
+      // form an init cycle; imports reachable only through `import()` or a
       // function body, which are deferred by construction — deferring is the
       // standard idiom for BREAKING an init cycle, so counting it reports the
       // fix as the bug; and imports reachable only through TypeScript
       // `import type`, which `tsc` erases outright, so no module load exists
       // to order. `imports-to-edges.ts` tags the last two with
       // DEFERRED_IMPORT_REASON_SUFFIX / TYPE_ONLY_IMPORT_REASON_SUFFIX.
+      // The Dart exclusion has to sit in this filter, before LIMIT, or the
+      // identity edges consume the 100000-row admission cap on a cycle-free graph.
       `MATCH (source:File)-[r:CodeRelation]->(target:File)
        WHERE r.type = 'IMPORTS'
          AND (r.reason IS NULL OR (
            r.reason <> 'swift-scope: implicit module visibility'
            AND r.reason <> 'markdown-link'
+           AND r.reason <> '${DART_PACKAGE_IDENTITY_REASON}'
            AND NOT r.reason ENDS WITH '${DEFERRED_IMPORT_REASON_SUFFIX}'
            AND NOT r.reason ENDS WITH '${TYPE_ONLY_IMPORT_REASON_SUFFIX}'
          ))
@@ -3000,6 +3582,85 @@ export class LocalBackend {
     };
   }
 
+  /** Resolve the whole selection before opening a database, then lease only active members. */
+  private async queryRepositories(params: Record<string, unknown>) {
+    let specifiers: string[];
+    try {
+      specifiers = parseQueryRepositories(params.repo);
+    } catch (error) {
+      return { error: (error as Error).message };
+    }
+    const rawQuery = resolveAliasString(params.search_query, params.query);
+    if (!rawQuery?.trim()) {
+      return { error: 'search_query (or legacy query) parameter is required and cannot be empty.' };
+    }
+    const limit = parseQueryPageBound(params.limit, 'limit', QUERY_DEFAULT_LIMIT, QUERY_MAX_LIMIT);
+    if (limit.ok === false) return { error: limit.error };
+    const maxSymbols = parseQueryPageBound(
+      params.max_symbols,
+      'max_symbols',
+      QUERY_DEFAULT_MAX_SYMBOLS,
+      QUERY_MAX_MAX_SYMBOLS,
+    );
+    if (maxSymbols.ok === false) return { error: maxSymbols.error };
+    const chainDepth = parseChainDepth(params.chain_depth);
+    if (chainDepth.ok === false) return { error: chainDepth.error };
+
+    const selected = new Map<string, RepoHandle>();
+    for (const specifier of specifiers) {
+      const repo = await this.selectToolRepository(specifier, params.branch as string | undefined);
+      const repoPath = canonicalizePath(repo.repoPath);
+      const key = process.platform === 'win32' ? repoPath.toLowerCase() : repoPath;
+      // Shared databases can serve distinct checkouts; deduplicate checkout identity only.
+      if (!selected.has(key)) selected.set(key, { ...repo, repoPath });
+    }
+    const repos = [...selected.values()];
+    const results = await mapConcurrent(
+      repos,
+      async (repo): Promise<RepositoryQueryResult> => {
+        const release = pinRepo(repo.lbugPath);
+        try {
+          const result = (await this.withToolStaleness(
+            repo,
+            await this.query(repo, params),
+          )) as RepositoryQueryResult['result'];
+          return { repo: repo.repoPath, name: repo.name, result };
+        } catch (error) {
+          return {
+            repo: repo.repoPath,
+            name: repo.name,
+            result:
+              error instanceof SymbolIdentityError
+                ? { error: error.message, recoverySuggestion: SYMBOL_IDENTITY_RECOVERY_SUGGESTION }
+                : {
+                    error:
+                      'Repository search failed; retry this repository individually for details.',
+                  },
+          };
+        } finally {
+          release();
+        }
+      },
+      { concurrency: 4 },
+    );
+    // mapConcurrent retains a slot for a rejected callback; never misreport one as empty success.
+    return mergeRepositoryQueries(
+      results.map(
+        (result, i) =>
+          result ?? {
+            repo: repos[i].repoPath,
+            name: repos[i].name,
+            result: { error: 'Repository search did not complete.' },
+          },
+      ),
+      {
+        limit: limit.value,
+        maxSymbols: maxSymbols.value,
+        includeContent: params.include_content === true,
+      },
+    );
+  }
+
   /**
    * Query tool — process-grouped search.
    *
@@ -3009,6 +3670,34 @@ export class LocalBackend {
    * 4. Return: { processes, process_symbols, definitions }
    */
   private async query(
+    repo: RepoHandle,
+    params: {
+      query?: string;
+      search_query?: string;
+      task_context?: string;
+      goal?: string;
+      limit?: number;
+      max_symbols?: number;
+      include_content?: boolean;
+      chain_depth?: number;
+    },
+  ): Promise<any> {
+    const release = pinRepo(repo.lbugPath);
+    try {
+      const result = await this._queryImpl(repo, params);
+      if (!result.error) assertResponseIdentities(result);
+      return result;
+    } catch (err) {
+      if (err instanceof SymbolIdentityError) {
+        return { error: err.message, recoverySuggestion: SYMBOL_IDENTITY_RECOVERY_SUGGESTION };
+      }
+      throw err;
+    } finally {
+      release();
+    }
+  }
+
+  private async _queryImpl(
     repo: RepoHandle,
     params: {
       query?: string;
@@ -3057,7 +3746,7 @@ export class LocalBackend {
     // disclosing text merely because a caller asked for it. `query` already
     // reads this metadata for CJK and embedding-dimension drift diagnostics,
     // so keep that legacy read unconditional.
-    const meta = await loadMeta(path.dirname(repo.lbugPath));
+    const meta = await this.readToolMetadata(repo);
     const includeContent = requestedContent && contentRetentionFromMeta(meta) !== 'none';
     const contentAvailability = requestedContentAvailability(requestedContent, meta);
     const searchQuery = rawQuery.trim();
@@ -3076,11 +3765,20 @@ export class LocalBackend {
     // over a single `current` phase slot.
     const searchLimit = processLimit * maxSymbolsPerProcess; // fetch enough raw results
     const ftsDisabledReason = getFtsDisabledReason(meta?.capabilities?.fts);
-    const vectorDegraded = { reason: undefined as string | undefined };
-    const [bm25SearchResult, semanticResults] = await Promise.all([
+    const vectorDegraded: { reason?: string; embeddingDims?: number } = {};
+    const [bm25Outcome, semanticOutcome] = await Promise.allSettled([
       timer.time('bm25', this.bm25Search(repo, searchQuery, searchLimit, ftsDisabledReason)),
       timer.time('vector', this.semanticSearch(repo, searchQuery, searchLimit, vectorDegraded)),
     ]);
+    // A rejected lane must not let the other lane outlive query(). In particular,
+    // semantic search may still be importing the embedder and can start its
+    // sidecar after a one-shot CLI has already run disconnect() in `finally`.
+    // Settle both lanes first, then preserve Promise.all's left-to-right error
+    // precedence for callers.
+    if (bm25Outcome.status === 'rejected') throw bm25Outcome.reason;
+    if (semanticOutcome.status === 'rejected') throw semanticOutcome.reason;
+    const bm25SearchResult = bm25Outcome.value;
+    const semanticResults = semanticOutcome.value;
 
     // Guard against undefined results (#1489) — when FTS is entirely
     // unavailable the search helper may return an unexpected shape.
@@ -3090,6 +3788,7 @@ export class LocalBackend {
     // regardless of whether OTHER tables succeeded — previously a real error
     // on N-1 of N tables while one succeeded left zero diagnostic trail.
     const ftsQueryErrors = bm25SearchResult?.nonBenignErrors;
+    const ftsMissingIndexes = bm25SearchResult?.missingIndexes;
     if (ftsQueryErrors) {
       // tri-review NEW-5: these strings are already classified non-benign by
       // classifyFtsQueryError — do NOT route them through logQueryError,
@@ -3108,6 +3807,10 @@ export class LocalBackend {
 
     for (let i = 0; i < bm25Results.length; i++) {
       const result = bm25Results[i];
+      if (result.nodeId !== undefined && result.nodeId !== null) {
+        assertSymbolIdentity(result.nodeId);
+      }
+      assertIdentityFields(result.name, result.type, result.filePath);
       const key = result.nodeId || result.filePath;
       const rrfScore = 1 / (60 + i);
       const existing = scoreMap.get(key);
@@ -3121,6 +3824,8 @@ export class LocalBackend {
     const safeSemanticResults = semanticResults ?? [];
     for (let i = 0; i < safeSemanticResults.length; i++) {
       const result = safeSemanticResults[i];
+      assertSymbolIdentity(result.nodeId);
+      assertIdentityFields(result.name, result.type, result.filePath);
       const key = result.nodeId || result.filePath;
       const rrfScore = 1 / (60 + i);
       const existing = scoreMap.get(key);
@@ -3160,21 +3865,10 @@ export class LocalBackend {
     >();
     const definitions: any[] = []; // standalone symbols not in any process
 
-    // Batch-fetch process participation, cohesion, and (optionally) content for
-    // ALL matched symbols in 2-3 graph queries instead of 2-3 *per symbol*. The
-    // previous per-symbol loop issued up to 3N sequential pool round-trips
-    // (searchLimit symbols × {STEP_IN_PROCESS, MEMBER_OF, content}); on a warm
-    // repo the IPC + query-setup overhead of those round-trips dominated query
-    // latency. Collapsing to `WHERE n.id IN $nodeIds` preserves identical output
-    // (the aggregation loop below is unchanged) while cutting the round-trips.
-    // Array params bind through the pool exactly as bm25Search's
-    // `WHERE n.id IN $nodeIds` already does. (Ported from gitnexus-enterprise
-    // PR #222 — N+1 → 2-3 batched queries.)
     const nodeIds = merged.map(([, m]) => m.data?.nodeId).filter((id): id is string => !!id);
 
     const processRowsByNode = new Map<string, any[]>();
     const cohesionByNode = new Map<string, { cohesion: number; module?: string }>();
-    const contentByNode = new Map<string, string>();
     // Set when a batched enrichment query throws a REAL failure (timeout, lock,
     // native fault) — NOT the benign "no Process/Community table" case, which is
     // a normal config (a repo analyzed without processes/communities) and must
@@ -3203,12 +3897,20 @@ export class LocalBackend {
           { nodeIds: ids },
         );
         for (const row of rows) {
+          assertQueryIdentity(row, 'nodeId', 0, [
+            ['label', 2],
+            ['heuristicLabel', 3],
+            ['processType', 4],
+            ['entryPointId', 7],
+          ]);
+          assertSymbolIdentity(queryRowValue(row, 'pid', 1));
           const nid = row.nodeId ?? row[0];
           let list = processRowsByNode.get(nid);
           if (!list) processRowsByNode.set(nid, (list = []));
           list.push(row);
         }
       } catch (e) {
+        rethrowSymbolIdentityError(e);
         logQueryError('query:process-lookup', e);
         if (!isBenignMissingTableError(e)) enrichmentDegraded = true;
       }
@@ -3233,6 +3935,7 @@ export class LocalBackend {
           { nodeIds: ids },
         );
         for (const row of rows) {
+          assertQueryIdentity(row, 'nodeId', 0, [['module', 2]]);
           const nid = row.nodeId ?? row[0];
           if (!cohesionByNode.has(nid)) {
             cohesionByNode.set(nid, {
@@ -3242,30 +3945,9 @@ export class LocalBackend {
           }
         }
       } catch (e) {
+        rethrowSymbolIdentityError(e);
         logQueryError('query:cluster-info', e);
         if (!isBenignMissingTableError(e)) enrichmentDegraded = true;
-      }
-
-      // Optionally fetch content for every matched symbol.
-      if (includeContent) {
-        try {
-          const rows = await executeParameterized(
-            repo.lbugPath,
-            `
-            MATCH (n)
-            WHERE n.id IN $nodeIds
-            RETURN n.id AS nodeId, n.content AS content
-          `,
-            { nodeIds: ids },
-          );
-          for (const row of rows) {
-            const nid = row.nodeId ?? row[0];
-            contentByNode.set(nid, row.content ?? row[1]);
-          }
-        } catch (e) {
-          logQueryError('query:content-fetch', e);
-          if (!isBenignMissingTableError(e)) enrichmentDegraded = true;
-        }
       }
     }
 
@@ -3289,7 +3971,6 @@ export class LocalBackend {
       const coh = cohesionByNode.get(sym.nodeId);
       const cohesion = coh?.cohesion ?? 0;
       const module = coh?.module;
-      const content = includeContent ? contentByNode.get(sym.nodeId) : undefined;
 
       const symbolEntry = {
         id: sym.nodeId,
@@ -3299,7 +3980,6 @@ export class LocalBackend {
         startLine: toDisplayLine(sym.startLine),
         endLine: toDisplayLine(sym.endLine),
         ...(module ? { module } : {}),
-        ...(includeContent && content ? { content } : {}),
       };
 
       if (processRows.length === 0) {
@@ -3376,6 +4056,13 @@ export class LocalBackend {
             { routeIds: ids },
           );
           for (const row of rows) {
+            assertQueryIdentity(row, 'routeId', 0, [
+              ['handlerName', 2],
+              ['handlerFilePath', 3],
+              ['url', 4],
+              ['method', 5],
+            ]);
+            assertSymbolIdentity(queryRowValue(row, 'handlerId', 1));
             const routeId = String(row.routeId ?? row[0] ?? '');
             const handlerId = String(row.handlerId ?? row[1] ?? '');
             if (!routeId || !handlerId) continue;
@@ -3391,6 +4078,7 @@ export class LocalBackend {
           }
         }
       } catch (e) {
+        rethrowSymbolIdentityError(e);
         logQueryError('query:route-definition-bridge', e);
         if (!isBenignMissingTableError(e)) enrichmentDegraded = true;
       }
@@ -3486,6 +4174,10 @@ export class LocalBackend {
             },
           );
           for (const row of routeRows) {
+            assertQueryIdentity(row, 'pid', 0, [
+              ['url', 1],
+              ['method', 2],
+            ]);
             const targetPid = row.pid ?? row[0];
             const url = row.url ?? row[1];
             const method = row.method ?? row[2];
@@ -3503,6 +4195,7 @@ export class LocalBackend {
           }
         }
       } catch (e) {
+        rethrowSymbolIdentityError(e);
         logQueryError('query:route-lookup', e);
         if (!isBenignMissingTableError(e)) enrichmentDegraded = true;
       }
@@ -3519,11 +4212,12 @@ export class LocalBackend {
     // QUERY_CHAIN_BFS_CONCURRENCY walks in flight. This is the per-query BFS
     // cap; GroupService.groupQuery also caps member-query fan-out so a group
     // of N members cannot run 4×N concurrent BFS walks.
-    // Best-effort — a BFS failure drops that process's chain but never fails
-    // the query.
+    // Ordinary BFS failures may drop a chain; corrupt identities must fail
+    // the query even though mapConcurrent normally swallows worker errors.
     const chainByProcessId = new Map<string, any[]>();
     if (requestedChainDepth > 0 && rankedProcesses.length > 0) {
       timer.start('chain_enrichment');
+      let integrityError: SymbolIdentityError | undefined;
       await mapConcurrent(
         rankedProcesses,
         async (p) => {
@@ -3534,53 +4228,69 @@ export class LocalBackend {
               p.entryPointId,
               requestedChainDepth,
             );
+            assertResponseIdentities(chain);
             chainByProcessId.set(p.id, chain);
           } catch (e) {
+            rethrowSymbolIdentityError(e);
             logQueryError('query:chain-bfs', e);
             if (!isBenignMissingTableError(e)) enrichmentDegraded = true;
           }
         },
-        { concurrency: QUERY_CHAIN_BFS_CONCURRENCY },
+        {
+          concurrency: QUERY_CHAIN_BFS_CONCURRENCY,
+          onError: (error) => {
+            if (error instanceof SymbolIdentityError) integrityError = error;
+          },
+        },
       );
+      if (integrityError) throw integrityError;
       timer.stop(); // chain_enrichment
     }
 
     // Step 4: Build response
     timer.start('formatting');
-    const processes = rankedProcesses.map((p) => ({
-      id: p.id,
-      summary: p.heuristicLabel || p.label,
-      priority: Math.round(p.priority * 1000) / 1000,
-      symbol_count: p.symbols.length,
-      process_type: p.processType,
-      step_count: p.stepCount,
-      ...(p.routes && p.routes.length > 0
-        ? {
-            route: p.routes[0].url,
-            method: p.routes[0].method || undefined,
-            routes: p.routes,
-          }
-        : {}),
-      ...(chainByProcessId.has(p.id) ? { chain: chainByProcessId.get(p.id) } : {}),
-    }));
-
-    const processSymbols = rankedProcesses.flatMap((p) =>
-      p.symbols.slice(0, maxSymbolsPerProcess).map((s) => ({
-        ...s,
-        // mark the entry-point symbol so an agent reading the
-        // process can tell procedure vs. workflow vs. helper at a glance.
-        ...(p.entryPointId && s.id === p.entryPointId ? { is_entry_point: true } : {}),
-      })),
-    );
-
-    // Deduplicate process_symbols by id
-    const seen = new Set<string>();
-    const dedupedSymbols = processSymbols.filter((s) => {
-      if (seen.has(s.id)) return false;
-      seen.add(s.id);
-      return true;
+    const { processes, process_symbols } = shapeQueryProcessAttaches(rankedProcesses, {
+      maxSymbolsPerProcess,
+      chainByProcessId,
     });
+    const returnedDefinitions = definitions.slice(0, 20);
     timer.stop(); // formatting
+
+    if (includeContent) {
+      timer.start('content');
+      const targets = new Map<
+        string,
+        { id: string; content?: string; content_truncated?: boolean }
+      >();
+      for (const symbol of [...process_symbols, ...returnedDefinitions]) {
+        if (symbol.id && !targets.has(symbol.id)) targets.set(symbol.id, symbol);
+      }
+      const previewChars = Math.floor(QUERY_CONTENT_MAX_CHARS / Math.max(1, targets.size));
+      for (const ids of chunk([...targets.keys()], LBUG_QUERY_BATCH_SIZE)) {
+        try {
+          const rows = await executeParameterized(
+            repo.lbugPath,
+            `MATCH (n) WHERE n.id IN $nodeIds
+             RETURN n.id AS nodeId, substring(n.content, 1, $previewChars) AS content,
+                    size(n.content) > $previewChars AS contentTruncated`,
+            { nodeIds: ids, previewChars },
+          );
+          for (const row of rows) {
+            assertQueryIdentity(row, 'nodeId', 0);
+            const target = targets.get(row.nodeId ?? row[0]);
+            if (!target) continue;
+            const content = row.content ?? row[1];
+            if (content) target.content = content;
+            if (row.contentTruncated ?? row[2]) target.content_truncated = true;
+          }
+        } catch (e) {
+          rethrowSymbolIdentityError(e);
+          logQueryError('query:content-fetch', e);
+          if (!isBenignMissingTableError(e)) enrichmentDegraded = true;
+        }
+      }
+      timer.stop();
+    }
 
     // End-to-end wall time — deliberately a separate mark so callers can
     // compare sum(phases) vs wall to see how much Promise.all concurrency
@@ -3608,13 +4318,15 @@ export class LocalBackend {
         branch: repo.branch,
         indexedAt: this.lastObservedPoolState.get(repo.lbugPath)?.indexedAt ?? repo.indexedAt,
       };
-      // tri-review NEW-1: every table failing for a REAL error (timeout,
-      // connection reset) is not a missing-index condition — `ftsDegradedWarning`'s
-      // "run --repair-fts" headline won't fix it. Route to a dedicated message
-      // instead of burying the real cause as a trailing suffix on bad advice.
+      // Real errors (timeout, connection reset) need their own diagnosis.
+      // When some indexes are also missing, preserve both causes and append
+      // their repair guidance below even though no FTS query succeeded.
       warnings.push(
         ftsQueryErrors
-          ? ftsQueryFailedWarning({ ...warningContext, lastErrorRedacted: ftsQueryErrors[0] })
+          ? ftsQueryFailedWarning(
+              { ...warningContext, lastErrorRedacted: ftsQueryErrors[0] },
+              !!ftsMissingIndexes?.length,
+            )
           : ftsDegradedWarning(warningContext, ftsDisabledReason),
       );
     } else if (ftsQueryErrors) {
@@ -3625,6 +4337,12 @@ export class LocalBackend {
       // that convention instead of only logging server-side.
       warnings.push(
         `FTS keyword search partially failed — ${ftsQueryErrors.length} of the configured indexes hit a query error and were skipped; results may be missing matches from those node types (see server logs).`,
+      );
+    }
+    if (ftsMissingIndexes?.length && (ftsUsed || ftsQueryErrors)) {
+      warnings.push(
+        `FTS keyword search is incomplete: missing configured indexes (${ftsMissingIndexes.join(', ')}). ` +
+          'Results may be missing matches from those node types. Run `gitnexus analyze --repair-fts`.',
       );
     }
     // #2331: a CJK query against a server process resolving
@@ -3653,6 +4371,7 @@ export class LocalBackend {
         );
       }
     } catch (err) {
+      rethrowSymbolIdentityError(err);
       // Best-effort diagnostic only — never fail the query over it.
       logQueryError('query:cjk-warning', err);
     }
@@ -3695,6 +4414,7 @@ export class LocalBackend {
         );
       }
     } catch (err) {
+      rethrowSymbolIdentityError(err);
       // loadMeta() itself never throws (it returns null on any read/parse
       // failure) — the actual throw source here is getSearchFTSCjkSegmentation()
       // on an invalid env value, same root cause as the catch above. This is
@@ -3715,14 +4435,7 @@ export class LocalBackend {
     // minus its semantic lane beats no answer at all. Same shape as the CJK
     // drift check above — composed into `warnings`, recomputed per query rather
     // than latched, and carrying the fix rather than just the symptom.
-    //
-    // Gated on a width this call actually embedded at (see
-    // `lastQueryEmbeddingDims`) so the tools that never embed — every other
-    // method on this backend — and every index analyzed without `--embeddings`
-    // stay quiet. ABSENT `embeddingDims` is NOT a mismatch: that is
-    // `embeddingDimsMismatch`'s own rule, reused rather than restated so the
-    // two sides of the guard cannot drift apart.
-    const queryEmbeddingDims = this.lastQueryEmbeddingDims.get(repo.lbugPath);
+    const queryEmbeddingDims = vectorDegraded.embeddingDims;
     if (
       queryEmbeddingDims !== undefined &&
       meta &&
@@ -3758,12 +4471,12 @@ export class LocalBackend {
     // #2767: a partial FTS failure (some tables ok, one or more real errors)
     // is as much a "results may be incomplete" signal as enrichmentDegraded —
     // flag it the same way rather than only via the warning string.
-    const ftsPartial = ftsUsed && !!ftsQueryErrors;
+    const ftsPartial = ftsUsed && (!!ftsQueryErrors || !!ftsMissingIndexes?.length);
 
     return {
       processes,
-      process_symbols: dedupedSymbols,
-      definitions: definitions.slice(0, 20), // cap standalone definitions
+      process_symbols,
+      definitions: returnedDefinitions,
       timing,
       ...(contentAvailability ? { contentAvailability } : {}),
       ...(warnings.length > 0 && { warning: warnings.join(' ') }),
@@ -3779,12 +4492,18 @@ export class LocalBackend {
     query: string,
     limit: number,
     disabledReason?: FtsDisabledReason,
-  ): Promise<{ results: any[]; ftsUsed: boolean; nonBenignErrors?: string[] }> {
+  ): Promise<{
+    results: any[];
+    ftsUsed: boolean;
+    nonBenignErrors?: string[];
+    missingIndexes?: string[];
+  }> {
     if (disabledReason) return { results: [], ftsUsed: false };
     let searchFTSFromLbug;
     try {
       ({ searchFTSFromLbug } = await import('../../core/search/bm25-index.js'));
     } catch (err: any) {
+      rethrowSymbolIdentityError(err);
       // Module import can fail in sandboxed MCP contexts (#1489)
       logger.warn(
         { err: err?.message },
@@ -3796,6 +4515,7 @@ export class LocalBackend {
     try {
       ftsResponse = await searchFTSFromLbug(query, limit, repo.lbugPath);
     } catch (err: any) {
+      rethrowSymbolIdentityError(err);
       // Swallowed, gracefully-degraded failure: the search falls back to
       // semantic-only (a valid result), and the most common cause is simply an
       // un-indexed FTS extension — a normal configuration, not an operation
@@ -3810,37 +4530,86 @@ export class LocalBackend {
 
     // Guard against unexpected response shape (#1489) — ftsResponse.results
     // could be undefined when the FTS extension is unavailable in the MCP process.
-    const bm25Results = ftsResponse?.results ?? [];
+    const bm25Results: BM25SearchResult[] = ftsResponse?.results ?? [];
     const ftsUsed = ftsResponse?.ftsAvailable ?? false;
     const nonBenignErrors = ftsResponse?.nonBenignErrors;
+    const missingIndexes = ftsResponse?.missingIndexes;
 
     const results: any[] = [];
 
-    for (const bm25Result of bm25Results) {
-      const fullPath = bm25Result.filePath;
+    // FTS supplies at most three exact symbol IDs per file. Fetch a bounded
+    // batch of files together instead of scanning the graph once per file.
+    // Keep the database's ORDER BY for each file, including null line values.
+    const hydratedSymbols = new Map<BM25SearchResult, any[]>();
+    for (const hit of bm25Results) {
+      assertIdentityFields(hit.filePath);
+      for (const nodeId of hit.nodeIds ?? []) assertSymbolIdentity(nodeId);
+    }
+    for (const hits of chunk(
+      bm25Results.filter((hit) => hit.nodeIds?.length),
+      LBUG_QUERY_BATCH_SIZE,
+    )) {
+      const hitsByNodeId = new Map<string, Set<BM25SearchResult>>();
+      for (const hit of hits) {
+        for (const nodeId of hit.nodeIds!) {
+          if (!hitsByNodeId.has(nodeId)) hitsByNodeId.set(nodeId, new Set());
+          hitsByNodeId.get(nodeId)!.add(hit);
+        }
+      }
       try {
-        // Prefer direct nodeId lookup (exact FTS-matched nodes) over filePath fallback.
-        // Without this, LIMIT 3 on filePath returns arbitrary symbols rather than
-        // the nodes that actually scored highest in the BM25 index.
-        const nodeIds = bm25Result.nodeIds?.length ? bm25Result.nodeIds : null;
-        const symbols = nodeIds
-          ? await executeParameterized(
-              repo.lbugPath,
-              `
+        const symbols = await executeParameterized(
+          repo.lbugPath,
+          `
               MATCH (n)
               WHERE n.id IN $nodeIds
               RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine
               ORDER BY startLine, id
             `,
-              { nodeIds },
-            )
-          : await executeParameterized(
-              repo.lbugPath,
-              // Same BasicBlock exclusion as detect_changes (#2082 U7): on a
-              // --pdg index a function-heavy file has far more BasicBlock rows
-              // than symbols, so an unfiltered LIMIT 3 would surface nameless
-              // substrate rows and displace the real symbols.
-              `
+          { nodeIds: [...hitsByNodeId.keys()] },
+        );
+        for (const sym of symbols) assertSymbolRowIdentity(sym);
+        for (const hit of hits) hydratedSymbols.set(hit, []);
+        for (const sym of symbols) {
+          for (const hit of hitsByNodeId.get(sym.id ?? sym[0]) ?? []) {
+            hydratedSymbols.get(hit)!.push(sym);
+          }
+        }
+      } catch (err) {
+        rethrowSymbolIdentityError(err);
+        // A batch failure must not downgrade otherwise-readable files. Retry
+        // those files individually through the existing fallback below.
+      }
+    }
+
+    for (const bm25Result of bm25Results) {
+      const fullPath = bm25Result.filePath;
+      assertIdentityFields(fullPath);
+      for (const nodeId of bm25Result.nodeIds ?? []) assertSymbolIdentity(nodeId);
+      try {
+        // Prefer direct nodeId lookup (exact FTS-matched nodes) over filePath fallback.
+        // Without this, LIMIT 3 on filePath returns arbitrary symbols rather than
+        // the nodes that actually scored highest in the BM25 index.
+        const nodeIds = bm25Result.nodeIds?.length ? bm25Result.nodeIds : null;
+        const symbols =
+          hydratedSymbols.get(bm25Result) ??
+          (nodeIds
+            ? await executeParameterized(
+                repo.lbugPath,
+                `
+              MATCH (n)
+              WHERE n.id IN $nodeIds
+              RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine
+              ORDER BY startLine, id
+            `,
+                { nodeIds },
+              )
+            : await executeParameterized(
+                repo.lbugPath,
+                // Same BasicBlock exclusion as detect_changes (#2082 U7): on a
+                // --pdg index a function-heavy file has far more BasicBlock rows
+                // than symbols, so an unfiltered LIMIT 3 would surface nameless
+                // substrate rows and displace the real symbols.
+                `
               MATCH (n)
               WHERE n.filePath = $filePath
                 AND NOT n.id STARTS WITH 'BasicBlock:'
@@ -3848,11 +4617,12 @@ export class LocalBackend {
               ORDER BY startLine, id
               LIMIT 3
             `,
-              { filePath: fullPath },
-            );
+                { filePath: fullPath },
+              ));
 
         if (symbols.length > 0) {
           for (const sym of symbols) {
+            assertSymbolRowIdentity(sym);
             results.push({
               nodeId: sym.id || sym[0],
               name: sym.name || sym[1],
@@ -3875,7 +4645,8 @@ export class LocalBackend {
             bm25Score: bm25Result.score,
           });
         }
-      } catch {
+      } catch (err) {
+        rethrowSymbolIdentityError(err);
         const fileName = fullPath.split('/').pop() || fullPath;
         results.push({
           name: fileName,
@@ -3886,7 +4657,24 @@ export class LocalBackend {
       }
     }
 
-    return { results, ftsUsed, ...(nonBenignErrors && { nonBenignErrors }) };
+    return {
+      results,
+      ftsUsed,
+      ...(nonBenignErrors && { nonBenignErrors }),
+      ...(missingIndexes && { missingIndexes }),
+    };
+  }
+
+  /**
+   * Keyword-only indexes are the default. Do not put this on `query.warning`
+   * (that field is reserved for FTS/stack degradation). Log once per backend.
+   */
+  private logKeywordOnlyEmbeddings(): void {
+    if (this.warnedNoEmbeddingVectors) return;
+    this.warnedNoEmbeddingVectors = true;
+    logger.warn(
+      'GitNexus [query:vector]: This index has no embedding vectors — results are keyword-only. Enable embeddings in `.gitnexusrc` (auto-sync honors that file) or run `gitnexus analyze --embeddings`.',
+    );
   }
 
   /**
@@ -3896,63 +4684,99 @@ export class LocalBackend {
     repo: RepoHandle,
     query: string,
     limit: number,
-    degraded?: { reason?: string },
+    degraded?: { reason?: string; embeddingDims?: number },
   ): Promise<any[]> {
-    // Whether THIS call produced a query vector — see `lastQueryEmbeddingDims`.
-    // A local flag, not a re-read of the map: the map may still hold an earlier
-    // call's width, and the catch below must only clear an entry it did not set.
-    let embeddedDims: number | undefined;
     try {
-      // Check if embedding table exists before loading the model (avoids heavy model init when embeddings are off)
-      // determinism: probe — aggregate singleton. COUNT(*) with no grouping key returns exactly one row, and only
-      // the count is read, to decide whether to load the embedding model at all.
-      const tableCheck = await executeQuery(
-        repo.lbugPath,
-        `MATCH (e:${EMBEDDING_TABLE_NAME}) RETURN COUNT(*) AS cnt LIMIT 1`,
-      );
-      if (!tableCheck.length || (tableCheck[0].cnt ?? tableCheck[0][0]) === 0) {
-        // No vectors to search: nothing is embedded below, so drop any width a
-        // previous call recorded rather than let query() warn about a lane that
-        // did not run this time (#2798).
-        this.lastQueryEmbeddingDims.delete(repo.lbugPath);
+      if (repo.generationUnknown) {
+        if (degraded)
+          degraded.reason =
+            'Semantic search is unavailable because the graph generation is unverified. Run gitnexus analyze; graph and keyword search remain available.';
         return [];
       }
-
-      const { embedQuery, getEmbeddingDims } = await import('../core/embedder.js');
-      const queryVec = await embedQuery(query);
-      const dims = getEmbeddingDims();
-      // #2798: the width this query vector really was produced at — the same
-      // value the CAST below binds against the index's `FLOAT[N]` column, and
-      // therefore the only honest comparand for query()'s drift warning.
-      embeddedDims = dims;
-      this.lastQueryEmbeddingDims.set(repo.lbugPath, dims);
-      const queryVecStr = `[${queryVec.join(',')}]`;
-      const maxDistance = getVectorMaxDistance(DEFAULT_MCP_VECTOR_MAX_DISTANCE);
-      let vectorReady = false;
-      try {
-        vectorReady = await ensureVectorExtension(repo.lbugPath);
-      } catch (err) {
-        if (!this.warnedVectorLoadFailed) {
-          this.warnedVectorLoadFailed = true;
-          logger.warn(
-            { err },
-            'GitNexus [query:vector]: vector extension load failed; using exact scan fallback',
-          );
-        }
+      const metadata = await this.readToolMetadata(repo);
+      if (repo.generationUnknown) {
+        if (degraded)
+          degraded.reason =
+            'Semantic search is unavailable because the graph generation is unverified. Run gitnexus analyze; graph and keyword search remain available.';
+        return [];
       }
-
+      const selection = selectVectorGeneration(
+        path.dirname(repo.lbugPath),
+        metadata,
+        repo.lbugPath,
+        getExactScanLimit(),
+      );
+      if (selection.kind === 'unavailable') {
+        if (degraded && selection.reason === 'embedding-pending')
+          degraded.reason =
+            'Semantic search is unavailable while embeddings are pending. Run gitnexus analyze to resume; graph and keyword search remain available.';
+        else if (degraded && selection.reason !== 'embeddings-unavailable')
+          degraded.reason = `Semantic search is unavailable (${selection.reason}). Run gitnexus analyze; graph and keyword search remain available.`;
+        return [];
+      }
       let bestChunks = new Map<
         string,
         { distance: number; chunkIndex: number; startLine: number; endLine: number }
       >();
-      // Try the vector lane only after its lazy load succeeds. An unavailable
-      // extension is already reported by ExtensionManager; an index/query
-      // failure below gets its own once-per-backend diagnostic before the exact
-      // scan fallback.
-      if (vectorReady) {
+      if (selection.kind === 'ready') {
+        const { searchVectorGeneration } =
+          await import('../../core/embeddings/vector-generation-search.js');
+        const chunks = await searchVectorGeneration(
+          { metadataDirectory: path.dirname(repo.lbugPath), metadata, graphPath: repo.lbugPath },
+          async () => {
+            const { embedQuery, getEmbeddingDims } = await import('../core/embedder.js');
+            const queryVec = await embedQuery(query);
+            if (degraded) degraded.embeddingDims = getEmbeddingDims();
+            return queryVec;
+          },
+          limit,
+          getVectorMaxDistance(DEFAULT_MCP_VECTOR_MAX_DISTANCE),
+        );
+        bestChunks = new Map((chunks ?? []).map(({ nodeId, ...chunk }) => [nodeId, chunk]));
+      } else {
+        // Check if embedding table exists before loading the model (avoids heavy model init when embeddings are off)
+        // determinism: probe — aggregate singleton. COUNT(*) with no grouping key returns exactly one row, and only
+        // the count is read, to decide whether to load the embedding model at all.
+        const tableCheck = await executeQuery(
+          repo.lbugPath,
+          `MATCH (e:${EMBEDDING_TABLE_NAME}) RETURN COUNT(*) AS cnt LIMIT 1`,
+        );
+        if (!tableCheck.length || (tableCheck[0].cnt ?? tableCheck[0][0]) === 0) {
+          this.logKeywordOnlyEmbeddings();
+          return [];
+        }
+
+        const { embedQuery, getEmbeddingDims } = await import('../core/embedder.js');
+        const queryVec = await embedQuery(query);
+        const dims = getEmbeddingDims();
+        // #2798: the width this query vector really was produced at — the same
+        // value the CAST below binds against the index's `FLOAT[N]` column, and
+        // therefore the only honest comparand for query()'s drift warning.
+        if (degraded) degraded.embeddingDims = dims;
+        const queryVecStr = `[${queryVec.join(',')}]`;
+        const maxDistance = getVectorMaxDistance(DEFAULT_MCP_VECTOR_MAX_DISTANCE);
+        let vectorReady = false;
         try {
-          bestChunks = await collectBestChunks(limit, async (fetchLimit) => {
-            const vectorQuery = `
+          vectorReady = await ensureVectorExtension(repo.lbugPath);
+        } catch (err) {
+          rethrowSymbolIdentityError(err);
+          if (!this.warnedVectorLoadFailed) {
+            this.warnedVectorLoadFailed = true;
+            logger.warn(
+              { err },
+              'GitNexus [query:vector]: vector extension load failed; using exact scan fallback',
+            );
+          }
+        }
+
+        // Try the vector lane only after its lazy load succeeds. An unavailable
+        // extension is already reported by ExtensionManager; an index/query
+        // failure below gets its own once-per-backend diagnostic before the exact
+        // scan fallback.
+        if (vectorReady) {
+          try {
+            bestChunks = await collectBestChunks(limit, async (fetchLimit) => {
+              const vectorQuery = `
             CALL QUERY_VECTOR_INDEX('${EMBEDDING_TABLE_NAME}', '${EMBEDDING_INDEX_NAME}',
               CAST(${queryVecStr} AS FLOAT[${dims}]), ${fetchLimit})
             YIELD node AS emb, distance
@@ -3963,63 +4787,66 @@ export class LocalBackend {
             ORDER BY distance
           `;
 
-            const embResults = await executeQuery(repo.lbugPath, vectorQuery);
-            return embResults.map((row) => ({
-              nodeId: row.nodeId ?? row[0],
-              chunkIndex: row.chunkIndex ?? row[1] ?? 0,
-              startLine: row.startLine ?? row[2] ?? 0,
-              endLine: row.endLine ?? row[3] ?? 0,
-              distance: row.distance ?? row[4],
-            }));
-          });
-        } catch (err) {
-          bestChunks = new Map();
-          if (!this.warnedVectorQueryFailed) {
-            // Rare diagnostic: surface why semantic search fell back to the
-            // exact scan. Emitted once per `LocalBackend` instance lifetime to
-            // avoid noisy stderr on hot semantic-search paths (DoD §2.8).
-            this.warnedVectorQueryFailed = true;
-            logger.warn(
-              { err },
-              'GitNexus [query:vector]: vector index query failed; using exact scan fallback',
-            );
+              const embResults = await executeQuery(repo.lbugPath, vectorQuery);
+              for (const row of embResults) assertQueryIdentity(row, 'nodeId', 0);
+              return embResults.map((row) => ({
+                nodeId: row.nodeId ?? row[0],
+                chunkIndex: row.chunkIndex ?? row[1] ?? 0,
+                startLine: row.startLine ?? row[2] ?? 0,
+                endLine: row.endLine ?? row[3] ?? 0,
+                distance: row.distance ?? row[4],
+              }));
+            });
+          } catch (err) {
+            rethrowSymbolIdentityError(err);
+            bestChunks = new Map();
+            if (!this.warnedVectorQueryFailed) {
+              // Rare diagnostic: surface why semantic search fell back to the
+              // exact scan. Emitted once per `LocalBackend` instance lifetime to
+              // avoid noisy stderr on hot semantic-search paths (DoD §2.8).
+              this.warnedVectorQueryFailed = true;
+              logger.warn(
+                { err },
+                'GitNexus [query:vector]: vector index query failed; using exact scan fallback',
+              );
+            }
           }
         }
-      }
 
-      if (bestChunks.size === 0) {
-        const embeddingCount = Number(tableCheck[0].cnt ?? tableCheck[0][0] ?? 0);
-        const exactLimit = getExactScanLimit();
-        if (embeddingCount > exactLimit) return [];
+        if (bestChunks.size === 0) {
+          const embeddingCount = Number(tableCheck[0].cnt ?? tableCheck[0][0] ?? 0);
+          const exactLimit = getExactScanLimit();
+          if (embeddingCount > exactLimit) return [];
 
-        const rows = await executeQuery(
-          repo.lbugPath,
-          `
+          const rows = await executeQuery(
+            repo.lbugPath,
+            `
           MATCH (e:${EMBEDDING_TABLE_NAME})
           RETURN e.nodeId AS nodeId, e.chunkIndex AS chunkIndex,
                  e.startLine AS startLine, e.endLine AS endLine, e.embedding AS embedding
         `,
-        );
-        const exactRows: ExactEmbeddingRow[] = rows.map((row) => ({
-          nodeId: row.nodeId ?? row[0],
-          chunkIndex: row.chunkIndex ?? row[1] ?? 0,
-          startLine: row.startLine ?? row[2] ?? 0,
-          endLine: row.endLine ?? row[3] ?? 0,
-          embedding: row.embedding ?? row[4] ?? [],
-        }));
-        bestChunks = new Map(
-          rankExactEmbeddingRows(exactRows, queryVec, limit, maxDistance).map((row) => [
-            row.nodeId,
-            {
-              distance: row.distance,
-              chunkIndex: row.chunkIndex,
-              startLine: row.startLine,
-              endLine: row.endLine,
-            },
-          ]),
-        );
+          );
+          for (const row of rows) assertQueryIdentity(row, 'nodeId', 0);
+          const exactRows: ExactEmbeddingRow[] = rows.map((row) => ({
+            nodeId: row.nodeId ?? row[0],
+            chunkIndex: row.chunkIndex ?? row[1] ?? 0,
+            startLine: row.startLine ?? row[2] ?? 0,
+            endLine: row.endLine ?? row[3] ?? 0,
+            embedding: row.embedding ?? row[4] ?? [],
+          }));
+          bestChunks = new Map(
+            rankExactEmbeddingRows(exactRows, queryVec, limit, maxDistance).map((row) => [
+              row.nodeId,
+              {
+                distance: row.distance,
+                chunkIndex: row.chunkIndex,
+                startLine: row.startLine,
+                endLine: row.endLine,
+              },
+            ]),
+          );
+        }
       }
-
       if (bestChunks.size === 0) return [];
 
       const results: any[] = [];
@@ -4028,6 +4855,7 @@ export class LocalBackend {
       // scope here, and a shadowing local silently turns any later `chunk.x`
       // into a property read on the function.
       for (const [nodeId, bestChunk] of Array.from(bestChunks.entries()).slice(0, limit)) {
+        assertSymbolIdentity(nodeId);
         const labelEndIdx = nodeId.indexOf(':');
         const label = labelEndIdx > 0 ? nodeId.substring(0, labelEndIdx) : 'Unknown';
 
@@ -4043,6 +4871,10 @@ export class LocalBackend {
           const nodeRows = await executeParameterized(repo.lbugPath, nodeQuery, { nodeId });
           if (nodeRows.length > 0) {
             const nodeRow = nodeRows[0];
+            assertIdentityFields(
+              queryRowValue(nodeRow, 'name', 0),
+              queryRowValue(nodeRow, 'filePath', 1),
+            );
             results.push({
               nodeId,
               name: nodeRow.name ?? nodeRow[0] ?? '',
@@ -4053,16 +4885,14 @@ export class LocalBackend {
               endLine: bestChunk.endLine,
             });
           }
-        } catch {}
+        } catch (err) {
+          rethrowSymbolIdentityError(err);
+        }
       }
 
       return results;
     } catch (err) {
-      // Nothing was embedded on this path unless the throw happened after the
-      // vector existed (a failed lookup downstream of a good embedding, where
-      // the width IS still the live one). Clearing only in the former case
-      // keeps the recorded width a fact rather than a leftover (#2798).
-      if (embeddedDims === undefined) this.lastQueryEmbeddingDims.delete(repo.lbugPath);
+      rethrowSymbolIdentityError(err);
       // Embeddings disabled is the common, silent case. But a missing or
       // Node-unloadable local stack (#2370/#2372) also lands here — surface it
       // once so semantic search doesn't silently degrade to BM25 with no hint
@@ -4076,6 +4906,8 @@ export class LocalBackend {
         isLocalEmbeddingSidecarAbortMessage(message);
       if (isDegradedVectorError) {
         if (degraded) degraded.reason = message;
+      } else if (isBenignMissingTableError(err)) {
+        this.logKeywordOnlyEmbeddings();
       }
       if (!this.warnedMissingEmbeddingStack && isDegradedVectorError) {
         this.warnedMissingEmbeddingStack = true;
@@ -4308,9 +5140,10 @@ export class LocalBackend {
    * "unknown kind" and, worse, makes the `kind` disambiguation hint unable to
    * filter it out (#2687).
    *
-   * Failures are swallowed: label enrichment is an optimisation for
+   * Ordinary query failures are swallowed: label enrichment is an optimisation for
    * downstream scoring and #480 Class/Interface BFS seeding; if it fails
    * the symbol still resolves, just without the kind-priority bonus.
+   * Corrupt identities propagate to the context/impact error envelope.
    */
   private async enrichCandidateLabels(
     repo: RepoHandle,
@@ -4344,6 +5177,7 @@ export class LocalBackend {
       );
       const labelById = new Map<string, string>();
       for (const r of rows as any[]) {
+        assertQueryIdentity(r, 'id', 0, [['label', 1]]);
         const id = (r.id ?? r[0]) as string;
         const label = (r.label ?? r[1]) as string;
         if (id && label && !labelById.has(id)) labelById.set(id, label);
@@ -4351,7 +5185,8 @@ export class LocalBackend {
       for (const c of candidates) {
         if (c.type === '' && labelById.has(c.id)) c.type = labelById.get(c.id) as string;
       }
-    } catch {
+    } catch (error) {
+      rethrowSymbolIdentityError(error);
       /* best-effort — downstream resolvers still work without the label */
     }
   }
@@ -4459,7 +5294,11 @@ export class LocalBackend {
       }
     | { kind: 'not_found' }
   > {
-    const { uid, name, include_content } = query;
+    const { name, include_content } = query;
+    // A blank or non-string uid is omitted, not a lookup key — fall through to
+    // the name instead of `not_found`, matching normalizeToolParams' impact
+    // target_uid check.
+    const uid = nonBlankUid(query.uid);
     const selectClause = `n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine${include_content ? ', n.content AS content' : ''}`;
 
     // Direct UID — zero-ambiguity path.
@@ -4472,6 +5311,7 @@ export class LocalBackend {
         { uid },
       );
       if (rows.length === 0) return { kind: 'not_found' };
+      assertSymbolRowIdentity(rows[0]);
       const r = rows[0] as any;
       const symbol = {
         id: (r.id ?? r[0]) as string,
@@ -4482,6 +5322,7 @@ export class LocalBackend {
         endLine: (r.endLine ?? r[5]) as number,
         ...(include_content ? { content: (r.content ?? r[6]) as string | undefined } : {}),
       };
+      assertSymbolIdentity(symbol.id, uid);
       // Same LadybugDB label-enrichment as the name-based path: a UID
       // pointing at a Class must still surface `type: 'Class'` so impact's
       // Class/Interface BFS seed fires. No-op when type is already set.
@@ -4605,6 +5446,10 @@ export class LocalBackend {
 
     if (rows.length === 0) return { kind: 'not_found' };
 
+    // Reject every raw candidate before narrowing/scoring can hide a corrupt row.
+    for (const row of rows) {
+      assertSymbolRowIdentity(row);
+    }
     // Normalise row shape across object / tuple returns from LadybugDB.
     let normalized = rows.map((r: any) => ({
       id: (r.id ?? r[0]) as string,
@@ -4615,7 +5460,6 @@ export class LocalBackend {
       endLine: (r.endLine ?? r[5]) as number,
       ...(include_content ? { content: (r.content ?? r[6]) as string | undefined } : {}),
     }));
-
     // An exact File path wins over anchored suffix candidates. Without this,
     // `lib/a.ts` and `src/lib/a.ts` both score as File candidates and turn an
     // otherwise unambiguous exact target into `ambiguous` (#3084 review P2).
@@ -4765,9 +5609,14 @@ export class LocalBackend {
     },
   ): Promise<any> {
     try {
-      return await this._contextImpl(repo, params);
+      const result = await this._contextImpl(repo, params);
+      if (!result.error) assertResponseIdentities(result);
+      return result;
     } catch (err: any) {
       const msg = (err instanceof Error ? err.message : String(err)) || 'Context query failed';
+      if (err instanceof SymbolIdentityError) {
+        return { error: msg, recoverySuggestion: SYMBOL_IDENTITY_RECOVERY_SUGGESTION };
+      }
       if (isWalCorruptionError(err)) {
         return {
           error: msg,
@@ -4796,7 +5645,7 @@ export class LocalBackend {
     const requestedContent = include_content ?? false;
     // Content retention matters only to the opt-in content response. Avoid a
     // metadata dependency for the long-standing default context operation.
-    const meta = requestedContent ? await loadMeta(path.dirname(repo.lbugPath)) : null;
+    const meta = requestedContent ? await this.readToolMetadata(repo) : null;
     const contentAvailability = requestedContentAvailability(requestedContent, meta);
     const includeContent = requestedContent && contentRetentionFromMeta(meta) !== 'none';
 
@@ -4839,8 +5688,18 @@ export class LocalBackend {
     const sym = outcome.symbol;
     const resolvedLabel = outcome.resolvedLabel;
     const symId = sym.id;
+    // A known label lets LadybugDB anchor the traversal on one primary-key
+    // index instead of scanning every node table. Labels can be absent on
+    // legacy indexes, so retain the unlabeled query in that case.
+    const referenceLabel = resolvedLabel || sym.type;
+    const referenceAnchor = VALID_NODE_LABELS.has(referenceLabel)
+      ? `(n:\`${referenceLabel}\` {id: $symId})`
+      : '(n {id: $symId})';
 
     // Categorized incoming refs.
+    // Collapse repeated call sites in each query before LIMIT: the response
+    // lists symbol references, and duplicates must not crowd out other symbols.
+    // Keep relType in the projection so CALLS and ACCESSES remain distinct.
     //
     // ORDER BY uid, relType — the CATEGORY column must NOT lead (#2787 review
     // F1). With `relType` first the 30-row window fills in alphabetical
@@ -4856,10 +5715,10 @@ export class LocalBackend {
       executeParameterized(
         repo.lbugPath,
         `
-      MATCH (caller)-[r:CodeRelation]->(n {id: $symId})
+      MATCH (caller)-[r:CodeRelation]->${referenceAnchor}
       WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'MEMBER_OF', 'USES', 'DECLARES', 'HAS_METHOD', 'HAS_PROPERTY', 'METHOD_OVERRIDES', 'OVERRIDES', 'METHOD_IMPLEMENTS', 'ACCESSES']
         AND (r.type <> 'MEMBER_OF' OR labels(n) <> 'Community')
-      RETURN r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind
+      RETURN DISTINCT r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind
       ORDER BY uid, relType
       LIMIT 30
     `,
@@ -4874,14 +5733,16 @@ export class LocalBackend {
       executeParameterized(
         repo.lbugPath,
         `
-      MATCH (caller)-[r:CodeRelation {type: 'ADVISED_BY'}]->(n {id: $symId})
-      RETURN r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind
+      MATCH (caller)-[r:CodeRelation {type: 'ADVISED_BY'}]->${referenceAnchor}
+      RETURN DISTINCT r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind
       ORDER BY uid
       LIMIT 30
     `,
         { symId },
       ),
     ]);
+    assertContextRefs(incomingRows);
+    assertContextRefs(incomingAdvisedRows);
     incomingRows.push(...incomingAdvisedRows);
     let typedPropertyRows: any[] = [];
 
@@ -4925,11 +5786,11 @@ export class LocalBackend {
             executeParameterized(
               repo.lbugPath,
               `
-            MATCH (n)-[hm:CodeRelation]->(ctor:Constructor)
-            WHERE n.id = $symId AND hm.type = 'HAS_METHOD'
+            MATCH ${referenceAnchor}-[hm:CodeRelation]->(ctor:Constructor)
+            WHERE hm.type = 'HAS_METHOD'
             MATCH (caller)-[r:CodeRelation]->(ctor)
             WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'USES', 'ACCESSES']
-            RETURN r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind
+            RETURN DISTINCT r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind
             ORDER BY uid, relType
             LIMIT 30
           `,
@@ -4938,11 +5799,11 @@ export class LocalBackend {
             executeParameterized(
               repo.lbugPath,
               `
-            MATCH (f:File)-[rel:CodeRelation]->(n)
-            WHERE n.id = $symId AND rel.type = 'DEFINES'
+            MATCH (f:File)-[rel:CodeRelation]->${referenceAnchor}
+            WHERE rel.type = 'DEFINES'
             MATCH (caller)-[r:CodeRelation]->(f)
             WHERE r.type IN ['CALLS', 'IMPORTS']
-            RETURN r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind
+            RETURN DISTINCT r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind
             ORDER BY uid, relType
             LIMIT 30
           `,
@@ -4957,7 +5818,7 @@ export class LocalBackend {
                OR p.declaredType CONTAINS $genericArg
             MATCH (caller)-[r:CodeRelation]->(p)
             WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'USES', 'ACCESSES']
-            RETURN r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind
+            RETURN DISTINCT r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind
             ORDER BY uid, relType
             LIMIT 30
           `,
@@ -4986,6 +5847,16 @@ export class LocalBackend {
               },
             ),
           ]);
+        assertContextRefs(ctorIncoming);
+        assertContextRefs(fileIncoming);
+        assertContextRefs(typedPropertyIncoming);
+        for (const row of typedProperties) {
+          assertQueryIdentity(row, 'uid', 0, [
+            ['name', 1],
+            ['filePath', 2],
+            ['kind', 3],
+          ]);
+        }
         typedPropertyRows = typedProperties;
 
         // Deduplicate by (relType, uid) — a caller can have multiple relation
@@ -5002,6 +5873,7 @@ export class LocalBackend {
           }
         }
       } catch (e) {
+        rethrowSymbolIdentityError(e);
         logQueryError('context:class-incoming-expansion', e);
       }
     }
@@ -5012,10 +5884,10 @@ export class LocalBackend {
       executeParameterized(
         repo.lbugPath,
         `
-      MATCH (n {id: $symId})-[r:CodeRelation]->(target)
+      MATCH ${referenceAnchor}-[r:CodeRelation]->(target)
       WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'MEMBER_OF', 'USES', 'DECLARES', 'HAS_METHOD', 'HAS_PROPERTY', 'METHOD_OVERRIDES', 'OVERRIDES', 'METHOD_IMPLEMENTS', 'ACCESSES']
         AND (r.type <> 'MEMBER_OF' OR labels(target) <> 'Community')
-      RETURN r.type AS relType, target.id AS uid, target.name AS name, target.filePath AS filePath, labels(target)[0] AS kind
+      RETURN DISTINCT r.type AS relType, target.id AS uid, target.name AS name, target.filePath AS filePath, labels(target)[0] AS kind
       ORDER BY uid, relType
       LIMIT 30
     `,
@@ -5024,14 +5896,16 @@ export class LocalBackend {
       executeParameterized(
         repo.lbugPath,
         `
-      MATCH (n {id: $symId})-[r:CodeRelation {type: 'ADVISED_BY'}]->(target)
-      RETURN r.type AS relType, target.id AS uid, target.name AS name, target.filePath AS filePath, labels(target)[0] AS kind
+      MATCH ${referenceAnchor}-[r:CodeRelation {type: 'ADVISED_BY'}]->(target)
+      RETURN DISTINCT r.type AS relType, target.id AS uid, target.name AS name, target.filePath AS filePath, labels(target)[0] AS kind
       ORDER BY uid
       LIMIT 30
     `,
         { symId },
       ),
     ]);
+    assertContextRefs(outgoingRows);
+    assertContextRefs(outgoingAdvisedRows);
     outgoingRows.push(...outgoingAdvisedRows);
 
     // Process participation.
@@ -5055,7 +5929,14 @@ export class LocalBackend {
       `,
         { symId },
       );
+      for (const row of processRows) {
+        assertQueryIdentity(row, 'pid', 0, [
+          ['label', 1],
+          ['entryPointId', 4],
+        ]);
+      }
     } catch (e) {
+      rethrowSymbolIdentityError(e);
       logQueryError('context:process-participation', e);
     }
 
@@ -5092,6 +5973,7 @@ export class LocalBackend {
       // (GET/POST pair). URL-only dedup would drop the second endpoint.
       const seenRoutes = new Set<string>();
       for (const r of routeRows) {
+        assertIdentityFields(queryRowValue(r, 'url', 0), queryRowValue(r, 'method', 1));
         const url = r.url ?? r[0];
         const method = r.method ?? r[1];
         const dedupKey = routeEnrichmentKey(method ? String(method) : undefined, url);
@@ -5101,7 +5983,8 @@ export class LocalBackend {
         }
       }
     } catch (e) {
-      // Best-effort enrichment — never fail the context call.
+      rethrowSymbolIdentityError(e);
+      // Ordinary query failures leave this best-effort enrichment unavailable.
       logQueryError('context:route-lookup', e);
     }
 
@@ -5151,46 +6034,7 @@ export class LocalBackend {
     );
     const beanMetadataPromise = queryClassBeanMetadata(repo.lbugPath, symId, epistemicSymType);
     const aopMetadataPromise = querySpringAopMetadata(repo.lbugPath, symId, epistemicSymType);
-
-    // R3-1. A `Property` whose name the analyzer declined to link — because
-    // every definition of it lives in another language — otherwise returns an
-    // incoming list byte-identical to a genuinely unread field. Those demand
-    // opposite actions ("look in the other language / grep" vs "delete it"), so
-    // the difference has to travel with the answer.
-    //
-    // The graph cannot answer this: the unlinked reads mint no edge and no
-    // node, so the only record is the analyze pass that declined them. Hence the
-    // meta read — bounded to Property lookups, since `ensureInitialized`
-    // deliberately avoids a per-call `loadMeta` on the hot path.
-    let crossLanguageAnchor: {
-      unresolved?: string;
-      anchorLanguages?: readonly string[];
-    } = {};
-    {
-      try {
-        // Keyed on the NAME, not on the resolved label. Gating on
-        // `=== 'Property'` was tried and is wrong: the label is not always
-        // populated on this path (it reads `''` for a plain Property node), so
-        // the gate silently suppressed the whole feature. The meta list only
-        // ever contains property names, so matching the name IS the type check.
-        const hit = (await this.crossLanguagePropertiesFor(repo)).get(
-          (sym.name || sym[1]) as string,
-        );
-        if (hit) {
-          crossLanguageAnchor = {
-            unresolved:
-              `property reads of this name were NOT linked: every definition of it is ` +
-              `${hit.join('/')}, and name inference does not cross languages. ` +
-              `An empty or short incoming list here is not evidence the field is unused — ` +
-              `confirm with a text search, or give it an anchor in the reading language.`,
-            anchorLanguages: hit,
-          };
-        }
-      } catch {
-        // A missing or unreadable meta is not worth failing a context lookup
-        // over; the answer is merely less explained, which is the status quo.
-      }
-    }
+    void aopMetadataPromise.catch(() => undefined);
 
     let methodMetadata: Record<string, unknown> | undefined;
     if (isMethodLike) {
@@ -5245,6 +6089,7 @@ export class LocalBackend {
       try {
         chain = await this._computeContextChain(repo, symId, requestedDepth);
       } catch (e) {
+        rethrowSymbolIdentityError(e);
         logQueryError('context:chain-bfs', e);
       }
     }
@@ -5265,7 +6110,6 @@ export class LocalBackend {
         ...(aopMetadata ? { aop: aopMetadata } : {}),
       },
       ...epistemic,
-      ...crossLanguageAnchor,
       incoming: categorize(incomingRows),
       outgoing: categorize(outgoingRows),
       ...(chain ? { chain } : {}),
@@ -5285,8 +6129,8 @@ export class LocalBackend {
       processes: processRows.map((r: any) => ({
         id: r.pid || r[0],
         name: r.label || r[1],
-        step_index: r.step || r[2],
-        step_count: r.stepCount || r[3],
+        step_index: r.step ?? r[2],
+        step_count: r.stepCount ?? r[3],
       })),
     };
   }
@@ -5367,6 +6211,13 @@ export class LocalBackend {
           visited: Array.from(visited),
         });
         if (rows.length === 0) return { nextFrontier: [] };
+        for (const row of rows) {
+          assertQueryIdentity(row, 'uid', 0, [
+            ['name', 1],
+            ['filePath', 2],
+            ['kind', 3],
+          ]);
+        }
         // MATCH is one row per CALLS edge. Cypher `WITH DISTINCT` applies
         // LIMIT 50 to unique neighbors; this second pass still collapses
         // twins if a driver/engine ever returns duplicate rows.
@@ -5386,6 +6237,7 @@ export class LocalBackend {
         for (const r of fresh) visited.add(r.uid);
         return { nodes, nextFrontier: fresh.map((r: any) => r.uid) };
       } catch (e) {
+        rethrowSymbolIdentityError(e);
         logQueryError(logLabel, e);
         return { nextFrontier: [] };
       }
@@ -5466,7 +6318,7 @@ export class LocalBackend {
     anchor: { file: string; symbol?: string; startLine?: number; endLine?: number };
     early?: Record<string, unknown>;
   }> {
-    if (looksLikeFilePath(target)) {
+    if (await looksLikeFilePath(target)) {
       return {
         anchorClause:
           '(a.id STARTS WITH $idPrefix OR a.filePath = $targetPath OR a.filePath ENDS WITH $targetSuffix)',
@@ -5509,40 +6361,19 @@ export class LocalBackend {
       };
     }
     const sym = outcome.symbol;
-    const idPrefix = `BasicBlock:${sym.filePath}:`;
-    if (
-      typeof sym.startLine === 'number' &&
-      typeof sym.endLine === 'number' &&
-      sym.endLine >= sym.startLine
-    ) {
-      // BasicBlock startLine is 1-based; the symbol span is 0-based. Shift BOTH
-      // bounds +1 so the window is the function's true block span: the lower +1
-      // excludes a neighbor's block on the line directly above, the upper +1
-      // keeps a guard/def/use on the final line (#2188 review).
-      return {
-        anchorClause:
-          'a.id STARTS WITH $idPrefix AND a.startLine >= $symStart AND a.startLine <= $symEnd',
-        queryParams: {
-          idPrefix,
-          symStart: toOneBasedLine(sym.startLine),
-          symEnd: toOneBasedLine(sym.endLine),
-        },
-        // Display anchor is 1-based, matching the ambiguous-candidate branch and
-        // the context/query/impact tools (#2380). This is display-only — the
-        // BasicBlock join above targets the CFG's own 1-based id space.
-        anchor: {
-          file: sym.filePath,
-          symbol: sym.name,
-          startLine: toDisplayLine(sym.startLine),
-          endLine: toDisplayLine(sym.endLine),
-        },
-      };
+    const resolved = await resolvePdgBlockAnchor(repo.lbugPath, sym, executeParameterized);
+    if ('error' in resolved) {
+      return { anchorClause: '', queryParams: {}, anchor: { file: sym.filePath }, early: resolved };
     }
-    // No usable span — degrade to the file-level filter (documented).
     return {
-      anchorClause: 'a.id STARTS WITH $idPrefix',
-      queryParams: { idPrefix },
-      anchor: { file: sym.filePath, symbol: sym.name },
+      anchorClause: resolved.anchorClause,
+      queryParams: resolved.queryParams,
+      anchor: {
+        file: sym.filePath,
+        symbol: sym.name,
+        startLine: toDisplayLine(sym.startLine),
+        endLine: toDisplayLine(sym.endLine),
+      },
     };
   }
 
@@ -5616,7 +6447,7 @@ export class LocalBackend {
     // a seeded test DB) falls through to the row-existence probe below.
     let pdgStamped: boolean | undefined;
     try {
-      const meta = await loadMeta(path.dirname(repo.lbugPath));
+      const meta = await this.readToolMetadata(repo);
       if (meta) pdgStamped = meta.pdg?.taintModelVersion !== undefined;
     } catch {
       /* meta unreadable — decide from the DB below */
@@ -5719,15 +6550,27 @@ export class LocalBackend {
       const total = Number((ipCountRows[0] as any)?.total ?? (ipCountRows[0] as any)?.[0] ?? 0);
       const findings = ipRows.map((r: any) => {
         const decoded = decodeTaintPath(r.reason ?? r[5]);
+        // Cross-function lines are the endpoints' and hops' 0-based symbol
+        // `startLine` (the Function node property, and what interproc-emit
+        // encodes into the path codec), unlike the intra-procedural rows
+        // above, whose PDG statement lines are already 1-based. Convert at
+        // the response boundary like `context`/`query`/`impact` (#2377), so
+        // both layers of one response agree with the editor (#3491).
         const hops = decoded.ok
-          ? decoded.hops.map((h) => ({ function: h.variable, line: h.line }))
+          ? decoded.hops.map((h) => ({ function: h.variable, line: toDisplayLine(h.line) }))
           : [];
         return {
           interprocedural: true,
           file: String(r.file ?? r[0] ?? ''),
           sinkKind: decoded.ok ? (decoded.kind ?? 'unknown') : 'unknown',
-          source: { function: String(r.sourceFn ?? r[1] ?? ''), line: r.sourceLine ?? r[2] },
-          sink: { function: String(r.sinkFn ?? r[3] ?? ''), line: r.sinkLine ?? r[4] },
+          source: {
+            function: String(r.sourceFn ?? r[1] ?? ''),
+            line: toDisplayLine(r.sourceLine ?? r[2]),
+          },
+          sink: {
+            function: String(r.sinkFn ?? r[3] ?? ''),
+            line: toDisplayLine(r.sinkLine ?? r[4]),
+          },
           hops,
           ...(decoded.ok && decoded.truncated ? { pathIncomplete: true } : {}),
         };
@@ -5842,7 +6685,10 @@ export class LocalBackend {
       findings: pageFindings,
       totalFindings: totalFindings + interprocTotal,
       ...(truncated ? { truncated: true } : {}),
-      note: 'Intra-procedural (TAINTED, statement hops) AND cross-function (TAINT_PATH, function hops, `interprocedural: true`) flows are modeled. Closure/callback, property/field, and implicit flows are NOT modeled; absence of a finding is not proof of safety. Cross-function findings are context-insensitive and may over-attribute among same-named callees. SANITIZES (kill) edges are queryable via cypher.',
+      note:
+        'Intra-procedural (TAINTED, statement hops) AND cross-function (TAINT_PATH, function hops, `interprocedural: true`) flows are modeled, including sources read inside inline callbacks and returned handlers. Captured closure-variable, property/field, and implicit flows are NOT modeled; absence of a finding is not proof of safety. ' +
+        GUARD_TAINT_LIMITATION +
+        ' Cross-function findings are context-insensitive and may over-attribute among same-named callees. All line numbers are 1-based; for cross-function findings, `source.line`, `sink.line` and `hops[].line` are the declaration lines of the functions, not statement lines. SANITIZES (kill) edges are queryable via cypher.',
     };
   }
 
@@ -5934,7 +6780,9 @@ export class LocalBackend {
     // contract byte-for-byte: `false` ⇒ definitive no-layer (short-circuit
     // below), `true` ⇒ proceed, `undefined` ⇒ meta unreadable, defer to the
     // post-anchored-query probe (Feasibility Issue 4).
-    const pdgStamped = await pdgStampForMode(repo.lbugPath, mode);
+    const pdgStamped = await pdgStampForMode(repo.lbugPath, mode, () =>
+      this.readToolMetadata(repo),
+    );
     if (pdgStamped === false) {
       return { mode, results: [], total: 0, note: NO_PDG_NOTE };
     }
@@ -6234,6 +7082,8 @@ export class LocalBackend {
         encoding: 'utf-8',
         maxBuffer: 256 * 1024 * 1024,
         windowsHide: true,
+        // Keep Git warnings out of CLI/MCP stderr; failures retain stderr in err.message.
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (err: any) {
       return { error: `Git diff failed: ${err.message}` };
@@ -6405,6 +7255,7 @@ export class LocalBackend {
     // throwaway arrays the size of the row set (40k rows 11.4ms → 4.5ms, 200k
     // rows 71.3ms → 26.6ms).
     const exactlyMatchedPaths = new Set<string>();
+    const mappedPaths = new Set<string>();
     for (const row of symbolRows) {
       if (row.filePath === row.diffPath) exactlyMatchedPaths.add(row.diffPath);
     }
@@ -6414,6 +7265,8 @@ export class LocalBackend {
       if (sym.filePath !== sym.diffPath && exactlyMatchedPaths.has(diffPath)) continue;
       const hunks = hunksByPath.get(diffPath) ?? [];
       if (!hunksOverlapRange(hunks, sym.startLine, sym.endLine)) continue;
+      // A suffix fallback is a hint, not proof that this is the changed file.
+      if (sym.filePath === diffPath) mappedPaths.add(diffPath);
       if (changedSymbols.has(sym.id)) continue;
 
       changedSymbols.set(sym.id, {
@@ -6424,6 +7277,27 @@ export class LocalBackend {
         change_type: 'touched',
       });
     }
+
+    // An empty successful query cannot prove a source diff is safe: its rows
+    // may be missing, outside indexed spans, or not yet indexed. Keep ordinary
+    // docs/config diffs measurable, but withhold a ranked source-risk verdict.
+    const isSourceFile = (file: string): boolean =>
+      getLanguageFromFilename(file) !== null ||
+      isCobolFile(file) ||
+      isJclFile(file) ||
+      isTemplateRouteCandidate(file);
+    const unmappedFiles = [
+      ...new Set(
+        fileDiffs
+          .filter(
+            ({ filePath, oldFilePath }) =>
+              !mappedPaths.has(filePath) &&
+              (isSourceFile(filePath) || (oldFilePath !== undefined && isSourceFile(oldFilePath))),
+          )
+          .map(({ filePath }) => filePath),
+      ),
+    ];
+    if (unmappedFiles.length > 0) queryDegraded = true;
 
     // Find affected processes -- batched queries instead of N+1
     const affectedProcesses = new Map<string, any>();
@@ -6525,18 +7399,15 @@ export class LocalBackend {
       },
       changed_symbols: listedSymbols,
       affected_processes: Array.from(affectedProcesses.values()),
-      // A swallowed query failure makes the counts/risk above incomplete — tell
-      // the caller so the safety gate isn't trusted as a clean result (#2283).
+      ...(unmappedFiles.length > 0 && { unmapped_files: unmappedFiles }),
+      // Failed queries or unmapped source files leave counts/risk incomplete;
+      // the safety gate must not treat that as a clean result (#2283).
       ...(queryDegraded && { partial: true }),
       ...(listedSymbols.length < changedSymbols.size && { truncated: true }),
     };
   }
 
-  /**
-   * Rename tool — multi-file coordinated rename using graph + text search.
-   * Graph refs are tagged "graph" (high confidence).
-   * Additional refs found via text search are tagged "text_search" (lower confidence).
-   */
+  /** Resolve graph identity and indexed scope through GitNexus's semantic layer. */
   private async rename(
     repo: RepoHandle,
     params: {
@@ -6545,212 +7416,79 @@ export class LocalBackend {
       new_name: string;
       file_path?: string;
       dry_run?: boolean;
+      plan_token?: string;
     },
   ): Promise<any> {
     await this.ensureInitialized(repo);
-
-    const { new_name, file_path } = params;
-    const dry_run = params.dry_run ?? true;
-
+    if (params.dry_run === false && (typeof params.plan_token !== 'string' || !params.plan_token)) {
+      return blockedRenameResult(
+        {
+          uid: params.symbol_uid,
+          name: params.symbol_name ?? '',
+          filePath: params.file_path ?? '',
+          startLine: 0,
+        },
+        params.new_name,
+        new RenameFailure(
+          'plan_required',
+          'Apply requires plan_token from a successful rename preview. Preview and review the exact edits first.',
+        ),
+      );
+    }
     if (!params.symbol_name && !params.symbol_uid) {
       return { error: 'Either symbol_name or symbol_uid is required.' };
     }
-
-    /** Guard: ensure a file path resolves within the repo root (prevents path traversal) */
-    const assertSafePath = (filePath: string): string => {
-      const full = path.resolve(repo.repoPath, filePath);
-      const safePrefix = repo.repoPath.endsWith(path.sep)
-        ? repo.repoPath
-        : repo.repoPath + path.sep;
-      if (!full.startsWith(safePrefix) && full !== repo.repoPath) {
-        throw new Error(`Path traversal blocked: ${filePath}`);
-      }
-      return full;
-    };
-
-    // Step 1: Find the target symbol (reuse context's lookup)
     const lookupResult = await this.context(repo, {
       name: params.symbol_name,
       uid: params.symbol_uid,
-      file_path,
+      file_path: params.file_path,
     });
-
-    if (lookupResult.status === 'ambiguous') {
-      return lookupResult; // pass disambiguation through
-    }
-    if (lookupResult.error) {
-      return lookupResult;
-    }
-
-    const sym = lookupResult.symbol;
-    const oldName = sym.name;
-
-    if (oldName === new_name) {
-      return { error: 'New name is the same as the current name.' };
-    }
-
-    // Steps 2+3: Determine the set of files the apply step will rewrite, then
-    // enumerate every occurrence in each. The apply step (Step 4) does a
-    // whole-file `\boldName\b` global replace on every file in `changes`, so the
-    // reported edit list MUST enumerate every matching line in every such file —
-    // otherwise the preview under-reports what lands, and the same partial list
-    // comes back after apply (#2605). Building `changes` from one file set makes
-    // the preview enumerate exactly the files the apply loop rewrites, using the
-    // same word-boundary regex. (This is per-call consistency; the apply loop
-    // still re-reads each file, so an external write landing between preview and
-    // apply is a pre-existing gap this method does not lock against.)
-    type RenameEdit = {
-      line: number;
-      old_text: string;
-      new_text: string;
-      confidence: 'graph' | 'text_search';
-    };
-    const escapedOldName = oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-    // Classify each file to rewrite by how it was discovered. Definition and
-    // graph-ref files carry graph confidence; files found only by text search
-    // carry text_search confidence. A graph-classified file is never downgraded.
-    const fileConfidence = new Map<string, 'graph' | 'text_search'>();
-
-    if (sym.filePath) {
-      fileConfidence.set(sym.filePath, 'graph');
-    }
-
-    // All incoming refs from graph (callers, importers, etc.)
-    const allIncoming = [
-      ...(lookupResult.incoming.calls || []),
-      ...(lookupResult.incoming.imports || []),
-      ...(lookupResult.incoming.extends || []),
-      ...(lookupResult.incoming.implements || []),
-    ];
-    for (const ref of allIncoming) {
-      if (ref.filePath) {
-        fileConfidence.set(ref.filePath, 'graph');
-      }
-    }
-
-    // Text search for files the graph might have missed entirely.
-    try {
-      const { execFileSync } = await import('child_process');
-      const rgArgs = [
-        '-l',
-        '--type-add',
-        'code:*.{ts,tsx,js,jsx,py,go,rs,java,c,h,cpp,cc,cxx,hpp,hxx,hh,cs,php,swift}',
-        '-t',
-        'code',
-        `\\b${oldName}\\b`,
-        '.',
-      ];
-      const output = execFileSync('rg', rgArgs, {
-        cwd: repo.repoPath,
-        encoding: 'utf-8',
-        timeout: 5000,
-        // Avoid ENOBUFS on large repos: rg -l can list many files.
-        maxBuffer: 256 * 1024 * 1024,
-        windowsHide: true,
-      });
-      const files = output
-        .trim()
-        .split('\n')
-        .filter((f) => f.length > 0);
-
-      for (const file of files) {
-        const normalizedFile = file.replace(/\\/g, '/').replace(/^\.\//, '');
-        // Never downgrade a graph-classified file to text_search.
-        if (!fileConfidence.has(normalizedFile)) {
-          fileConfidence.set(normalizedFile, 'text_search');
-        }
-      }
-    } catch (e) {
-      logQueryError('rename:ripgrep', e);
-    }
-
-    // Enumerate every `\boldName\b` line in each file to rewrite, so the previewed
-    // file set is exactly the set the apply loop below rewrites. A file with no
-    // matching line is dropped (apply would write nothing to it). `wordTest`
-    // (non-global) probes each line; `wordReplace` (global) rewrites it and is
-    // reused by the apply loop — compiled once each rather than once per line,
-    // and one escaping formula serves both passes.
-    const wordTest = new RegExp(`\\b${escapedOldName}\\b`);
-    const wordReplace = new RegExp(`\\b${escapedOldName}\\b`, 'g');
-    const changes = new Map<string, { file_path: string; edits: RenameEdit[] }>();
-
-    for (const [filePath, confidence] of fileConfidence) {
-      try {
-        const content = await fs.readFile(assertSafePath(filePath), 'utf-8');
-        const lines = content.split('\n');
-        const edits: RenameEdit[] = [];
-        for (let i = 0; i < lines.length; i++) {
-          if (!wordTest.test(lines[i])) {
-            continue;
-          }
-          edits.push({
-            line: i + 1,
-            old_text: lines[i].trim(),
-            new_text: lines[i].replace(wordReplace, new_name).trim(),
-            confidence,
-          });
-        }
-        if (edits.length > 0) {
-          changes.set(filePath, { file_path: filePath, edits });
-        }
-      } catch (e) {
-        logQueryError('rename:enumerate', e);
-      }
-    }
-
-    // Step 4: Apply or preview.
-    const failedFiles: string[] = [];
-    if (!dry_run) {
-      for (const change of changes.values()) {
-        try {
-          const fullPath = assertSafePath(change.file_path);
-          const content = await fs.readFile(fullPath, 'utf-8');
-          await fs.writeFile(fullPath, content.replace(wordReplace, new_name), 'utf-8');
-        } catch (e) {
-          // A swallowed write failure must not be reported as success (#2283):
-          // record the file so the result degrades to 'partial'.
-          logQueryError('rename:apply-edit', e);
-          failedFiles.push(change.file_path);
-        }
-      }
-      // A file whose write threw did not land, so drop its edits from the
-      // reported result — total_edits/changes must describe what actually
-      // reached disk, not what was attempted (#2605: the report matches reality
-      // even on partial failure). failed_files still names every dropped file.
-      for (const f of failedFiles) {
-        changes.delete(f);
-      }
-    }
-
-    // Counts derive from the reported set (dry-run: every enumerated file;
-    // apply: only files that landed), so the graph/text_search split always
-    // sums to total_edits and never overstates a partial apply.
-    const reported = Array.from(changes.values());
-    let graphEdits = 0;
-    let astSearchEdits = 0;
-    for (const change of reported) {
-      for (const edit of change.edits) {
-        if (edit.confidence === 'graph') {
-          graphEdits++;
-        } else {
-          astSearchEdits++;
-        }
-      }
-    }
-
-    return {
-      status: failedFiles.length > 0 ? 'partial' : 'success',
-      old_name: oldName,
-      new_name,
-      files_affected: reported.length,
-      total_edits: graphEdits + astSearchEdits,
-      graph_edits: graphEdits,
-      text_search_edits: astSearchEdits,
-      changes: reported,
-      applied: !dry_run,
-      ...(failedFiles.length > 0 && { failed_files: failedFiles }),
-    };
+    if (lookupResult.status === 'ambiguous' || lookupResult.error) return lookupResult;
+    const unavailable = await this.fullSourceUnavailable(repo);
+    if (unavailable) return unavailable;
+    // Read the indexed file and declaration inventory, without context()'s
+    // ranked/truncated incoming edges. Current sources rebuild semantic scopes;
+    // a graph edge alone never authorizes a textual replacement.
+    // BasicBlock (the --pdg statement substrate) also carries filePath but is
+    // never a rename declaration: it would load one row per CFG block into every
+    // fresh scope-resolution graph. Excluded by exact label rather than allow-listing
+    // the consumed labels, so a definition label added later still reaches the
+    // planner. labels(n) is the node's single label as a string on LadybugDB
+    // (labels(n)[0] is unreliable); it also tolerates an index with no BasicBlock table.
+    const rows = await executeQuery(
+      repo.lbugPath,
+      `MATCH (n) WHERE n.filePath IS NOT NULL AND n.filePath <> ''
+         AND labels(n) <> 'BasicBlock'
+       RETURN n.id AS id, n.name AS name, n.filePath AS filePath,
+              n.startLine AS startLine, n.endLine AS endLine`,
+    );
+    const graphNodes: GraphNode[] = rows.map((row: any) => ({
+      id: row.id,
+      // Node IDs carry the actual label; labels(n)[0] is unreliable on LadybugDB.
+      label: row.id.split(':')[0] as NodeLabel,
+      properties: {
+        name: row.name,
+        filePath: row.filePath,
+        startLine: row.startLine ?? undefined,
+        endLine: row.endLine ?? undefined,
+      },
+    }));
+    const referenceRows = await executeParameterized(
+      repo.lbugPath,
+      `MATCH (source)-[r:CodeRelation]->(target {id: $uid})
+       WHERE r.type IN ['CALLS', 'USES', 'ACCESSES', 'EXTENDS', 'IMPLEMENTS']
+       RETURN DISTINCT source.filePath AS filePath`,
+      { uid: lookupResult.symbol.uid },
+    );
+    return renameSymbol(
+      repo.repoPath,
+      lookupResult.symbol,
+      params,
+      graphNodes,
+      referenceRows
+        .map((row: any) => row.filePath)
+        .filter((file: unknown): file is string => typeof file === 'string' && file.length > 0),
+    );
   }
 
   private async trace(repo: RepoHandle, params: TraceParams): Promise<any> {
@@ -6815,7 +7553,7 @@ export class LocalBackend {
     if (fromOutcome.kind === 'not_found') {
       return {
         status: 'not_found',
-        error: `Source symbol '${params.from_uid ?? params.from}' not found.`,
+        error: `Source symbol '${nonBlankUid(params.from_uid) ?? params.from}' not found.`,
         suggestion: 'Check the symbol name or use --from-uid for zero-ambiguity.',
       };
     }
@@ -6842,7 +7580,7 @@ export class LocalBackend {
     if (toOutcome.kind === 'not_found') {
       return {
         status: 'not_found',
-        error: `Target symbol '${params.to_uid ?? params.to}' not found.`,
+        error: `Target symbol '${nonBlankUid(params.to_uid) ?? params.to}' not found.`,
         suggestion: 'Check the symbol name or use --to-uid for zero-ambiguity.',
       };
     }
@@ -7042,13 +7780,23 @@ export class LocalBackend {
 
   private async impact(repo: RepoHandle, params: ImpactParams): Promise<any> {
     try {
-      return await this._impactImpl(repo, params);
+      const result = await this._impactImpl(repo, params);
+      if (!result.error) assertResponseIdentities(result);
+      return result;
     } catch (err: any) {
       // Return structured error instead of crashing (#321)
       const message =
         (err instanceof Error ? err.message : String(err)) || 'Impact analysis failed';
-      const suggestion = 'The graph query failed — try gitnexus context <symbol> as a fallback';
-      const recoverySuggestion = isWalCorruptionError(err) ? WAL_RECOVERY_SUGGESTION : undefined;
+      const recoverySuggestion =
+        err instanceof SymbolIdentityError
+          ? SYMBOL_IDENTITY_RECOVERY_SUGGESTION
+          : isWalCorruptionError(err)
+            ? WAL_RECOVERY_SUGGESTION
+            : undefined;
+      const suggestion =
+        err instanceof SymbolIdentityError
+          ? SYMBOL_IDENTITY_RECOVERY_SUGGESTION
+          : 'The graph query failed — try gitnexus context <symbol> as a fallback';
       if (params.mode === 'pdg') {
         // Symbol resolution never reached the catch with a resolved symbol (the
         // throw can originate before/within resolution), so the envelope carries
@@ -7222,7 +7970,7 @@ export class LocalBackend {
     );
 
     if (outcome.kind === 'not_found') {
-      const missing = params.target_uid ?? target;
+      const missing = nonBlankUid(params.target_uid) ?? target;
       // not_found = no resolved symbol, so the envelope keeps the partial-but-
       // typed target (typed PdgImpactTarget — there is no id/type/filePath yet).
       const notFoundTarget: PdgImpactTarget = { name: target };
@@ -7352,6 +8100,7 @@ export class LocalBackend {
           } catch (e) {
             probeFailed = true;
             candidateProbeFailed = true;
+            rethrowSymbolIdentityError(e);
             logQueryError('impact:ambiguous-candidate', e);
           }
           return {
@@ -7501,6 +8250,7 @@ export class LocalBackend {
     if (mode === 'pdg') {
       layer = await pdgLayerStatus({
         lbugPath: repo.lbugPath,
+        loadMetaFn: () => this.readToolMetadata(repo),
         executeParameterized,
       });
       if (isPdgDegradedLayerStatus(layer)) {
@@ -7609,6 +8359,7 @@ export class LocalBackend {
         });
         return composeUnifiedPdgImpactResult(pdgResult, interproceduralResult);
       } catch (e) {
+        rethrowSymbolIdentityError(e);
         logQueryError('impact:pdg-interprocedural-reach', e);
         return composeUnifiedPdgImpactResult(pdgResult, null, e);
       }
@@ -7646,10 +8397,12 @@ export class LocalBackend {
         { ids: blockIds },
       );
       for (const r of rows as any[]) {
+        assertIdentityFields(r.callees ?? r[0]);
         const raw = String(r.callees ?? r[0] ?? '');
         for (const n of raw.split(' ')) if (n) names.add(n);
       }
     } catch (e) {
+      rethrowSymbolIdentityError(e);
       logQueryError('impact:pdg-slice-callees', e);
     }
     return names;
@@ -7685,6 +8438,7 @@ export class LocalBackend {
         for (const id of splitCalleeIds(r.calleeIds ?? r[0])) ids.add(id);
       }
     } catch (e) {
+      rethrowSymbolIdentityError(e);
       logQueryError('impact:pdg-slice-callee-ids', e);
     }
     return ids;
@@ -7731,53 +8485,17 @@ export class LocalBackend {
    * `IMPACT_RELATION_CONFIDENCE` floor — "statically verifiable, but the
    * concrete binding past it is not".
    *
-   * Never throws: on query error it returns 'exact', so it can only add signal,
-   * never suppress a result.
+   * Known omissions survive a failed heritage probe. Symbol-identity errors
+   * still propagate rather than returning a misleading completeness claim.
    */
-  /**
-   * Fields the analyzer declined to link because every definition of the name
-   * lives in another language (R3-1), keyed by name.
-   *
-   * Cached per index version. `ensureInitialized` deliberately avoids a
-   * per-call `loadMeta` because every tool call routes through it; this is one
-   * small read per (index, indexedAt), which re-reads exactly when a re-analyze
-   * could have changed the answer and never otherwise.
-   */
-  private readonly crossLanguagePropertyCache = new Map<
-    string,
-    { indexedAt: string | undefined; byName: ReadonlyMap<string, readonly string[]> }
-  >();
-
-  private async crossLanguagePropertiesFor(
-    repo: RepoHandle,
-  ): Promise<ReadonlyMap<string, readonly string[]>> {
-    const cached = this.crossLanguagePropertyCache.get(repo.lbugPath);
-    if (cached !== undefined && cached.indexedAt === repo.indexedAt) return cached.byName;
-    const byName = new Map<string, readonly string[]>();
-    try {
-      const meta = await loadMeta(path.dirname(repo.lbugPath));
-      for (const entry of meta?.crossLanguageProperties ?? []) {
-        byName.set(entry.name, entry.languages);
-      }
-    } catch {
-      // A missing or unreadable meta is not worth failing a lookup over; the
-      // answer is merely less explained, which is the status quo.
-    }
-    this.crossLanguagePropertyCache.set(repo.lbugPath, { indexedAt: repo.indexedAt, byName });
-    return byName;
-  }
-
   private async computeEpistemicBoundary(
     repo: RepoHandle,
     symId: string,
     symType: string,
     symName: string,
     direction?: 'upstream' | 'downstream',
-  ): Promise<{
-    epistemic: 'exact' | 'lower-bound';
-    boundaries?: string[];
-    causes?: EpistemicCauses;
-  }> {
+    includeOverloads = true,
+  ): Promise<EpistemicBoundary> {
     const HERITAGE_TYPES = EPISTEMIC_HERITAGE_RELATION_TYPES;
     const CONSUMER_TYPES = EPISTEMIC_CONSUMER_RELATION_TYPES;
     // #2744 — call sites dropped for want of a receiver type. Checked BEFORE
@@ -7786,20 +8504,41 @@ export class LocalBackend {
     // reason #2708 was filed. A dropped site's callee is unknown, so the index
     // records the member NAME invoked at the drop; a match on the queried
     // symbol's name means at least one call to something of that name was lost.
-    // ONE read of the index metadata for both probes below. They are the second
-    // and third consumers of this file on a path whose own comments call out
-    // avoiding a per-call `loadMeta` (see `ensureInitialized`), and the file is
-    // dominated by `fileHashes` — megabytes on a large repo.
+    // Share one metadata read between both probes; fileHashes can make this
+    // file large, so each probe should not read it separately.
     // `try`, not `.catch`: `loadMeta` can throw synchronously (a stubbed module
     // in tests, a mid-read unmount), and a probe failing must never read as
     // certainty — the whole point of this function.
     let meta: Awaited<ReturnType<typeof loadMeta>> | undefined;
     try {
-      meta = await loadMeta(path.dirname(repo.lbugPath));
+      meta = await this.readToolMetadata(repo);
     } catch {
       meta = undefined;
     }
     const receiverDrops = unresolvedReceiverBoundaries(meta?.unresolvedReceiverMembers, symName);
+    // Declined property references affect incoming completeness in BOTH tools.
+    // The stable id covers older DBs whose label probe returns an empty string;
+    // a same-named callable must not inherit a property's warning.
+    const crossLanguageProperty =
+      direction !== 'downstream' && (symType === 'Property' || symId.startsWith('Property:'))
+        ? meta?.crossLanguageProperties?.find((entry) => entry.name === symName)
+        : undefined;
+    const crossLanguageAnchor =
+      crossLanguageProperty === undefined
+        ? {}
+        : {
+            unresolved:
+              `property reads of this name were NOT linked: every definition of it is ` +
+              `${crossLanguageProperty.languages.join('/')}, and name inference does not cross languages. ` +
+              `An empty or short incoming list here is not evidence the field is unused — ` +
+              `confirm with a text search, or give it an anchor in the reading language.`,
+            anchorLanguages: crossLanguageProperty.languages,
+          };
+    // Context has both incoming and outgoing references. Impact defers this
+    // probe until its expanded frontier is known, avoiding root double-counts.
+    const overloadDrops = includeOverloads
+      ? probeOverloadBoundaries(meta?.unresolvedOverloads, new Set([symId]), direction ?? 'both')
+      : { notes: [], sites: 0 };
     const scopeExtractionDrops = scopeExtractionBoundaries(
       meta?.scopeExtractionFailures,
       meta?.scopeExtractionReceipt,
@@ -7838,7 +8577,10 @@ export class LocalBackend {
        ORDER BY id
        LIMIT 25`,
       { symId, heritage: HERITAGE_TYPES },
-    ).catch(() => []);
+    ).catch((error) => {
+      rethrowSymbolIdentityError(error);
+      return [];
+    });
     const undecidedSummary = meta?.undecidedInterfaceSatisfaction;
     const undecidedDrops =
       undecidedSummary === undefined
@@ -7858,6 +8600,7 @@ export class LocalBackend {
         ...scopeExtractionDrops.notes,
         ...undecidedDrops.notes,
         ...valueRefDrops.notes,
+        ...(crossLanguageAnchor.unresolved ? [crossLanguageAnchor.unresolved] : []),
         ...(convexDispatch === undefined ? [] : [convexDispatch.boundary]),
       ],
       undecided: undecidedDrops.undecided,
@@ -7868,6 +8611,11 @@ export class LocalBackend {
       scopeExtraction: scopeExtractionDrops.files,
       callableValueReferences: valueRefDrops.referrers,
     };
+    const baseEpistemic = {
+      ...epistemicFrom(droppedBoundaries),
+      ...crossLanguageAnchor,
+      graph_integrity: relationshipIntegrityForCaller(meta?.relationshipIntegrity),
+    };
     try {
       // Discover the interface / abstract supertypes on the target's boundary.
       // If the target is itself an interface, it is its own boundary node.
@@ -7877,6 +8625,10 @@ export class LocalBackend {
       }
       const ifaceRows = await interfaceRowsPromise;
       for (const r of ifaceRows) {
+        assertQueryIdentity(r, 'id', 0, [
+          ['name', 1],
+          ['label', 2],
+        ]);
         const id = (r.id ?? r[0]) as string;
         if (id && !boundary.has(id)) {
           boundary.set(id, {
@@ -7885,7 +8637,9 @@ export class LocalBackend {
           });
         }
       }
-      if (boundary.size === 0) return epistemicFrom(droppedBoundaries);
+      if (boundary.size === 0) {
+        return mergeOverloadBoundary(baseEpistemic, overloadDrops);
+      }
 
       const ifaceIds = Array.from(boundary.keys());
       // Count per interface id with scalar equality. A parameterized
@@ -7902,7 +8656,10 @@ export class LocalBackend {
                WHERE iface.id = $ifaceId AND r.type IN $types
                RETURN COUNT(DISTINCT other.id) AS cnt`,
               { ifaceId, types },
-            ).catch(() => []);
+            ).catch((error) => {
+              rethrowSymbolIdentityError(error);
+              return [];
+            });
             const cnt =
               rows.length > 0 ? Number((rows[0] as any).cnt ?? (rows[0] as any)[0] ?? 0) : 0;
             m.set(ifaceId, cnt);
@@ -7948,23 +8705,30 @@ export class LocalBackend {
           );
         }
       }
-      if (boundaries.length === 0) return epistemicFrom(droppedBoundaries);
-      return {
-        epistemic: 'lower-bound',
-        boundaries: [...droppedBoundaries.notes, ...boundaries],
-        causes: {
-          scopeExtractionFiles: droppedBoundaries.scopeExtraction,
-          receiverTyping: droppedBoundaries.sites,
-          dispatchBoundary: droppedBoundaries.dispatch + dispatchBoundarySymbols,
-          externalBoundary: droppedBoundaries.external,
-          undecidedSatisfaction: droppedBoundaries.undecided,
-          callableValueReferences: droppedBoundaries.callableValueReferences,
+      if (boundaries.length === 0) {
+        return mergeOverloadBoundary(baseEpistemic, overloadDrops);
+      }
+      return mergeOverloadBoundary(
+        {
+          ...baseEpistemic,
+          epistemic: 'lower-bound',
+          boundaries: [...droppedBoundaries.notes, ...boundaries],
+          causes: {
+            scopeExtractionFiles: droppedBoundaries.scopeExtraction,
+            receiverTyping: droppedBoundaries.sites,
+            dispatchBoundary: droppedBoundaries.dispatch + dispatchBoundarySymbols,
+            externalBoundary: droppedBoundaries.external,
+            undecidedSatisfaction: droppedBoundaries.undecided,
+            callableValueReferences: droppedBoundaries.callableValueReferences,
+          },
         },
-      };
-    } catch {
+        overloadDrops,
+      );
+    } catch (error) {
+      rethrowSymbolIdentityError(error);
       // Never let the heritage probe's failure suppress a drop we already know
       // about — the whole point is that silence must not read as certainty.
-      return epistemicFrom(droppedBoundaries);
+      return mergeOverloadBoundary(baseEpistemic, overloadDrops);
     }
   }
 
@@ -8045,6 +8809,15 @@ export class LocalBackend {
     const confidenceFilter = safeMinConfidence > 0 ? ' AND r.confidence >= $minConfidence' : '';
 
     const symId = sym.id || sym[0];
+    // #3354: a walk with no anchor id cannot say anything about THIS symbol,
+    // yet it still ships a normal-looking `exact` result with the target's
+    // name echoed back. Throw so every caller's catch reports UNKNOWN instead.
+    if (!symId) {
+      throw new Error(
+        `Impact target '${sym.name || sym[1] || '?'}' resolved without a node id; refusing to report a blast radius`,
+      );
+    }
+    assertSymbolRowIdentity(sym);
 
     // #1858 — kick off the epistemic boundary probe concurrently with the BFS.
     // It depends only on symId/symType/symName (all known now) and touches no
@@ -8059,11 +8832,7 @@ export class LocalBackend {
     // spread below is what publishes these fields, and a narrower annotation
     // erases `causes` at the type level while still shipping it at runtime —
     // so every consumer would be reading a field the compiler says is absent.
-    const epistemicPromise: Promise<{
-      epistemic?: 'exact' | 'lower-bound';
-      boundaries?: string[];
-      causes?: EpistemicCauses;
-    }> = opts.skipEpistemic
+    const epistemicPromise: Promise<Partial<EpistemicBoundary>> = opts.skipEpistemic
       ? Promise.resolve({})
       : this.computeEpistemicBoundary(
           repo,
@@ -8071,7 +8840,18 @@ export class LocalBackend {
           symType,
           (sym.name || sym[1]) as string,
           direction,
+          false,
         );
+    const checkOverloads = !opts.skipEpistemic && relationTypes.includes('CALLS');
+    // readToolMetadata is request-cached: this shares the existing probe's
+    // metadata read and needs no graph queries for individual frontier nodes.
+    const overloadMetadataPromise = checkOverloads
+      ? Promise.resolve()
+          .then(() => this.readToolMetadata(repo))
+          .then((meta) => meta?.unresolvedOverloads)
+          .catch(() => undefined)
+      : Promise.resolve(undefined);
+    const expandedOverloadIds = new Set<string>();
     const beanMetadataPromise =
       opts.skipEpistemic || summaryOnly
         ? Promise.resolve(undefined)
@@ -8080,12 +8860,15 @@ export class LocalBackend {
       opts.skipEpistemic || summaryOnly
         ? Promise.resolve(undefined)
         : querySpringAopMetadata(repo.lbugPath, symId, symType);
+    void aopMetadataPromise.catch(() => undefined);
     const impacted: any[] = [];
     const visited = new Set<string>([symId]);
     const pdgBridgeEvidenceById = new Map<string, PdgBridgeEvidenceInfo>();
     let frontier = [symId];
     const objectCallableFrontier: string[] = [];
     let traversalComplete = true;
+    let traversalCappedAtDepth: number | undefined;
+    let staticGatedAvailable = true;
     // Fetch one sentinel row beyond the cap so generated object bindings
     // degrade visibly instead of allocating an unbounded seed frontier.
     const OBJECT_CALLABLE_MEMBER_CAP = 5000;
@@ -8097,9 +8880,28 @@ export class LocalBackend {
     // The owning File is kept only as an internal seed (frontier/visited) and
     // is NOT added to impacted — it is the definition container, not an
     // upstream dependent. The BFS will discover IMPORTS edges on it naturally.
+    //
+    // #3602: the file's importers stand in for the type's importers, which
+    // only holds when the type can leave the file. Where the index recorded
+    // `isExported = false` AND the language's provider confirms that verdict
+    // is file-private (checking indexed source where needed), no
+    // importer can name the type, so seeding its file would report every
+    // importer of the file as a direct dependant. The seed is skipped for it;
+    // its real dependants still arrive through USES/EXTENDS/IMPLEMENTS edges
+    // inside the file. Everything else keeps the seed: a missing verdict
+    // (NULL) proves nothing; JS/TS also need to exclude indirect exports,
+    // CommonJS and ambient files even when the stored flag is false. Where
+    // `false` means package-, assembly- or module-private (Java, C#, Kotlin,
+    // Go, …) a sibling file can still name the type, so the over-approximation
+    // is the safe side. Downstream still needs the file's imports: a private
+    // type can depend on other files even though they cannot import its name.
     if (symType === 'Class' || symType === 'Interface') {
       try {
         // Run both seed queries in parallel — they are independent.
+        // The label is literal: only these two tables reach this branch, and
+        // not every node table carries `isExported` (Protocol/Category do
+        // not), so an untyped `n.isExported` is not a safe projection.
+        const typeLabel = symType === 'Class' ? 'Class' : 'Interface';
         const [ctorRows, fileRows] = await Promise.all([
           executeParameterized(
             repo.lbugPath,
@@ -8115,15 +8917,17 @@ export class LocalBackend {
           executeParameterized(
             repo.lbugPath,
             `
-            MATCH (f:File)-[rel:CodeRelation]->(n)
+            MATCH (f:File)-[rel:CodeRelation]->(n:${typeLabel})
             WHERE n.id = $symId AND rel.type = 'DEFINES'
-            RETURN f.id AS id, f.name AS name, labels(f)[0] AS type, f.filePath AS filePath
+            RETURN f.id AS id, f.name AS name, labels(f)[0] AS type, f.filePath AS filePath, n.isExported AS isExported,
+                   CASE WHEN n.isExported = false THEN f.content ELSE NULL END AS content
           `,
             { symId },
           ),
         ]);
 
         for (const r of ctorRows) {
+          assertSymbolRowIdentity(r);
           const rid = r.id || r[0];
           if (rid && !visited.has(rid)) {
             visited.add(rid);
@@ -8131,6 +8935,22 @@ export class LocalBackend {
           }
         }
         for (const r of fileRows) {
+          assertSymbolRowIdentity(r);
+          const exported = r.isExported ?? r[4];
+          if (direction === 'upstream' && exported === false) {
+            // Lazy like the other provider lookups on this backend: the
+            // registry pulls every language module, and this branch is the
+            // only reader on the impact path.
+            const { getProviderForFile } = await import('../../core/ingestion/languages/index.js');
+            const filePath = String(r.filePath ?? r[3] ?? '');
+            const filePrivate = getProviderForFile(filePath)?.notExportedIsFilePrivate;
+            if (
+              filePrivate === true ||
+              (typeof filePrivate === 'function' &&
+                filePrivate(filePath, String(r.content ?? r[5] ?? '')))
+            )
+              continue;
+          }
           const rid = r.id || r[0];
           if (rid && !visited.has(rid)) {
             visited.add(rid);
@@ -8155,6 +8975,7 @@ export class LocalBackend {
         );
 
         for (const r of typedPropertyRows) {
+          assertSymbolRowIdentity(r);
           const rid = r.id || r[0];
           if (rid && !visited.has(rid)) {
             visited.add(rid);
@@ -8162,6 +8983,7 @@ export class LocalBackend {
           }
         }
       } catch (e) {
+        rethrowSymbolIdentityError(e);
         logQueryError('impact:class-node-expansion', e);
         traversalComplete = false;
       }
@@ -8199,6 +9021,9 @@ export class LocalBackend {
         `,
           { symId },
         );
+        for (const row of memberRows) {
+          assertSymbolRowIdentity(row);
+        }
         memberRows.sort((a, b) => compareCodeUnits(String(a.id ?? a[0]), String(b.id ?? b[0])));
         if (memberRows.length > OBJECT_CALLABLE_MEMBER_CAP) traversalComplete = false;
         for (const row of memberRows.slice(0, OBJECT_CALLABLE_MEMBER_CAP)) {
@@ -8218,6 +9043,7 @@ export class LocalBackend {
           }
         }
       } catch (e) {
+        rethrowSymbolIdentityError(e);
         logQueryError('impact:object-callable-expansion', e);
         traversalComplete = false;
       }
@@ -8225,6 +9051,9 @@ export class LocalBackend {
 
     for (let depth = 1; depth <= maxDepth && frontier.length > 0; depth++) {
       const nextFrontier: string[] = [];
+      if (checkOverloads) {
+        for (const id of frontier) expandedOverloadIds.add(id);
+      }
 
       // Batch frontier nodes into a single Cypher query per depth level.
       // ids/types/confidence are bound parameters (see above) — no interpolation.
@@ -8263,17 +9092,60 @@ export class LocalBackend {
       // strongest edge makes the stamped pair fully determined by the key AND
       // retains the strongest evidence, the safer default for a blast-radius
       // tool. `sourceId` closes the order for edges that tie on both.
+      //
+      // `LIMIT` bounds one level's rows (#3696); the sentinel row past the cap
+      // marks the level as cut. A cut level is an arbitrary subset, so the
+      // walk stops there and reports partial.
       const query =
         direction === 'upstream'
-          ? `MATCH (caller)-[r:CodeRelation]->(n) WHERE n.id IN $frontierIds AND r.type IN $relTypes${confidenceFilter} RETURN n.id AS sourceId, caller.id AS id, caller.name AS name, labels(caller)[0] AS type, caller.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.staticGated AS staticGated`
-          : `MATCH (n)-[r:CodeRelation]->(callee) WHERE n.id IN $frontierIds AND r.type IN $relTypes${confidenceFilter} RETURN n.id AS sourceId, callee.id AS id, callee.name AS name, labels(callee)[0] AS type, callee.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.staticGated AS staticGated`;
+          ? // determinism: probe — safety ceiling, not a page; rows vary only past the cap, which marks the walk partial.
+            `MATCH (caller)-[r:CodeRelation]->(n) WHERE n.id IN $frontierIds AND r.type IN $relTypes${confidenceFilter} RETURN n.id AS sourceId, caller.id AS id, caller.name AS name, labels(caller)[0] AS type, caller.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.staticGated AS staticGated LIMIT ${IMPACT_FRONTIER_ROW_CAP + 1}`
+          : // determinism: probe — safety ceiling, not a page; rows vary only past the cap, which marks the walk partial.
+            `MATCH (n)-[r:CodeRelation]->(callee) WHERE n.id IN $frontierIds AND r.type IN $relTypes${confidenceFilter} RETURN n.id AS sourceId, callee.id AS id, callee.name AS name, labels(callee)[0] AS type, callee.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.staticGated AS staticGated LIMIT ${IMPACT_FRONTIER_ROW_CAP + 1}`;
 
       try {
-        const related = await executeParameterized(repo.lbugPath, query, {
+        const queryParams = {
           frontierIds: frontier,
           relTypes: relationTypes,
           ...(safeMinConfidence > 0 ? { minConfidence: safeMinConfidence } : {}),
-        });
+        };
+        let fetched: any[];
+        try {
+          fetched = await executeParameterized(
+            repo.lbugPath,
+            staticGatedAvailable ? query : withoutStaticGatedColumn(query),
+            queryParams,
+          );
+        } catch (e) {
+          // An index built before edges carried `staticGated` has no such
+          // property, so the binder rejects every level and the walk would
+          // report no dependants at all. A missing column only means "not
+          // proven dead"; retry without it.
+          if (!staticGatedAvailable || !isMissingStaticGatedError(e)) throw e;
+          staticGatedAvailable = false;
+          fetched = await executeParameterized(
+            repo.lbugPath,
+            withoutStaticGatedColumn(query),
+            queryParams,
+          );
+        }
+        const levelCapped = fetched.length > IMPACT_FRONTIER_ROW_CAP;
+        const related = levelCapped ? fetched.slice(0, IMPACT_FRONTIER_ROW_CAP) : fetched;
+        if (levelCapped) {
+          traversalComplete = false;
+          traversalCappedAtDepth = depth;
+        }
+        // Validate before filtering/deduplication; a discarded corrupt edge is
+        // still evidence that this result's counts cannot be trusted.
+        for (const row of related) {
+          assertQueryIdentity(row, 'id', 1, [
+            ['sourceId', 0],
+            ['name', 2],
+            ['type', 3],
+            ['filePath', 4],
+          ]);
+          assertSymbolIdentity(queryRowValue(row, 'relType', 5));
+        }
 
         const edges: ImpactFrontierEdge[] = related.map((rel) => ({
           id: rel.id || rel[1],
@@ -8373,12 +9245,15 @@ export class LocalBackend {
           });
         }
       } catch (e) {
+        rethrowSymbolIdentityError(e);
         logQueryError('impact:depth-traversal', e);
         // Break out of depth loop on query failure but return partial results
         // collected so far, rather than silently swallowing the error (#321)
         traversalComplete = false;
         break;
       }
+
+      if (traversalCappedAtDepth !== undefined) break;
 
       frontier =
         depth === 1 && objectCallableFrontier.length > 0
@@ -8498,6 +9373,7 @@ export class LocalBackend {
           `,
             { ids },
           ).catch((err) => {
+            rethrowSymbolIdentityError(err);
             processQueryFailed = true;
             enrichmentDegraded = true;
             logQueryError('impact:process-chunk', err);
@@ -8505,6 +9381,14 @@ export class LocalBackend {
           });
 
           for (const row of rows) {
+            assertQueryIdentity(row, 'pId', 0, [
+              ['name', 1],
+              ['processType', 2],
+              ['entryPointId', 3],
+              ['epName', 7],
+              ['epType', 8],
+              ['epFilePath', 9],
+            ]);
             const pId = row.pId ?? row[0];
             const epId = row.entryPointId ?? row[3] ?? row.pId ?? row[0];
             // Track mapping from process -> entryPoint so we can backfill missing minStep
@@ -8553,6 +9437,7 @@ export class LocalBackend {
             ep.earliest_broken_step = Math.min(ep.earliest_broken_step, minStep ?? Infinity);
           }
         } catch (e) {
+          rethrowSymbolIdentityError(e);
           processQueryFailed = true;
           enrichmentDegraded = true;
           logQueryError('impact:process-chunk', e);
@@ -8575,12 +9460,14 @@ export class LocalBackend {
           `,
             { pIds, ids: allImpactedIds },
           ).catch((err) => {
+            rethrowSymbolIdentityError(err);
             enrichmentDegraded = true;
             logQueryError('impact:process-chunk-backfill', err);
             return [];
           });
 
           for (const mr of missingRows) {
+            assertQueryIdentity(mr, 'pid', 0, []);
             const pid = mr.pid ?? mr[0];
             const minStep = mr.minStep ?? mr[1];
             const epId = processToEntryPoint.get(String(pid));
@@ -8592,6 +9479,7 @@ export class LocalBackend {
             }
           }
         } catch (e) {
+          rethrowSymbolIdentityError(e);
           enrichmentDegraded = true;
           logQueryError('impact:process-chunk-backfill', e);
         }
@@ -8654,6 +9542,7 @@ export class LocalBackend {
           `,
             { ids: idsChunk },
           ).catch((err) => {
+            rethrowSymbolIdentityError(err);
             moduleQueryFailed = true;
             enrichmentDegraded = true;
             logQueryError('impact:module-chunk', err);
@@ -8661,12 +9550,14 @@ export class LocalBackend {
           });
 
           for (const r of rows) {
+            assertIdentityFields(queryRowValue(r, 'name', 0));
             const name = r.name ?? r[0] ?? null;
             const hits = (r.hits ?? r[1]) || 0;
             if (!name) continue;
             moduleHitsMap.set(name, (moduleHitsMap.get(name) || 0) + hits);
           }
         } catch (e) {
+          rethrowSymbolIdentityError(e);
           moduleQueryFailed = true;
           enrichmentDegraded = true;
           logQueryError('impact:module-chunk', e);
@@ -8695,16 +9586,19 @@ export class LocalBackend {
           `,
             { ids: idsChunk },
           ).catch((err) => {
+            rethrowSymbolIdentityError(err);
             enrichmentDegraded = true;
             moduleClassificationFailed = true;
             logQueryError('impact:direct-module-chunk', err);
             return [];
           });
           for (const r of rows) {
+            assertIdentityFields(queryRowValue(r, 'name', 0));
             const name = r.name ?? r[0] ?? null;
             if (name) directModuleSet.add(name);
           }
         } catch (e) {
+          rethrowSymbolIdentityError(e);
           enrichmentDegraded = true;
           moduleClassificationFailed = true;
           logQueryError('impact:direct-module-chunk', e);
@@ -8740,6 +9634,57 @@ export class LocalBackend {
       });
     }
 
+    // ── Route enrichment (#3402) ──────────────────────────────────────────
+    // HTTP endpoints served by the target or any impacted symbol, read from
+    // (handler)-[HANDLES_ROUTE]->Route. Reported, not traversed: HANDLES_ROUTE
+    // stays out of the walk's relTypes. The Process path cannot stand in for
+    // this — a handler only heads a Process when its call chain is 3+ steps and
+    // it ranks in the repo-wide entry-point cap, so most handlers of a large
+    // router would never surface.
+    const routesById = new Map<string, Array<{ url: string; method?: string }>>();
+    const affectedRoutes: Array<{ url: string; method?: string }> = [];
+    if (!skipEnrichment) {
+      const routeIds = [
+        String(symId),
+        ...impacted.map((item) => String(item.id ?? '')).filter(Boolean),
+      ].slice(0, MAX_CHUNKS * CHUNK_SIZE);
+      const seenRoutes = new Set<string>();
+      for (const chunkIds of chunk(routeIds, CHUNK_SIZE)) {
+        const rows = await executeParameterized(
+          repo.lbugPath,
+          `
+          MATCH (h)-[:CodeRelation {type: 'HANDLES_ROUTE'}]->(route:Route)
+          WHERE h.id IN $ids
+          RETURN h.id AS hid, route.name AS url, route.method AS method
+          ORDER BY url, method
+        `,
+          { ids: chunkIds },
+        ).catch((err) => {
+          rethrowSymbolIdentityError(err);
+          enrichmentDegraded = true;
+          logQueryError('impact:route-chunk', err);
+          return [];
+        });
+        for (const row of rows) {
+          assertSymbolIdentity(queryRowValue(row, 'hid', 0));
+          assertIdentityFields(queryRowValue(row, 'url', 1), queryRowValue(row, 'method', 2));
+          const hid = String(row.hid ?? row[0] ?? '');
+          const url = row.url ?? row[1];
+          if (!hid || typeof url !== 'string') continue;
+          const method = row.method ?? row[2];
+          const route = typeof method === 'string' && method ? { url, method } : { url };
+          const list = routesById.get(hid);
+          if (list) list.push(route);
+          else routesById.set(hid, [route]);
+          const key = `${route.method ?? ''} ${url}`;
+          if (!seenRoutes.has(key)) {
+            seenRoutes.add(key);
+            affectedRoutes.push(route);
+          }
+        }
+      }
+    }
+
     // Risk scoring
     const processCount = affectedProcesses.length;
     const moduleCount = affectedModules.length;
@@ -8754,7 +9699,11 @@ export class LocalBackend {
       enrichmentTruncated:
         !skipEnrichment && MAX_CHUNKS > 0 && impacted.length > MAX_CHUNKS * CHUNK_SIZE,
     });
-    const { risk, riskSharedAxes, riskScale } = scoreImpactRisk({
+    const {
+      risk: scoredRisk,
+      riskSharedAxes: scoredSharedAxes,
+      riskScale,
+    } = scoreImpactRisk({
       direction,
       directCount,
       processCount,
@@ -8762,6 +9711,12 @@ export class LocalBackend {
       impactedCount: impacted.length,
       unusedAxes,
     });
+    // Capped counts are lower bounds: keep a proven HIGH/CRITICAL, never a LOW/MEDIUM (#3442).
+    const traversalCapped = traversalCappedAtDepth !== undefined;
+    const riskAfterCap = (score: typeof scoredRisk) =>
+      traversalCapped && (score === 'LOW' || score === 'MEDIUM') ? 'UNKNOWN' : score;
+    const risk = riskAfterCap(scoredRisk);
+    const riskSharedAxes = riskAfterCap(scoredSharedAxes);
 
     // Build per-depth counts (always included, even in summaryOnly mode)
     const byDepthCounts: Record<number, number> = {};
@@ -8771,11 +9726,25 @@ export class LocalBackend {
 
     // #1858 — await the epistemic boundary probe kicked off alongside the BFS
     // above. Additive: leaves impactedCount and every existing field untouched.
-    const [epistemic, beanMetadata, aopMetadata] = await Promise.all([
+    const [targetEpistemic, beanMetadata, aopMetadata, overloadSummary] = await Promise.all([
       epistemicPromise,
       beanMetadataPromise,
       aopMetadataPromise,
+      overloadMetadataPromise,
     ]);
+    const epistemic =
+      checkOverloads && targetEpistemic.epistemic !== undefined
+        ? mergeOverloadBoundary(
+            { ...targetEpistemic, epistemic: targetEpistemic.epistemic },
+            probeOverloadBoundaries(
+              overloadSummary,
+              expandedOverloadIds,
+              direction,
+              (site) => direction !== 'upstream' || includeTests || !isTestFilePath(site.filePath),
+              traversalComplete,
+            ),
+          )
+        : targetEpistemic;
 
     const base = {
       target: {
@@ -8793,8 +9762,12 @@ export class LocalBackend {
       riskScale,
       ...(risk === 'UNKNOWN'
         ? {
-            riskNote:
-              processQueryFailed || moduleQueryFailed
+            riskNote: traversalCapped
+              ? `Risk is unresolved because depth ${traversalCappedAtDepth} returned more than ` +
+                `${IMPACT_FRONTIER_ROW_CAP} relationships and the walk stopped there. Observed ` +
+                'counts are lower bounds; narrow the walk (relationTypes, maxDepth, minConfidence) ' +
+                'before treating the change as safe.'
+              : processQueryFailed || moduleQueryFailed
                 ? 'Risk is unresolved because process/module enrichment failed. Observed counts ' +
                   'are lower bounds; retry impact before treating the change as safe.'
                 : unusedAxes.some((axis) => axis.reason === 'enrichment-truncated')
@@ -8818,6 +9791,7 @@ export class LocalBackend {
       byDepthCounts,
       affected_processes: affectedProcesses,
       affected_modules: affectedModules,
+      affected_routes: affectedRoutes,
     };
 
     if (summaryOnly) {
@@ -8878,8 +9852,16 @@ export class LocalBackend {
                    p.processType AS pType, MIN(r.step) AS step
           `,
             { ids: chunkIds },
-          ).catch(() => []);
+          ).catch((err) => {
+            rethrowSymbolIdentityError(err);
+            return [];
+          });
           for (const row of rows) {
+            assertQueryIdentity(row, 'sid', 0, []);
+            assertQueryIdentity(row, 'pid', 1, [
+              ['pName', 2],
+              ['pType', 3],
+            ]);
             const sid = row.sid ?? row[0];
             if (!sid) continue;
             const procEntry = {
@@ -8893,6 +9875,7 @@ export class LocalBackend {
             else perSymbolProcesses.set(String(sid), [procEntry]);
           }
         } catch (e) {
+          rethrowSymbolIdentityError(e);
           logQueryError('impact:per-symbol-process-chunk', e);
         }
       }
@@ -8902,6 +9885,8 @@ export class LocalBackend {
     for (const items of Object.values(paginatedGrouped)) {
       for (const it of items) {
         it.processes = perSymbolProcesses.get(String(it.id)) ?? [];
+        const routes = routesById.get(String(it.id));
+        if (routes) it.routes = routes;
       }
     }
 
@@ -9007,6 +9992,7 @@ export class LocalBackend {
           ];
 
     try {
+      assertSymbolIdentity(sym.id ?? sym[0], uid);
       // skipPerSymbolEnrichment suppresses ONLY the per-symbol STEP_IN_PROCESS
       // enrichment pass while preserving byDepth. Group-mode cross-repo fan-out
       // may fan across many repos; the per-symbol pass adds up to MAX_CHUNKS
@@ -9266,15 +10252,17 @@ export class LocalBackend {
       runtimeConfirmed: boolean;
       runtimeSource: string | null;
       runtimeStatus: string | null;
+      unverifiedConsumers: number;
       consumers: Array<{
         name: string;
         filePath: string;
         accessedKeys?: string[];
         fetchCount?: number;
+        viaSymbolIds?: string[];
       }>;
     }>
   > {
-    const routeQuery = (includeRuntimeEvidence: boolean) => `
+    const routeQuery = (optionalColumns: string) => `
       MATCH (n:Route)
       WHERE n.id STARTS WITH 'Route:' ${routeFilter}
       OPTIONAL MATCH (consumer)-[r:CodeRelation]->(n)
@@ -9282,18 +10270,27 @@ export class LocalBackend {
       RETURN n.id AS routeId, n.name AS routeName, n.filePath AS handlerFile,
              n.responseKeys AS responseKeys, n.errorKeys AS errorKeys, n.middleware AS middleware,
              consumer.name AS consumerName, consumer.filePath AS consumerFile,
-             r.reason AS fetchReason, n.method AS method${
-               includeRuntimeEvidence
-                 ? ', n.runtimeConfirmed AS runtimeConfirmed, n.runtimeSource AS runtimeSource, n.runtimeStatus AS runtimeStatus'
-                 : ''
-             }
+             r.reason AS fetchReason, n.method AS method${optionalColumns}
     `;
+    const runtimeColumns =
+      ', n.runtimeConfirmed AS runtimeConfirmed, n.runtimeSource AS runtimeSource, n.runtimeStatus AS runtimeStatus';
+    // Newest columns first: an older index lacks `unverifiedConsumers`, an
+    // older one still the runtime evidence.
+    const queries = [
+      `${runtimeColumns}, n.unverifiedConsumers AS unverifiedConsumers`,
+      runtimeColumns,
+      '',
+    ].map(routeQuery);
     let rows;
-    try {
-      rows = await executeParameterized(repoId, routeQuery(true), params);
-    } catch (error) {
-      if (!isMissingRouteRuntimePropertyError(error)) throw error;
-      rows = await executeParameterized(repoId, routeQuery(false), params);
+    for (const [attempt, query] of queries.entries()) {
+      try {
+        rows = await executeParameterized(repoId, query, params);
+        break;
+      } catch (error) {
+        if (attempt === queries.length - 1 || !isMissingRouteOptionalPropertyError(error)) {
+          throw error;
+        }
+      }
     }
 
     // Strip wrapping quotes from DB array elements — CSV COPY stores ['key'] which
@@ -9314,11 +10311,13 @@ export class LocalBackend {
         runtimeConfirmed: boolean;
         runtimeSource: string | null;
         runtimeStatus: string | null;
+        unverifiedConsumers: number;
         consumers: Array<{
           name: string;
           filePath: string;
           accessedKeys?: string[];
           fetchCount?: number;
+          viaSymbolIds?: string[];
         }>;
       }
     >();
@@ -9340,6 +10339,7 @@ export class LocalBackend {
       const runtimeConfirmed = (row.runtimeConfirmed ?? row[10]) === true;
       const runtimeSource: string | null = row.runtimeSource ?? row[11] ?? null;
       const runtimeStatus: string | null = row.runtimeStatus ?? row[12] ?? null;
+      const unverifiedConsumers = Number(row.unverifiedConsumers ?? row[13] ?? 0);
 
       if (!routeMap.has(id)) {
         routeMap.set(id, {
@@ -9353,13 +10353,16 @@ export class LocalBackend {
           runtimeConfirmed,
           runtimeSource,
           runtimeStatus,
+          unverifiedConsumers,
           consumers: [],
         });
       }
       if (consumerName && consumerFile) {
-        // Parse accessed keys from reason field: "fetch-url-match|keys:data,pagination|fetches:3"
+        // Parse accessed keys from reason field:
+        // "fetch-url-match|keys:data,pagination|fetches:3|via:Function:src/api.ts:getGrants"
         let accessedKeys: string[] | undefined;
         let fetchCount: number | undefined;
+        let viaSymbolIds: string[] | undefined;
         if (fetchReason) {
           const keysMatch = fetchReason.match(/\|keys:([^|]+)/);
           if (keysMatch) {
@@ -9369,12 +10372,17 @@ export class LocalBackend {
           if (fetchesMatch) {
             fetchCount = parseInt(fetchesMatch[1], 10);
           }
+          // One field per requesting function (#3644); an id may hold any
+          // character but the separator.
+          const via = [...fetchReason.matchAll(/\|via:([^|]+)/g)].map((m) => m[1]);
+          if (via.length > 0) viaSymbolIds = via;
         }
         routeMap.get(id)!.consumers.push({
           name: consumerName,
           filePath: consumerFile,
           ...(accessedKeys ? { accessedKeys } : {}),
           ...(fetchCount && fetchCount > 1 ? { fetchCount } : {}),
+          ...(viaSymbolIds ? { viaSymbolIds } : {}),
         });
       }
     }
@@ -9419,6 +10427,241 @@ export class LocalBackend {
       /* no ENTRY_POINT_OF edges yet */
     }
     return result;
+  }
+
+  /**
+   * Callers of the requesting functions a route's FETCHES reasons name, one
+   * CALLS hop up, keyed by the requesting function's id (#3644). One query for
+   * every route in the report. `undefined` when the query fails, so the caller
+   * leaves the field out rather than reporting an empty list it did not verify.
+   */
+  private async fetchRequestFunctionCallers(
+    repoId: string,
+    viaIds: string[],
+  ): Promise<Map<string, RequestFunctionCaller[]> | undefined> {
+    const result = new Map<string, RequestFunctionCaller[]>();
+    if (viaIds.length === 0) return result;
+    try {
+      const rows = await executeParameterized(
+        repoId,
+        `
+        MATCH (caller)-[r:CodeRelation]->(via)
+        WHERE r.type = 'CALLS' AND list_contains($viaIds, via.id)
+        RETURN DISTINCT via.id AS viaId, via.name AS viaName,
+               caller.name AS callerName, caller.filePath AS callerFile
+      `,
+        { viaIds },
+      );
+      for (const row of rows) {
+        const viaId = row.viaId ?? row[0];
+        const viaName = row.viaName ?? row[1];
+        const name = row.callerName ?? row[2];
+        const filePath = row.callerFile ?? row[3];
+        if (!viaId || !viaName || !name || !filePath) continue;
+        let list = result.get(viaId);
+        if (!list) {
+          list = [];
+          result.set(viaId, list);
+        }
+        list.push({ viaId, viaName, name, filePath });
+      }
+    } catch (e) {
+      logQueryError('api_impact:indirect-consumers', e);
+      return undefined;
+    }
+    return result;
+  }
+
+  /**
+   * Same predicate as HTTP `getSourceAvailability`: full retention plus a live
+   * checkout. Meta is the graph directory so a published shared-store commit
+   * still carries `contentRetention`. Wording matches HTTP 410.
+   */
+  private async fullSourceUnavailable(repo: RepoHandle): Promise<{
+    error: string;
+    code: 'source-unavailable';
+    reason: 'content-retention' | 'checkout-missing';
+  } | null> {
+    const meta = await this.readToolMetadata(repo);
+    const retention = contentRetentionFromMeta(meta);
+    const checkoutIsDir = retention === 'full' ? await checkoutIsDirectory(repo.repoPath) : false;
+    if (isFullSourceAvailable(retention, checkoutIsDir)) return null;
+    const reason = retention !== 'full' ? 'content-retention' : 'checkout-missing';
+    const because = reason === 'content-retention' ? 'content retention' : 'source checkout';
+    return {
+      error: `Full source is unavailable because the ${because} is unavailable.`,
+      code: 'source-unavailable',
+      reason,
+    };
+  }
+
+  /**
+   * MCP read_file — repo-contained checkout read with an optional 0-indexed
+   * line slice. The realpath re-check matches GET /api/file. The lexical
+   * barrier stays inline for CodeQL and is narrowed to the `..` segment, so
+   * a file named `..config` is not a traversal. ENOENT is file-not-found
+   * only after the checkout directory is known to exist.
+   */
+  private async readFile(
+    repo: RepoHandle,
+    params: { path?: unknown; startLine?: unknown; endLine?: unknown; maxLines?: unknown },
+  ): Promise<any> {
+    const rawPath = params?.path;
+    if (typeof rawPath !== 'string' || rawPath === '') {
+      return { error: 'Missing required argument "path" (repo-relative file path).' };
+    }
+    const unavailable = await this.fullSourceUnavailable(repo);
+    if (unavailable) return unavailable;
+    const toInteger = (v: unknown): number | undefined =>
+      typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : undefined;
+    const startLine = toInteger(params?.startLine);
+    const endLine = toInteger(params?.endLine);
+    if (endLine !== undefined && startLine === undefined) {
+      return { error: '"endLine" requires "startLine".' };
+    }
+    const repoRoot = path.resolve(repo.repoPath);
+    const fullPath = path.resolve(repoRoot, rawPath);
+    const fullRel = path.relative(repoRoot, fullPath);
+    // `startsWith('..')` is the CodeQL path-injection sanitizer. Narrow it to
+    // the `..` segment so a repo file named `..config` is not a traversal.
+    if (
+      path.isAbsolute(fullRel) ||
+      (fullRel.startsWith('..') && (fullRel === '..' || fullRel.startsWith(`..${path.sep}`)))
+    ) {
+      return { error: 'Path traversal denied.' };
+    }
+    let realRoot: string;
+    let realFull: string;
+    try {
+      [realRoot, realFull] = await Promise.all([fs.realpath(repoRoot), fs.realpath(fullPath)]);
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') return { error: `File not found: ${rawPath}` };
+      throw err;
+    }
+    const realRel = path.relative(realRoot, realFull);
+    if (realRel === '..' || realRel.startsWith(`..${path.sep}`) || path.isAbsolute(realRel)) {
+      return { error: 'Path traversal denied.' };
+    }
+    const raw = await fs.readFile(realFull, 'utf-8');
+    const lines = raw.split('\n');
+    if (startLine !== undefined) {
+      if (endLine !== undefined && endLine < 0) {
+        return { error: '"endLine" must be an integer >= 0.' };
+      }
+      const start = Math.max(0, startLine);
+      const end = endLine !== undefined ? Math.min(lines.length, endLine + 1) : lines.length;
+      return {
+        path: fullRel,
+        content: lines.slice(start, end).join('\n'),
+        startLine: start,
+        endLine: end - 1,
+        totalLines: lines.length,
+      };
+    }
+    const requestedMaxLines = toInteger(params?.maxLines);
+    if (requestedMaxLines !== undefined && requestedMaxLines < 0) {
+      return { error: '"maxLines" must be an integer >= 0 (0 = no cap).' };
+    }
+    const maxLines = requestedMaxLines ?? READ_FILE_DEFAULT_MAX_LINES;
+    if (maxLines > 0 && lines.length > maxLines) {
+      return {
+        path: fullRel,
+        content: lines.slice(0, maxLines).join('\n'),
+        startLine: 0,
+        endLine: maxLines - 1,
+        totalLines: lines.length,
+        truncated: true,
+        suggestion: 'Re-issue with startLine/endLine for the window you need.',
+      };
+    }
+    return { path: fullRel, content: raw, totalLines: lines.length };
+  }
+
+  /**
+   * MCP grep — HTTP GET /api/grep twin. The file list is indexed File nodes
+   * that still have content; bytes come from the live checkout (same worker).
+   * Fails like HTTP 410 when full source is unavailable instead of returning
+   * an empty hit list.
+   */
+  private async grep(
+    repo: RepoHandle,
+    params: {
+      pattern?: unknown;
+      fileFilter?: unknown;
+      limit?: unknown;
+      caseSensitive?: unknown;
+      literal?: unknown;
+    },
+  ): Promise<any> {
+    const unavailable = await this.fullSourceUnavailable(repo);
+    if (unavailable) return unavailable;
+    await this.ensureInitialized(repo);
+    let parsed;
+    try {
+      parsed = parseGrepQuery({
+        pattern: params?.pattern,
+        fileFilter: params?.fileFilter,
+        limit: params?.limit,
+        caseSensitive: params?.caseSensitive,
+        literal: params?.literal,
+      });
+    } catch (err: any) {
+      return { error: err?.message || 'Invalid grep query.' };
+    }
+    const fileRows: Array<{ filePath?: string }> = await executeQuery(
+      repo.lbugPath,
+      `MATCH (n:File) WHERE n.content IS NOT NULL RETURN n.filePath AS filePath`,
+    );
+    const filePaths: string[] = [];
+    for (const row of fileRows) {
+      const filePath: string = row.filePath || '';
+      if (parsed.fileFilter && !filePath.toLowerCase().includes(parsed.fileFilter)) continue;
+      filePaths.push(filePath);
+    }
+    // The shared scanner only checks a lexical prefix, then readFile follows
+    // symlinks. Drop paths whose realpath leaves the checkout, same as read_file.
+    const repoRoot = path.resolve(repo.repoPath);
+    const realRoot = await fs.realpath(repoRoot);
+    const containedPaths: string[] = [];
+    for (const filePath of filePaths) {
+      const fullPath = path.resolve(repoRoot, filePath);
+      const fullRel = path.relative(repoRoot, fullPath);
+      if (
+        path.isAbsolute(fullRel) ||
+        (fullRel.startsWith('..') && (fullRel === '..' || fullRel.startsWith(`..${path.sep}`)))
+      ) {
+        continue;
+      }
+      let realFull: string;
+      try {
+        realFull = await fs.realpath(fullPath);
+      } catch {
+        continue;
+      }
+      const realRel = path.relative(realRoot, realFull);
+      if (realRel === '..' || realRel.startsWith(`..${path.sep}`) || path.isAbsolute(realRel)) {
+        continue;
+      }
+      containedPaths.push(filePath);
+    }
+    const { results, timedOut } = await runGrepScanInWorker({
+      repoRoot,
+      filePaths: containedPaths,
+      pattern: parsed.regex.source,
+      flags: parsed.regex.flags,
+      limit: parsed.limit,
+      deadlineMs: Date.now() + GREP_TIME_BUDGET_MS,
+    });
+    return {
+      results,
+      ...(timedOut ? { timedOut: true as const } : {}),
+      ...(timedOut
+        ? {
+            suggestion:
+              'Wall-clock budget expired — re-issue narrower (fileFilter or a tighter pattern).',
+          }
+        : {}),
+    };
   }
 
   private async routeMap(repo: RepoHandle, params: { route?: string }): Promise<any> {
@@ -9635,6 +10878,15 @@ export class LocalBackend {
       routes.map((r) => r.id),
     );
 
+    // The FETCHES edge names the function that holds each request site; its
+    // callers, one level up, are consumers the file-level edge cannot see
+    // (#3644). Nothing to look up on an index built before that attribution.
+    const viaIds = new Set<string>();
+    for (const r of routes) {
+      for (const c of r.consumers) for (const id of c.viaSymbolIds ?? []) viaIds.add(id);
+    }
+    const callersByVia = await this.fetchRequestFunctionCallers(repo.lbugPath, [...viaIds]);
+
     // Count verbs per handler from the FULL match (before the method filter) so a
     // method-scoped query still flags a multi-verb handler's partial middleware.
     const routeCountByHandler = new Map<string, number>();
@@ -9688,6 +10940,9 @@ export class LocalBackend {
 
       const flows = flowMap.get(r.id) || [];
       const consumerCount = r.consumers.length;
+      const indirectConsumers =
+        callersByVia === undefined ? undefined : indirectConsumersOf(r, callersByVia);
+      const indirectFileCount = new Set(indirectConsumers?.map((c) => c.file)).size;
 
       // Risk level heuristic
       let riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
@@ -9733,13 +10988,25 @@ export class LocalBackend {
             }
           : {}),
         consumers,
+        ...(indirectConsumers ? { indirectConsumers } : {}),
         ...(mismatches.length > 0 ? { mismatches } : {}),
         executionFlows: flows,
         impactSummary: {
           directConsumers: consumerCount,
+          ...(indirectConsumers ? { indirectConsumers: indirectFileCount } : {}),
           affectedFlows: flows.length,
           riskLevel,
           ...(warning ? { warning } : {}),
+          // No `exact` verdict: URLs the analyzer could not resolve are unseen.
+          ...(r.unverifiedConsumers > 0
+            ? {
+                epistemic: 'lower-bound' as const,
+                unverifiedConsumers: r.unverifiedConsumers,
+                boundaries: [
+                  `${r.unverifiedConsumers} more file${r.unverifiedConsumers === 1 ? '' : 's'} pass this route's URL to a function not proven to send HTTP requests; directConsumers is a lower bound.`,
+                ],
+              }
+            : {}),
         },
       };
     });

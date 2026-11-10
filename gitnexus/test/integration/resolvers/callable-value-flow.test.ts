@@ -1,3 +1,4 @@
+import { runtimeParseIdentity } from '../../helpers/runtime-parse-identity.js';
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,7 +8,6 @@ import { providers } from '../../../src/core/ingestion/languages/index.js';
 import { getRelationships, runPipelineFromRepo, type PipelineOptions } from './helpers.js';
 import {
   loadParseCache,
-  PARSE_CACHE_VERSION,
   saveParseCache,
   type ParseCache,
 } from '../../../src/storage/parse-cache.js';
@@ -15,6 +15,8 @@ import {
   getDurableParsedFileDir,
   pruneAndSaveDurableParsedFileStore,
 } from '../../../src/storage/parsedfile-store.js';
+
+const parseIdentity = await runtimeParseIdentity();
 
 type CallableFlowCoverage = 'matrix' | 'dedicated' | 'not-applicable';
 
@@ -309,7 +311,13 @@ function callableCallSiteLines(
         edge.target === target &&
         edge.rel.reason === 'callable-value-flow',
     )
-    .map((edge) => Number(edge.rel.id.match(/:(\d+):(\d+)$/)?.[1]))
+    .map((edge) =>
+      Number(
+        edge.rel.id
+          .slice(edge.rel.id.lastIndexOf(edge.rel.targetId) + edge.rel.targetId.length)
+          .match(/^:(\d+):\d+(?::\d+:\d+)?$/)?.[1],
+      ),
+    )
     .sort((left, right) => left - right);
 }
 
@@ -328,7 +336,12 @@ function callableTargetQualifiedNames(
 ): string[] {
   return getRelationships(result, 'CALLS')
     .filter((edge) => edge.source === source && edge.rel.reason === 'callable-value-flow')
-    .map((edge) => result.graph.getNode(edge.rel.targetId)?.properties.qualifiedName ?? edge.target)
+    .map((edge) => {
+      const qualifiedName = result.graph.getNode(edge.rel.targetId)?.properties.qualifiedName;
+      if (qualifiedName == null) return edge.target;
+      if (typeof qualifiedName !== 'string') throw new Error('Expected a string qualified name');
+      return qualifiedName;
+    })
     .sort();
 }
 
@@ -352,7 +365,10 @@ describe('callable value flow', () => {
   it('does not overstate Objective-C callable-value-flow coverage', () => {
     expect(CALLABLE_FLOW_PROVIDER_COVERAGE[SupportedLanguages.ObjectiveC]).toBe('not-applicable');
     expect(
-      PROVIDER_FLOW_CASES.some(({ language }) => language === SupportedLanguages.ObjectiveC),
+      PROVIDER_FLOW_CASES.some(
+        ({ language }: { language: SupportedLanguages }) =>
+          language === SupportedLanguages.ObjectiveC,
+      ),
     ).toBe(false);
   });
 
@@ -367,6 +383,25 @@ describe('callable value flow', () => {
     },
     90_000,
   );
+
+  it('keeps template-first Vue source coordinates unverified', async () => {
+    const fixture = PROVIDER_FLOW_CASES.find(({ extension }) => extension === 'vue')!;
+    const result = await runSource(
+      'vue',
+      '<template><div>Example</div></template>\n' + fixture.source,
+    );
+    expect(result.relationshipIntegrity?.unverifiedEdges).toBeGreaterThan(0);
+    expect(result.relationshipIntegrity?.checkedSites).toBe(0);
+  }, 90_000);
+
+  it('verifies complete Python call spans in original source coordinates', async () => {
+    const result = await runSource(
+      'py',
+      'class Service:\n    def ping(self):\n        pass\n\ndef caller(service: Service):\n    service.ping()\n',
+    );
+    expect(result.relationshipIntegrity?.checkedSites).toBeGreaterThan(0);
+    expect(result.relationshipIntegrity?.unverifiedEdges).toBe(0);
+  }, 90_000);
 
   it('resolves C function pointers, pointer copies, pointer-to-pointer loads, and two wrappers', async () => {
     const result = await runSource(
@@ -1395,10 +1430,11 @@ invoke(assigned);
         'utf8',
       );
       const coldCache: ParseCache = {
-        version: PARSE_CACHE_VERSION,
+        identity: parseIdentity,
         entries: new Map(),
         usedKeys: new Set(),
         storagePath: storage,
+        writeStoragePath: storage,
         onDiskKeys: new Set(),
       };
       const cold = await runPipelineFromRepo(root, () => {}, {
@@ -1408,10 +1444,10 @@ invoke(assigned);
       const savedKeys = await saveParseCache(storage, coldCache);
       await pruneAndSaveDurableParsedFileStore(
         getDurableParsedFileDir(storage),
-        PARSE_CACHE_VERSION,
+        parseIdentity.base,
         new Set(savedKeys),
       );
-      const warmCache = await loadParseCache(storage);
+      const warmCache = await loadParseCache(storage, parseIdentity, storage);
       const warm = await runPipelineFromRepo(root, () => {}, {
         skipGraphPhases: true,
         parseCache: warmCache,
@@ -1452,10 +1488,11 @@ invoke(assigned);
         'utf8',
       );
       const coldCache: ParseCache = {
-        version: PARSE_CACHE_VERSION,
+        identity: parseIdentity,
         entries: new Map(),
         usedKeys: new Set(),
         storagePath: storage,
+        writeStoragePath: storage,
         onDiskKeys: new Set(),
       };
       const cold = await runPipelineFromRepo(root, () => {}, {
@@ -1465,10 +1502,10 @@ invoke(assigned);
       const savedKeys = await saveParseCache(storage, coldCache);
       await pruneAndSaveDurableParsedFileStore(
         getDurableParsedFileDir(storage),
-        PARSE_CACHE_VERSION,
+        parseIdentity.base,
         new Set(savedKeys),
       );
-      const warmCache = await loadParseCache(storage);
+      const warmCache = await loadParseCache(storage, parseIdentity, storage);
       const warm = await runPipelineFromRepo(root, () => {}, {
         skipGraphPhases: true,
         parseCache: warmCache,

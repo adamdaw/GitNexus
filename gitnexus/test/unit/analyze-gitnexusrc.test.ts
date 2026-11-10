@@ -22,8 +22,12 @@ const {
   getDefaultBranchMock,
 } = vi.hoisted(() => ({
   runFullAnalysisMock: vi.fn(),
-  generateAIContextFilesMock: vi.fn(async () => ({ files: [] as string[] })),
-  refreshBaseRefLineMock: vi.fn(async () => ({ files: [] as string[] })),
+  generateAIContextFilesMock: vi.fn<
+    typeof import('../../src/cli/ai-context.js').generateAIContextFiles
+  >(async () => ({ files: [] as string[] })),
+  refreshBaseRefLineMock: vi.fn<typeof import('../../src/cli/ai-context.js').refreshBaseRefLine>(
+    async () => ({ files: [] as string[] }),
+  ),
   generateSkillFilesMock: vi.fn(async () => ({
     skills: [{ name: 'c', label: 'Community', symbolCount: 1, fileCount: 1 }],
     outputPath: '/repo/.claude/skills',
@@ -46,9 +50,11 @@ vi.mock('../../src/core/lbug/lbug-adapter.js', () => ({
 }));
 
 vi.mock('../../src/storage/repo-manager.js', () => ({
+  loadMeta: vi.fn(async () => null),
   getStoragePaths: vi.fn((repoPath: string) => ({
     storagePath: path.join(repoPath, '.gitnexus'),
     lbugPath: path.join(repoPath, '.gitnexus', 'lbug'),
+    metaPath: path.join(repoPath, '.gitnexus', 'gitnexus.json'),
   })),
   getGlobalRegistryPath: vi.fn(() => 'registry.json'),
   RegistryNameCollisionError: class RegistryNameCollisionError extends Error {},

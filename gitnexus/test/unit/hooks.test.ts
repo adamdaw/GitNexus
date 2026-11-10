@@ -17,7 +17,7 @@
  * Since the hooks are CJS scripts that call main() on load, we test them
  * by spawning them as child processes with controlled stdin JSON.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { spawnSync } from 'child_process';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -794,6 +794,367 @@ describe('PreToolUse concurrency guard', () => {
       expect(mkdirCatch).not.toMatch(/return\s*\(\s*\)\s*=>\s*\{\s*\}/);
     });
   }
+});
+
+// ─── Unit: stale-slot eviction never deletes or moves a live slot ──
+//
+// Eviction deletes a slot only while its per-slot `.evicting` marker still
+// carries the evictor's own token, and only if the slot is still the exact
+// file judged stale. Markers are removed only after the same kind of check.
+// Races are driven deterministically: an fs call is wrapped so a concurrent
+// action fires at one exact point of the evictor's sequence.
+
+type AcquireHookSlot = (gitNexusDir: string) => (() => void) | null;
+type WriteFileArgs = Parameters<typeof fs.writeFileSync>;
+type OpenArgs = Parameters<typeof fs.openSync>;
+type LstatArgs = Parameters<typeof fs.lstatSync>;
+
+describe('acquireHookSlot stale-slot eviction', () => {
+  const DEAD_PID = '2147483640';
+  // Another evictor's claim: a token this process never writes.
+  const FOREIGN_TOKEN = `${process.ppid}:ffffffffffffffff`;
+  const OWN_TOKEN = new RegExp(`^${process.pid}:[0-9a-f]{16}$`);
+
+  for (const [label, lockPath] of [
+    ['CJS', CJS_HOOK_LOCK],
+    ['Plugin', PLUGIN_HOOK_LOCK],
+  ] as const) {
+    const loadAcquire = (): AcquireHookSlot =>
+      (createRequire(import.meta.url)(lockPath) as { acquireHookSlot: AcquireHookSlot })
+        .acquireHookSlot;
+
+    const makeLockDir = (): { dir: string; lockDir: string; slot0: string; marker: string } => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-hook-evict-'));
+      const lockDir = path.join(dir, '.hook-locks');
+      fs.mkdirSync(lockDir);
+      const slot0 = path.join(lockDir, 'slot-0.lock');
+      fs.writeFileSync(slot0, DEAD_PID);
+      return { dir, lockDir, slot0, marker: `${slot0}.evicting` };
+    };
+
+    // Another claimant replaces the marker (a stalled evictor's claim was
+    // broken and re-taken). Fresh mtime, different size: a new file.
+    const replaceMarker = (marker: string) => () => {
+      fs.rmSync(marker, { force: true });
+      fs.writeFileSync(marker, FOREIGN_TOKEN, { flag: 'wx' });
+    };
+
+    // Runs `action` once, just before the real write to `target`.
+    const onWriteTo = (target: string, action: () => void) => {
+      const realWrite = fs.writeFileSync;
+      const pending = new Map([[target, action]]);
+      return vi.spyOn(fs, 'writeFileSync').mockImplementation((...args: WriteFileArgs) => {
+        const key = String(args[0]);
+        const fire = pending.get(key);
+        pending.delete(key);
+        fire?.();
+        realWrite(...args);
+      });
+    };
+
+    // Runs `action` once, just after the real write to `target`.
+    const afterWriteTo = (target: string, action: () => void) => {
+      const realWrite = fs.writeFileSync;
+      const pending = new Map([[target, action]]);
+      return vi.spyOn(fs, 'writeFileSync').mockImplementation((...args: WriteFileArgs) => {
+        realWrite(...args);
+        const key = String(args[0]);
+        const fire = pending.get(key);
+        pending.delete(key);
+        fire?.();
+      });
+    };
+
+    // Runs `action` once, just before the second real open of `target` — i.e.
+    // between a marker snapshot (open + fstat + read) and its re-check.
+    const beforeSecondOpenOf = (target: string, action: () => void) => {
+      const realOpen = fs.openSync;
+      let targetOpens = 0;
+      return vi.spyOn(fs, 'openSync').mockImplementation(((...args: OpenArgs) => {
+        const isTarget = String(args[0]) === target;
+        targetOpens += Number(isTarget);
+        [action].filter(() => isTarget && targetOpens === 2).forEach((fire) => fire());
+        return realOpen(...args);
+      }) as typeof fs.openSync);
+    };
+
+    // Runs `action` once, just before the first real lstat of `target`.
+    const beforeFirstLstatOf = (target: string, action: () => void) => {
+      const realLstat = fs.lstatSync;
+      const pending = new Map([[target, action]]);
+      return vi.spyOn(fs, 'lstatSync').mockImplementation(((...args: LstatArgs) => {
+        const key = String(args[0]);
+        const fire = pending.get(key);
+        pending.delete(key);
+        fire?.();
+        return realLstat(...args);
+      }) as typeof fs.lstatSync);
+    };
+
+    it(`${label}: release unregisters its exit listener`, () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-hook-exit-'));
+      const before = process.listenerCount('exit');
+      try {
+        Array.from({ length: 12 }).forEach(() => loadAcquire()(dir)?.());
+        expect(process.listenerCount('exit')).toBe(before);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it(`${label}: evicts a dead-pid slot without renaming it or leaving a marker`, () => {
+      const { dir, lockDir, slot0 } = makeLockDir();
+      const renameSpy = vi.spyOn(fs, 'renameSync');
+      const release = loadAcquire()(dir);
+      try {
+        expect(release).not.toBeNull();
+        expect(fs.readFileSync(slot0, 'utf-8')).toBe(String(process.pid));
+        expect(renameSpy).not.toHaveBeenCalled();
+        expect(fs.readdirSync(lockDir)).toEqual(['slot-0.lock']);
+        release?.();
+        expect(fs.readdirSync(lockDir)).toEqual([]);
+      } finally {
+        renameSpy.mockRestore();
+        release?.();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it(`${label}: does not delete a slot recreated between inspection and eviction`, () => {
+      const { dir, lockDir, slot0, marker } = makeLockDir();
+      // A live owner (our parent) whose fresh lock replaces the stale one.
+      // Different byte length from DEAD_PID so identity cannot collide even
+      // if the filesystem hands the new file the freed inode number.
+      const freshOwner = String(process.ppid);
+      const renameSpy = vi.spyOn(fs, 'renameSync');
+      const writeSpy = onWriteTo(marker, () => {
+        fs.unlinkSync(slot0);
+        fs.writeFileSync(slot0, freshOwner, { flag: 'wx' });
+      });
+      const release = loadAcquire()(dir);
+      try {
+        expect(writeSpy).toHaveBeenCalledWith(marker, expect.stringMatching(OWN_TOKEN), {
+          flag: 'wx',
+        });
+        // The fresh lock survived with its owner intact…
+        expect(fs.readFileSync(slot0, 'utf-8')).toBe(freshOwner);
+        // …so this contender respected it and took the next slot instead.
+        expect(release).not.toBeNull();
+        expect(fs.readFileSync(path.join(lockDir, 'slot-1.lock'), 'utf-8')).toBe(
+          String(process.pid),
+        );
+        expect(renameSpy).not.toHaveBeenCalled();
+        expect(fs.readdirSync(lockDir).sort()).toEqual(['slot-0.lock', 'slot-1.lock']);
+      } finally {
+        writeSpy.mockRestore();
+        renameSpy.mockRestore();
+        release?.();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it(`${label}: an evictor whose marker was replaced does not delete the slot`, () => {
+      const { dir, lockDir, slot0, marker } = makeLockDir();
+      // Right after this evictor claims the marker, it loses the claim (as if
+      // stalled past the orphan threshold and broken by another evictor).
+      const writeSpy = afterWriteTo(marker, replaceMarker(marker));
+      const release = loadAcquire()(dir);
+      try {
+        // The slot belongs to the new marker holder, not to this evictor…
+        expect(fs.readFileSync(slot0, 'utf-8')).toBe(DEAD_PID);
+        // …whose claim this evictor did not remove on the way out…
+        expect(fs.readFileSync(marker, 'utf-8')).toBe(FOREIGN_TOKEN);
+        // …and this contender moved on to the next slot.
+        expect(release).not.toBeNull();
+        expect(fs.readFileSync(path.join(lockDir, 'slot-1.lock'), 'utf-8')).toBe(
+          String(process.pid),
+        );
+      } finally {
+        writeSpy.mockRestore();
+        release?.();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it(`${label}: leaves a marker another evictor claimed during eviction`, () => {
+      const { dir, lockDir, slot0, marker } = makeLockDir();
+      // After this evictor's token check, just before its slot identity
+      // check, its marker passes to another claimant.
+      const lstatSpy = beforeFirstLstatOf(slot0, replaceMarker(marker));
+      const release = loadAcquire()(dir);
+      try {
+        expect(release).not.toBeNull();
+        expect(fs.readFileSync(slot0, 'utf-8')).toBe(String(process.pid));
+        // The finally block saw a foreign token and left the new claim alone.
+        expect(fs.readFileSync(marker, 'utf-8')).toBe(FOREIGN_TOKEN);
+        expect(fs.readdirSync(lockDir).sort()).toEqual(['slot-0.lock', 'slot-0.lock.evicting']);
+      } finally {
+        lstatSpy.mockRestore();
+        release?.();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it(`${label}: an evictor holding the marker blocks a second evictor`, () => {
+      const { dir, lockDir, slot0, marker } = makeLockDir();
+      // A concurrent evictor's fresh claim on slot-0.
+      fs.writeFileSync(marker, FOREIGN_TOKEN, { flag: 'wx' });
+      const release = loadAcquire()(dir);
+      try {
+        // The stale slot is left to the marker holder, not deleted twice…
+        expect(fs.readFileSync(slot0, 'utf-8')).toBe(DEAD_PID);
+        expect(fs.readFileSync(marker, 'utf-8')).toBe(FOREIGN_TOKEN);
+        // …and this contender moved on to the next slot.
+        expect(release).not.toBeNull();
+        expect(fs.readFileSync(path.join(lockDir, 'slot-1.lock'), 'utf-8')).toBe(
+          String(process.pid),
+        );
+        expect(fs.readdirSync(lockDir).sort()).toEqual([
+          'slot-0.lock',
+          'slot-0.lock.evicting',
+          'slot-1.lock',
+        ]);
+      } finally {
+        release?.();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it(`${label}: clears an orphaned stale marker and evicts`, () => {
+      const { dir, lockDir, slot0, marker } = makeLockDir();
+      // A crashed evictor's marker, far older than any live critical section.
+      fs.writeFileSync(marker, DEAD_PID, { flag: 'wx' });
+      fs.utimesSync(marker, 1000, 1000);
+      const release = loadAcquire()(dir);
+      try {
+        expect(release).not.toBeNull();
+        expect(fs.readFileSync(slot0, 'utf-8')).toBe(String(process.pid));
+        expect(fs.readdirSync(lockDir)).toEqual(['slot-0.lock']);
+      } finally {
+        release?.();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it(`${label}: does not break a fresh marker that replaced a stale one`, () => {
+      const { dir, lockDir, slot0, marker } = makeLockDir();
+      fs.writeFileSync(marker, DEAD_PID, { flag: 'wx' });
+      fs.utimesSync(marker, 1000, 1000);
+      // Once the old marker has been judged stale, its holder finishes and a
+      // new evictor claims a fresh one before the orphan unlink.
+      const readSpy = beforeSecondOpenOf(marker, replaceMarker(marker));
+      const release = loadAcquire()(dir);
+      try {
+        // The fresh claim stands, and the slot is left to its holder…
+        expect(fs.readFileSync(marker, 'utf-8')).toBe(FOREIGN_TOKEN);
+        expect(fs.readFileSync(slot0, 'utf-8')).toBe(DEAD_PID);
+        // …while this contender took the next slot.
+        expect(release).not.toBeNull();
+        expect(fs.readFileSync(path.join(lockDir, 'slot-1.lock'), 'utf-8')).toBe(
+          String(process.pid),
+        );
+      } finally {
+        readSpy.mockRestore();
+        release?.();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+// ─── Unit: a LIVE slot stays valid for its owner's whole execution ──
+//
+// All four adapter copies of hook-lock share ONE `.hook-locks` directory
+// per repo (the key is the repo's storage path), so a slot written by the
+// cursor adapter's slow npx fallback must not be evicted by a concurrent
+// hook — from ANY adapter — while its owner is still running. Age is only
+// ever a PID-reuse defense, so the bound has to exceed the longest hook
+// lifetime that legitimately holds a slot; the cursor adapter's npx
+// fallback can hold one for ~50s (CURSOR_NPX_MAX_BUDGET_MS + the spawnSync
+// teardown allowance + the guard self-test).
+
+describe('acquireHookSlot keeps live slots valid past the old 30s bound', () => {
+  const LOCK_COPIES = [
+    ['CJS', CJS_HOOK_LOCK],
+    ['Plugin', PLUGIN_HOOK_LOCK],
+    [
+      'Factory',
+      path.resolve(__dirname, '..', '..', '..', 'gitnexus-factory-plugin', 'hooks', 'hook-lock.js'),
+    ],
+    [
+      'Cursor',
+      path.resolve(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'gitnexus-cursor-integration',
+        'hooks',
+        'hook-lock.cjs',
+      ),
+    ],
+  ] as const;
+
+  for (const [label, lockPath] of LOCK_COPIES) {
+    it(`${label}: rejects a fourth acquisition while three live owners are past 30s`, async () => {
+      const { spawn } = await import('child_process');
+      const lock = createRequire(import.meta.url)(lockPath) as {
+        acquireHookSlot: (dir: string) => (() => void) | null;
+        HOOK_LOCK_STALE_MS: number;
+      };
+
+      // The bound must have moved past the old 30s threshold.
+      expect(lock.HOOK_LOCK_STALE_MS).toBeGreaterThan(30_000);
+
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-hook-live-slot-'));
+      const lockDir = path.join(dir, '.hook-locks');
+      fs.mkdirSync(lockDir, { recursive: true });
+
+      const sleepers = [0, 1, 2].map(() =>
+        spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], {
+          stdio: 'ignore',
+          detached: false,
+        }),
+      );
+      try {
+        // Let the children come up so their PIDs are real and alive.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        // Age every slot past the OLD 30s threshold while keeping it inside
+        // the owner's valid execution window.
+        const aged = new Date(Date.now() - 31_000);
+        for (let i = 0; i < sleepers.length; i++) {
+          const p = path.join(lockDir, `slot-${i}.lock`);
+          fs.writeFileSync(p, String(sleepers[i].pid));
+          fs.utimesSync(p, aged, aged);
+        }
+
+        // A fourth acquisition must be refused: all three slots are held by
+        // processes that are demonstrably still running.
+        const release = lock.acquireHookSlot(dir);
+        expect(release).toBeNull();
+        for (let i = 0; i < sleepers.length; i++) {
+          const p = path.join(lockDir, `slot-${i}.lock`);
+          expect(fs.readFileSync(p, 'utf-8').trim()).toBe(String(sleepers[i].pid));
+        }
+      } finally {
+        for (const child of sleepers) {
+          try {
+            child.kill();
+          } catch {
+            /* ignore */
+          }
+        }
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it('keeps the four adapter copies byte-identical', () => {
+    // They share one `.hook-locks` directory, so a divergence in the stale
+    // bound would let one adapter evict another adapter's live slot.
+    const [primary, ...copies] = LOCK_COPIES.map(([, p]) => fs.readFileSync(p, 'utf-8'));
+    for (const copy of copies) expect(copy).toBe(primary);
+  });
 });
 
 // ─── Integration: concurrency guard skips when slots are full ──────
@@ -3591,6 +3952,156 @@ describe('Hook registry resolver compatibility', () => {
         expect(findRegisteredRepoForTest(repoDir)).toMatchObject({
           path: repoDir,
           storagePath: path.resolve(overrideStorage),
+        });
+      });
+    } finally {
+      if (previousPath === undefined) delete process.env.GITNEXUS_STORAGE_PATH;
+      else process.env.GITNEXUS_STORAGE_PATH = previousPath;
+      if (previousRoot === undefined) delete process.env.GITNEXUS_STORAGE_ROOT;
+      else process.env.GITNEXUS_STORAGE_ROOT = previousRoot;
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  // The CLI rejects a set-but-invalid override (storage-resolver.ts
+  // validateConfiguredStoragePath / storagePathFromRoot), so the hook must
+  // resolve no repo instead of augmenting from the registry row's storagePath.
+  // (No NUL row: Node truncates process.env values at NUL, so it cannot be set.)
+  it.each([
+    ['GITNEXUS_STORAGE_PATH', 'relative', 'relative/indexes'],
+    ['GITNEXUS_STORAGE_PATH', 'filesystem-root', path.parse(os.tmpdir()).root],
+    ['GITNEXUS_STORAGE_ROOT', 'relative', 'relative/indexes'],
+    // '' is configured-but-invalid in the CLI (value !== undefined), not unset.
+    ['GITNEXUS_STORAGE_PATH', 'empty', ''],
+    ['GITNEXUS_STORAGE_ROOT', 'empty', ''],
+  ] as const)(
+    'resolves no repo when %s is set to a %s value, ignoring the registry storagePath',
+    (envName, _kind, value) => {
+      const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitnexus-hook-home-'));
+      const repoDir = path.join(homeDir, 'repo');
+      const registeredStorage = path.join(homeDir, 'indexes', 'registered');
+      const previousPath = process.env.GITNEXUS_STORAGE_PATH;
+      const previousRoot = process.env.GITNEXUS_STORAGE_ROOT;
+      try {
+        fs.mkdirSync(path.join(repoDir, '.gitnexus'), { recursive: true });
+        fs.mkdirSync(registeredStorage, { recursive: true });
+        initRepoWithCommit(repoDir);
+        fs.writeFileSync(
+          path.join(registeredStorage, 'gitnexus.json'),
+          JSON.stringify({
+            repoPath: repoDir,
+            storagePath: registeredStorage,
+            lastCommit: 'registered',
+            stats: {},
+          }),
+        );
+        fs.writeFileSync(
+          path.join(repoDir, '.gitnexus', 'gitnexus.json'),
+          JSON.stringify({
+            repoPath: repoDir,
+            storagePath: path.join(repoDir, '.gitnexus'),
+            lastCommit: 'leftover',
+            stats: {},
+          }),
+        );
+        writeHookRegistry(homeDir, [
+          { name: 'repo', path: repoDir, storagePath: registeredStorage },
+        ]);
+        delete process.env.GITNEXUS_STORAGE_PATH;
+        delete process.env.GITNEXUS_STORAGE_ROOT;
+        process.env[envName] = value;
+
+        withRegistryHome(homeDir, () => {
+          expect(loadRegistryQuery().resolveHookRepo(repoDir)).toBeNull();
+        });
+      } finally {
+        if (previousPath === undefined) delete process.env.GITNEXUS_STORAGE_PATH;
+        else process.env.GITNEXUS_STORAGE_PATH = previousPath;
+        if (previousRoot === undefined) delete process.env.GITNEXUS_STORAGE_ROOT;
+        else process.env.GITNEXUS_STORAGE_ROOT = previousRoot;
+        fs.rmSync(homeDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('uses the registry storagePath when GITNEXUS_STORAGE_PATH and GITNEXUS_STORAGE_ROOT are unset', () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitnexus-hook-home-'));
+    const repoDir = path.join(homeDir, 'repo');
+    const registeredStorage = path.join(homeDir, 'indexes', 'registered');
+    const previousPath = process.env.GITNEXUS_STORAGE_PATH;
+    const previousRoot = process.env.GITNEXUS_STORAGE_ROOT;
+    try {
+      fs.mkdirSync(path.join(repoDir, '.gitnexus'), { recursive: true });
+      fs.mkdirSync(registeredStorage, { recursive: true });
+      initRepoWithCommit(repoDir);
+      fs.writeFileSync(
+        path.join(registeredStorage, 'gitnexus.json'),
+        JSON.stringify({
+          repoPath: repoDir,
+          storagePath: registeredStorage,
+          lastCommit: 'registered',
+          stats: {},
+        }),
+      );
+      fs.writeFileSync(
+        path.join(repoDir, '.gitnexus', 'gitnexus.json'),
+        JSON.stringify({
+          repoPath: repoDir,
+          storagePath: path.join(repoDir, '.gitnexus'),
+          lastCommit: 'leftover',
+          stats: {},
+        }),
+      );
+      writeHookRegistry(homeDir, [{ name: 'repo', path: repoDir, storagePath: registeredStorage }]);
+      delete process.env.GITNEXUS_STORAGE_PATH;
+      delete process.env.GITNEXUS_STORAGE_ROOT;
+
+      withRegistryHome(homeDir, () => {
+        expect(loadRegistryQuery().resolveHookRepo(repoDir)).toMatchObject({
+          path: repoDir,
+          storagePath: path.resolve(registeredStorage),
+          metadata: expect.objectContaining({ lastCommit: 'registered' }),
+        });
+      });
+    } finally {
+      if (previousPath === undefined) delete process.env.GITNEXUS_STORAGE_PATH;
+      else process.env.GITNEXUS_STORAGE_PATH = previousPath;
+      if (previousRoot === undefined) delete process.env.GITNEXUS_STORAGE_ROOT;
+      else process.env.GITNEXUS_STORAGE_ROOT = previousRoot;
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('resolveHookRepo prefers a valid absolute GITNEXUS_STORAGE_PATH over the registry storagePath', () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitnexus-hook-home-'));
+    const repoDir = path.join(homeDir, 'repo');
+    const registeredStorage = path.join(homeDir, 'indexes', 'registered');
+    const overrideStorage = path.join(homeDir, 'indexes', 'override');
+    const previousPath = process.env.GITNEXUS_STORAGE_PATH;
+    const previousRoot = process.env.GITNEXUS_STORAGE_ROOT;
+    try {
+      fs.mkdirSync(repoDir, { recursive: true });
+      fs.mkdirSync(registeredStorage, { recursive: true });
+      fs.mkdirSync(overrideStorage, { recursive: true });
+      initRepoWithCommit(repoDir);
+      for (const [storage, lastCommit] of [
+        [registeredStorage, 'registered'],
+        [overrideStorage, 'override'],
+      ] as const) {
+        fs.writeFileSync(
+          path.join(storage, 'gitnexus.json'),
+          JSON.stringify({ repoPath: repoDir, storagePath: storage, lastCommit, stats: {} }),
+        );
+      }
+      writeHookRegistry(homeDir, [{ name: 'repo', path: repoDir, storagePath: registeredStorage }]);
+      delete process.env.GITNEXUS_STORAGE_ROOT;
+      process.env.GITNEXUS_STORAGE_PATH = overrideStorage;
+
+      withRegistryHome(homeDir, () => {
+        expect(loadRegistryQuery().resolveHookRepo(repoDir)).toMatchObject({
+          path: repoDir,
+          storagePath: path.resolve(overrideStorage),
+          metadata: expect.objectContaining({ lastCommit: 'override' }),
         });
       });
     } finally {

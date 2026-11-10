@@ -1,5 +1,5 @@
 import { execFileSync, execSync, spawnSync } from 'child_process';
-import { statSync, existsSync } from 'fs';
+import { statSync, existsSync, lstatSync, realpathSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import { logger } from '../core/logger.js';
@@ -118,6 +118,35 @@ export const listWorkingTreeDirtyPaths = (repoPath: string): string[] | null => 
     ];
   } catch {
     return null;
+  }
+};
+
+/**
+ * True when the working tree shows exactly the committed tree: nothing dirty
+ * or untracked, no path hidden by skip-worktree or assume-unchanged (which is
+ * how a sparse checkout leaves files out), and every gitlink checked out as a
+ * submodule. `git status` stays clean in all three hidden cases. False on any
+ * git failure.
+ */
+export const isWorkingTreePristine = (repoPath: string): boolean => {
+  // Includes every skip-worktree and assume-unchanged path (listHiddenIndexPaths,
+  // `git ls-files -v`), so the `--stage` pass below only has to find gitlinks.
+  if (listWorkingTreeDirtyPaths(repoPath)?.length !== 0) return false;
+  try {
+    const out = execFileSync('git', ['ls-files', '--stage', '-z', '--'], {
+      cwd: repoPath,
+      windowsHide: true,
+      ...gitPathListExec,
+    });
+    for (const record of out.split('\0')) {
+      // `<mode> <object> <stage>\t<path>`; mode 160000 is a gitlink.
+      if (!record.startsWith('160000 ')) continue;
+      const rel = record.slice(record.indexOf('\t') + 1);
+      if (!existsSync(path.join(repoPath, rel, '.git'))) return false;
+    }
+    return true;
+  } catch {
+    return false;
   }
 };
 
@@ -248,6 +277,31 @@ export const isGitRepo = (repoPath: string): boolean => {
     return true;
   } catch {
     return false;
+  }
+};
+
+/**
+ * Number of commits from `ancestor` to HEAD, or null when `ancestor` is not
+ * an ancestor of HEAD (or git fails). 0 means `ancestor` is HEAD.
+ */
+export const commitDistanceToHead = (repoPath: string, ancestor: string): number | null => {
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', ancestor, 'HEAD'], {
+      cwd: repoPath,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+    });
+    const count = Number(
+      execFileSync('git', ['rev-list', '--count', `${ancestor}..HEAD`], {
+        cwd: repoPath,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+        encoding: 'utf8',
+      }).trim(),
+    );
+    return Number.isInteger(count) ? count : null;
+  } catch {
+    return null;
   }
 };
 
@@ -531,6 +585,21 @@ export const getCoreExcludesFilePath = (fromPath: string): string => {
  */
 export const resolveRepoIdentityRoot = (fromPath: string): string => {
   const resolved = path.resolve(fromPath);
+  // An ordinary checkout is its own identity root. Let Git interpret worktrees,
+  // symlinks, common-directory indirection and environment overrides as before.
+  try {
+    const gitDir = path.join(resolved, '.git');
+    if (
+      process.env.GIT_DIR === undefined &&
+      process.env.GIT_COMMON_DIR === undefined &&
+      lstatSync(gitDir).isDirectory() &&
+      !existsSync(path.join(gitDir, 'commondir')) &&
+      realpathSync.native(resolved) === resolved
+    )
+      return resolved;
+  } catch {
+    // Missing or unreadable paths retain the existing Git/fallback behavior.
+  }
   const canonical = getCanonicalRepoRoot(resolved);
   if (!canonical) return resolved; // non-git → use as-is
   if (canonical === resolved) return canonical; // canonical checkout
@@ -665,6 +734,26 @@ export const getCurrentBranch = (repoPath: string): string | null => {
   }
 };
 
+/** Read HEAD and its branch together; callers must refresh after waiting for a lock. */
+export const getCurrentCheckout = (repoPath: string): { commit: string; branch: string | null } => {
+  try {
+    const lines = execFileSync('git', ['rev-parse', 'HEAD', '--abbrev-ref', 'HEAD'], {
+      cwd: repoPath,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+    })
+      .trim()
+      .split(/\r?\n/);
+    if (lines.length === 2 && lines[0] && lines[1]) {
+      return { commit: lines[0], branch: lines[1] === 'HEAD' ? null : lines[1] };
+    }
+  } catch {
+    // Preserve independent results if Git can resolve only one of the values.
+  }
+  return { commit: getCurrentCommit(repoPath), branch: getCurrentBranch(repoPath) };
+};
+
 /**
  * Local `refs/heads` names, or `null` when the directory is not a git
  * worktree or git cannot run. An empty array means the listing succeeded
@@ -773,6 +862,8 @@ export interface DiffHunk {
 
 export interface FileDiff {
   filePath: string;
+  /** Decoded pre-rename path; either side can identify a source-file change. */
+  oldFilePath?: string;
   hunks: DiffHunk[];
 }
 
@@ -1007,7 +1098,10 @@ export function parseDiffHunksResult(diffOutput: string): DiffHunkParseResult {
       } else {
         unparsedGitHeaders++;
       }
-    } else if (line.startsWith('rename to ')) {
+    } else if (!inHunk && line.startsWith('rename from ')) {
+      const oldFilePath = decodeGitPathToken(line.slice('rename from '.length));
+      if (current && oldFilePath) current.oldFilePath = oldFilePath;
+    } else if (!inHunk && line.startsWith('rename to ')) {
       const filePath = pathFromRenameTo(line);
       if (!filePath) continue;
       if (current) current.filePath = filePath;
