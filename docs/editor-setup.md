@@ -2,6 +2,12 @@
 
 [Back to GitNexus](../README.md)
 
+> **This fork is not published to npm.** Every `npx` / `pnpm dlx` / `bunx` /
+> `npm install -g gitnexus` command fetches the **upstream** package, which has no Apex
+> support and returns nothing rather than erroring. Build this fork and `npm link` it as
+> described in [Install](../README.md#install); every example below runs the resulting
+> `gitnexus` binary on PATH.
+
 ## Automatic setup
 
 `gitnexus setup` auto-detects your editors and writes the correct global MCP config. Run it once. To configure only selected integrations, pass `--coding-agent`/`-c` with a comma-separated list, e.g. `gitnexus setup -c cursor,codex`.
@@ -30,24 +36,24 @@
 
 ```bash
 # macOS / Linux
-claude mcp add gitnexus -- npx -y gitnexus@latest mcp
+claude mcp add gitnexus -- gitnexus mcp
 
 # Windows
-claude mcp add gitnexus -- cmd /c npx -y gitnexus@latest mcp
+claude mcp add gitnexus -- cmd /c gitnexus mcp
 ```
 
 **Codex** (full support — MCP + skills + hooks):
 
 ```bash
-codex mcp add gitnexus -- npx -y gitnexus@latest mcp
+codex mcp add gitnexus -- gitnexus mcp
 ```
 
 Or via `~/.codex/config.toml` (system scope) / `.codex/config.toml` (project scope):
 
 ```toml
 [mcp_servers.gitnexus]
-command = "npx"
-args = ["-y", "gitnexus@latest", "mcp"]
+command = "gitnexus"
+args = ["mcp"]
 ```
 
 Codex hooks (PreToolUse graph enrichment + PostToolUse stale-index detection in `~/.codex/hooks.json`, [same schema as Claude Code](https://developers.openai.com/codex/hooks)) need the bundled adapter script, so they are installed by `gitnexus setup -c codex` rather than manually.
@@ -55,7 +61,7 @@ Codex hooks (PreToolUse graph enrichment + PostToolUse stale-index detection in 
 Alternatively, install everything as a [Codex plugin](https://developers.openai.com/codex/plugins/build) (MCP + skills + hooks in one step):
 
 ```bash
-codex plugin marketplace add abhigyanpatwari/GitNexus
+codex plugin marketplace add adamdaw/GitNexus
 # then inside Codex: /plugins → install "GitNexus"
 ```
 
@@ -67,8 +73,8 @@ codex plugin marketplace add abhigyanpatwari/GitNexus
 {
   "mcpServers": {
     "gitnexus": {
-      "command": "npx",
-      "args": ["-y", "gitnexus@latest", "mcp"]
+      "command": "gitnexus",
+      "args": ["mcp"]
     }
   }
 }
@@ -82,8 +88,8 @@ codex plugin marketplace add abhigyanpatwari/GitNexus
 {
   "mcpServers": {
     "gitnexus": {
-      "command": "npx",
-      "args": ["-y", "gitnexus@latest", "mcp"]
+      "command": "gitnexus",
+      "args": ["mcp"]
     }
   }
 }
@@ -95,8 +101,8 @@ codex plugin marketplace add abhigyanpatwari/GitNexus
 {
   "mcpServers": {
     "gitnexus": {
-      "command": "npx",
-      "args": ["-y", "gitnexus@latest", "mcp"]
+      "command": "gitnexus",
+      "args": ["mcp"]
     }
   }
 }
@@ -123,8 +129,8 @@ codex plugin marketplace add abhigyanpatwari/GitNexus
 {
   "mcpServers": {
     "gitnexus": {
-      "command": "npx",
-      "args": ["-y", "gitnexus@latest", "mcp"]
+      "command": "gitnexus",
+      "args": ["mcp"]
     }
   }
 }
@@ -136,8 +142,8 @@ codex plugin marketplace add abhigyanpatwari/GitNexus
 {
   "mcpServers": {
     "gitnexus": {
-      "command": "npx",
-      "args": ["-y", "gitnexus@latest", "mcp"]
+      "command": "gitnexus",
+      "args": ["mcp"]
     }
   }
 }
@@ -145,17 +151,11 @@ codex plugin marketplace add abhigyanpatwari/GitNexus
 
 ## Install problems? npm 11 crash · slow cold install · no C++ toolchain
 
-> **On npm 11.x?** `npx` can crash during install with `Cannot destructure property 'package' of 'node.target'` (an npm/arborist bug, before GitNexus runs). Use pnpm instead — it builds the native deps explicitly:
->
-> ```bash
-> pnpm --allow-build=@ladybugdb/core --allow-build=gitnexus --allow-build=tree-sitter dlx gitnexus@latest analyze
-> ```
->
-> Or install globally (`npm install -g gitnexus@latest`) and run `gitnexus analyze`. See [#1939](https://github.com/abhigyanpatwari/GitNexus/issues/1939).
+> **On npm 11.x?** The npm 11 `npx` install crash ([#1939](https://github.com/abhigyanpatwari/GitNexus/issues/1939)) does not apply: this fork is never fetched through `npx`. Build it from source as in [Install](../README.md#install); the `npm warn allow-scripts …` notice that install prints on npm 11 is expected and harmless.
 
-> **Fastest MCP startup:** install globally (`npm i -g gitnexus`) before running `gitnexus setup` — this writes an absolute-path MCP config that bypasses `npx` entirely. On a cold cache, an `npx`-based MCP install can exceed Claude Code's `MCP_TIMEOUT` default (~30s).
+> **MCP startup:** run `gitnexus setup` after `npm link` — it writes an MCP config that launches the linked binary directly, so there is no cold package download to outlast Claude Code's `MCP_TIMEOUT` default (~30s).
 
-> **No C++ toolchain?** Vendored grammars use committed prebuilds when one matches the platform. Source-build fallback needs `python3`, `make` and `g++`. Set `GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1` before `npm install -g gitnexus` to skip Dart, Proto, Swift, Kotlin and Zig grammar setup. The C grammar remains required. Only the exact value `1` enables this option; it does not skip other native dependencies.
+> **No C++ toolchain?** Vendored grammars use committed prebuilds when one matches the platform. Source-build fallback needs `python3`, `make` and `g++`. Set `GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1` before running `npm install` in `gitnexus/` to skip Dart, Proto, Swift, Kotlin and Zig grammar setup. The C grammar remains required. Only the exact value `1` enables this option; it does not skip other native dependencies.
 
 > **Local embeddings are opt-in.** Default `npm install` does not fetch `@huggingface/transformers` or `onnxruntime-node`. Run `gitnexus embeddings install` (or `gitnexus analyze --embeddings`, which auto-heals) to fetch the stack through your npm registry config into `~/.gitnexus/embedding-runtime`. CUDA GPU binaries still use NuGet via `--cuda` ([#2370](https://github.com/abhigyanpatwari/GitNexus/issues/2370)). The prefix needs Node with `module.registerHooks` (≥ 22.15 on 22.x, ≥ 23.5 on 23.x). A leftover 1.6.12 package-first tree is residual until a clean reinstall; `--force` only refreshes prefix overrides.
 

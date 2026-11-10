@@ -2,11 +2,19 @@
 
 [Back to GitNexus](../README.md)
 
+> **This fork is not published to npm or to an image registry.** `npx gitnexus`, the
+> `ghcr.io/abhigyanpatwari/*` and `akonlabs/*` images, and the RepoCloud template all run
+> **upstream** GitNexus, which has no Apex support and returns nothing rather than
+> erroring. The runnable examples below build from this fork instead: the CLI as in
+> [Install](../README.md#install), and the images from this checkout's `Dockerfile.cli` and
+> `Dockerfile.web`. The image tables, signing and verification sections describe upstream's
+> published images and are kept for reference.
+
 ## Deploy to Render
 
 Deploy GitNexus in one click:
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/abhigyanpatwari/GitNexus)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/adamdaw/GitNexus)
 
 The Blueprint creates two services. `gitnexus-server` runs `gitnexus serve` as a private service: no public URL, reachable only over Render's private network, with a persistent disk for indexes and cloned repos. `gitnexus-web` is the public one. It serves the UI and reverse-proxies `/api/*` to the server, so the browser talks to a single origin.
 
@@ -30,9 +38,12 @@ Indexing is memory-bound. If `gitnexus-server` runs out of memory on a large rep
 
 ## Docker
 
-Run Compose commands from the repository root.
+Run Compose commands from the repository root. Build both images from this checkout, then point Compose at them (`docker-compose.yaml` reads `SERVER_IMAGE` and `WEB_IMAGE`):
 
 ```bash
+docker build -f Dockerfile.cli -t gitnexus-apex:local .
+docker build -f Dockerfile.web -t gitnexus-web-apex:local .
+export SERVER_IMAGE=gitnexus-apex:local WEB_IMAGE=gitnexus-web-apex:local
 docker compose up -d
 ```
 
@@ -63,13 +74,13 @@ docker run --rm -d \
   --name gitnexus-server \
   -p 4747:4747 \
   -v gitnexus-data:/data/gitnexus \
-  ghcr.io/abhigyanpatwari/gitnexus:latest
+  gitnexus-apex:local
 
 # Web UI
 docker run --rm -d \
   --name gitnexus-web \
   -p 4173:4173 \
-  ghcr.io/abhigyanpatwari/gitnexus-web:latest
+  gitnexus-web-apex:local
 ```
 
 Optional env file (override image tags, container names, ports, workspace dir):
@@ -172,11 +183,12 @@ After this, attempting to deploy an unsigned image — or one signed by anything
 ## Run the frontend locally
 
 ```bash
-git clone https://github.com/abhigyanpatwari/gitnexus.git
-cd gitnexus/gitnexus-web && npm install
+git clone https://github.com/adamdaw/GitNexus.git
+cd GitNexus/gitnexus-web && npm install
 # Compile sibling gitnexus-shared with this package's TypeScript 7 (do not npm ci shared).
 cd ../gitnexus-shared && node ../gitnexus-web/node_modules/typescript/lib/tsc.js
 cd ../gitnexus-web && npm run dev
-# Then in another terminal, start the backend the frontend connects to:
-npx gitnexus@latest serve
+# Then in another terminal, start the backend the frontend connects to, using the
+# `gitnexus` binary built and linked from this fork (see Install in the README):
+gitnexus serve
 ```
