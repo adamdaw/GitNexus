@@ -62,6 +62,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { isProcessAlive } from '../utils/process-identity.js';
+import { readEmbeddingRecovery } from './embedding-recovery.js';
 
 const LOCK_FILENAME = 'analyze.lock';
 const LOCK_RECORD_VERSION = 1 as const;
@@ -152,6 +153,11 @@ export interface AcquireOptions {
   pollMs?: number;
   /** Called once when we start waiting on a live holder. */
   onWaitStart?: (holder: LockRecord) => void;
+  /**
+   * Sweep orphaned staging files once the lock is held. Default true; pass
+   * false for a read-only caller, such as a dry run, that must delete nothing.
+   */
+  sweep?: boolean;
 }
 
 export class IndexLockTimeoutError extends Error {
@@ -428,8 +434,9 @@ const deniedCreateHandle = (
 /**
  * Delete orphaned build/staging artifacts left in the lock directory by a
  * crashed prior writer. Safe precisely because we hold the exclusive lock: no
- * other writer can be creating these here right now, so anything present is a
- * crash orphan. Matches this slot's staging files ONLY — never `lbug` itself,
+ * other writer can be creating these here right now. A checkpoint-referenced
+ * generation is retained for embedding recovery; all other stages are orphans.
+ * Matches this slot's staging files ONLY — never `lbug` itself,
  * never `lbug.wal`/`lbug.shadow` (the LIVE index's own sidecars), and never a
  * `branches/<slug>/` sub-slot (which owns its own lock + sweep). Non-recursive.
  */
@@ -437,6 +444,7 @@ export const sweepStagingArtifacts = (lockDir: string, log?: (msg: string) => vo
   // Matches `lbug.new`, `lbug.new.wal`, `lbug.staging.<id>`, `lbug.staging.<id>.wal`, …
   // Does NOT match `lbug`, `lbug.wal`, `lbug.shadow`.
   const stagingRe = /^lbug\.(staging\..+|new(\..+)?)$/;
+  const retained = new Set(readEmbeddingRecovery(lockDir)?.familyFiles ?? []);
   let removed = 0;
   let entries: string[];
   try {
@@ -445,7 +453,7 @@ export const sweepStagingArtifacts = (lockDir: string, log?: (msg: string) => vo
     return;
   }
   for (const name of entries) {
-    if (!stagingRe.test(name)) continue;
+    if (!stagingRe.test(name) || retained.has(name)) continue;
     try {
       unlinkSync(path.join(lockDir, name));
       removed++;
@@ -585,7 +593,13 @@ const acquireViaFile = async (
             `Reclaiming stale index lock from dead analyze (pid ${holder.pid}, ` +
               `invocation ${holder.invocationId}).`,
           );
-          unlinkSync(lockPath);
+          try {
+            unlinkSync(lockPath);
+          } catch (error) {
+            // The holder may release and exit after our read. The guard still
+            // excludes new owners, so an already-removed file is safe to create.
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          }
           tryCreate = true;
           holder = null;
         }
@@ -907,7 +921,7 @@ export const acquireIndexLock = async (
   }
   // Without ownership, a staging file may belong to an active writer.
   try {
-    if (!handle.lockFree) sweepStagingArtifacts(lockDir, opts.log);
+    if (!handle.lockFree && opts.sweep !== false) sweepStagingArtifacts(lockDir, opts.log);
   } catch {
     /* best-effort */
   }

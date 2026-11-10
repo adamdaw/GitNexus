@@ -109,6 +109,18 @@ const SWIFT_CALLABLE_CAPTURE_OPTIONS = {
     node.namedChildren.filter(
       (child): child is SyntaxNode => child !== null && child.type === 'parameter',
     ),
+  // tree-sitter-swift fields `a ?? b` as `value` / `if_nil` and `c ? a : b` as
+  // `if_true` / `if_false`, neither of which the shared field-based branch
+  // rule knows, so only the last operand flowed (#3354).
+  valueAlternatives: (node: SyntaxNode) => {
+    const [first, second] =
+      node.type === 'nil_coalescing_expression'
+        ? [node.childForFieldName('value'), node.childForFieldName('if_nil')]
+        : node.type === 'ternary_expression'
+          ? [node.childForFieldName('if_true'), node.childForFieldName('if_false')]
+          : [null, null];
+    return first !== null && second !== null ? [first, second] : undefined;
+  },
 } as const;
 
 /** tree-sitter-swift node types that carry arity. */
@@ -167,6 +179,26 @@ export function emitSwiftScopeCaptures(
       nodeMap[tag] = c.node;
     }
     if (Object.keys(grouped).length === 0) continue;
+
+    // The grammar gives an additive RHS call the whole binary-expression
+    // anchor. Start at its own callee so it cannot share the LHS call identity.
+    const additiveCall = grouped['@reference.additive-call'];
+    const additiveName = nodeMap['@reference.name'];
+    if (additiveCall !== undefined && additiveName !== undefined) {
+      const callNode = nodeMap['@reference.additive-call'];
+      grouped['@reference.call.free'] = {
+        ...additiveCall,
+        name: '@reference.call.free',
+        text: sourceText.slice(additiveName.startIndex, callNode.endIndex),
+        range: {
+          ...additiveCall.range,
+          startLine: additiveName.startPosition.row + 1,
+          startCol: additiveName.startPosition.column,
+        },
+      };
+      nodeMap['@reference.call.free'] = callNode;
+      delete grouped['@reference.additive-call'];
+    }
 
     // ── Imports ──────────────────────────────────────────────────────
     if (grouped['@import.statement'] !== undefined) {

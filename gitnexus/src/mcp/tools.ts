@@ -7,6 +7,12 @@
 
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { REL_TYPES } from 'gitnexus-shared';
+import { GUARD_TAINT_LIMITATION } from './taint-limitations.js';
+import {
+  CONTEXT_RELATION_TYPES,
+  CONTEXT_RESPONSE_SECTIONS,
+  QUERY_RESPONSE_SECTIONS,
+} from './response-filter.js';
 
 export interface ToolDefinition {
   name: string;
@@ -20,8 +26,11 @@ export interface ToolDefinition {
         type: string;
         description?: string;
         default?: unknown;
-        items?: { type: string };
+        items?: { type: string; enum?: string[] };
+        minItems?: number;
+        maxItems?: number;
         enum?: string[];
+        const?: boolean;
         minimum?: number;
         maximum?: number;
         minLength?: number;
@@ -32,7 +41,7 @@ export interface ToolDefinition {
   };
 }
 
-const READ_ONLY_TOOL_ANNOTATIONS: ToolAnnotations = {
+export const READ_ONLY_TOOL_ANNOTATIONS: ToolAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
@@ -64,6 +73,9 @@ const DESTRUCTIVE_TOOL_ANNOTATIONS: ToolAnnotations = {
 export const LIST_REPOS_DEFAULT_LIMIT = 50;
 export const LIST_REPOS_MAX_LIMIT = 200;
 
+/** Whole-file `read_file` cap. The schema default and the handler fallback share this. */
+export const READ_FILE_DEFAULT_MAX_LINES = 2000;
+
 /**
  * Pagination bounds for the `explain` tool (#2083 M3 U6). Findings are sparse
  * and capped per function at analyze time, but a large repo can still
@@ -89,16 +101,25 @@ export const QUERY_DEFAULT_MAX_SYMBOLS = 25;
 /** Advertised query page maxima (schema + LocalBackend.query reject, not clamp). */
 export const QUERY_MAX_LIMIT = 100;
 export const QUERY_MAX_MAX_SYMBOLS = 200;
+/** Source preview characters shared across unique symbols on a query result page. */
+export const QUERY_CONTENT_MAX_CHARS = 16_000;
 export const CONTEXT_CHAIN_MAX_DEPTH = 3;
 
 const CWD_AWARE_REPO_OMISSION =
   'Omit when only one repo is indexed, an MCP default is configured, or the GitNexus process cwd is inside a registered path without crossing an unindexed nested Git checkout; otherwise specify it explicitly.';
 const MUTATING_REPO_OMISSION =
-  'Omit only when one repo is indexed or an MCP default is configured; otherwise mutating tools require an explicit repo.';
+  'Omit only when one repo is indexed or an MCP default is configured; otherwise mutating tools require an explicit repo. A preview (dry_run omitted or true) may also omit it when the GitNexus process cwd is inside a registered path; dry_run:false always needs one of the first two.';
 
 /** Always-on identity+freshness field on query/context/impact/cypher object results (#3291). */
 const HOT_READ_STALENESS_NOTE =
   "Object results attach `staleness` even when current. Read `staleness.branch`/`lastCommit` for which index answered and `status` for freshness. Re-analyze only for `behind` or `diverged` — `current` is this clone's HEAD, not necessarily the default branch; `unknown` is unmeasurable, not stale. Field is only on object results (not raw-array cypher, error envelopes, or `@group` calls).";
+
+const RENAME_PROPERTIES: ToolDefinition['inputSchema']['properties'] = {
+  symbol_name: { type: 'string', description: 'Current symbol name to rename' },
+  symbol_uid: { type: 'string', description: 'Direct symbol UID from prior tool results' },
+  new_name: { type: 'string', description: 'The new identifier for the symbol' },
+  file_path: { type: 'string', description: 'File path to disambiguate common names' },
+};
 
 export const GITNEXUS_TOOLS: ToolDefinition[] = [
   {
@@ -141,14 +162,14 @@ specify the "repo" parameter explicitly.`,
   {
     name: 'query',
     description: `Query the code knowledge graph for execution flows related to a concept.
-Returns processes (call chains) ranked by relevance, each with its symbols and file locations.
+Returns ranked processes plus a flat process_symbols list. Join processes[].id to process_symbols[].process_id.
 
 WHEN TO USE: Understanding how code works together. Use this when you need execution flows and relationships, not just file matches. Complements grep/IDE search.
-AFTER THIS: Use context() on a specific symbol for 360-degree view (callers, callees, categorized refs).
+AFTER THIS: Use context() on a specific symbol for 360-degree view (callers, callees, categorized refs). With include_content, context() also returns that symbol's source.
 
 Returns results grouped by process (execution flow):
 - processes: ranked execution flows with relevance priority. When a process has an HTTP endpoint, each item includes route and method string aliases plus routes: [{ url, method? }] (same shape as context). When chain_depth > 0, each item also includes chain — layered upstream callers + downstream callees from the process entry symbol (same BFS as context({chain_depth})).
-- process_symbols: search-hit symbols in those flows with file locations and module (functional area). When the process entry is among those hits, it is marked is_entry_point: true.
+- process_symbols: search-hit symbols in those flows with file locations and module (functional area). On the single-repo envelope { processes, process_symbols, definitions }: One row per (id, process_id) — the same symbol id may appear under more than one process. Join a process to its rows by process_id; symbol_count is the number of those rows. When the process entry is among those hits, it is marked is_entry_point: true. With include_content, content appears only on the first row for each symbol id across the whole process_symbols array, not per process; later rows for that id omit it, even under a different process_id. To get content for a row without it, find the earlier row with the same id, or call context({uid: "<id>", include_content: true}). A repo of "@<group>" returns { group, query, results, per_repo } and does not include process_symbols. results[].symbol_count is the member's post-slice attach count; when service is set, it counts only attaches under that prefix. To get process_symbols for one member, query again with repo "@<group>/<memberPath>" (member path from group.yaml, or results[]._repo).
 - definitions: standalone types/interfaces not in any process. Keyword hits on Route URLs (route_fts) are bridged to their handler via HANDLES_ROUTE (handlerSymbolId, routes) when the edge exists; use route_map({route}) for the full HTTP surface.
 
 Hybrid ranking: BM25 keyword + semantic vector search, ranked by Reciprocal Rank Fusion.
@@ -193,10 +214,17 @@ ${HOT_READ_STALENESS_NOTE}`,
           minimum: 1,
           maximum: QUERY_MAX_MAX_SYMBOLS,
         },
+        response_sections: {
+          type: 'array',
+          items: { type: 'string', enum: [...QUERY_RESPONSE_SECTIONS] },
+          minItems: 1,
+          maxItems: QUERY_RESPONSE_SECTIONS.length,
+          description:
+            'Optional single-repo output view: select processes, process_symbols, and/or definitions. For symbol discovery use ["process_symbols", "definitions"] with include_content:false and chain_depth:0. Warnings and staleness always remain; response_filter identifies omitted sections, not absent evidence. Does not change ranking or existing search limits. Omit for existing full output. Not supported for @group routing.',
+        },
         include_content: {
           type: 'boolean',
-          description:
-            'Include source text retained for matching symbols (default: false). The response reports contentAvailability; indexes built with content retention "none" explicitly report unavailable content.',
+          description: `Include source text retained for matching symbols as previews (default: false), sharing ${QUERY_CONTENT_MAX_CHARS} characters equally across unique returned symbols per repository. content_truncated marks incomplete previews; all matches remain present. Content is sent once per symbol id, on its first process_symbols row; context({uid: "<id>", include_content: true}) returns it for any row. Use read_file line ranges for large sources. contentAvailability reports index retention. Query next is JSON guidance.`,
           default: false,
         },
         chain_depth: {
@@ -343,6 +371,22 @@ ${HOT_READ_STALENESS_NOTE}`,
           type: 'string',
           description: 'Direct symbol UID from prior tool results (zero-ambiguity lookup)',
         },
+        response_sections: {
+          type: 'array',
+          items: { type: 'string', enum: [...CONTEXT_RESPONSE_SECTIONS] },
+          minItems: 1,
+          maxItems: CONTEXT_RESPONSE_SECTIONS.length,
+          description:
+            'Optional single-repo output view: select incoming, outgoing, processes, chain, routes, and/or typed_properties. The symbol and all warnings/completeness/staleness fields always remain. For callers only use ["incoming"] plus relationTypes:["CALLS"]. Omitted data is not evidence of absence; remove filters to expand. Does not change traversal or existing reference limits. Omit for existing full output. Not supported for @group routing.',
+        },
+        relationTypes: {
+          type: 'array',
+          items: { type: 'string', enum: [...CONTEXT_RELATION_TYPES] },
+          minItems: 1,
+          maxItems: CONTEXT_RELATION_TYPES.length,
+          description:
+            'Optional uppercase relationship categories to retain in the existing incoming/outgoing view, e.g. ["CALLS"] or ["CALLS", "USES"]. This filters the returned bounded reference window; it does not search for additional matches or filter chain. If response_sections is set, it must include incoming or outgoing. Omit for all existing categories. Single-repo MCP only, not @group routing.',
+        },
         file_path: { type: 'string', description: 'File path to disambiguate common names' },
         file: {
           type: 'string',
@@ -397,7 +441,7 @@ AFTER THIS: Review affected processes. Use context() on high-risk symbols. READ 
 GIT WORKTREE SUPPORT: GitNexus automatically detects when the MCP server was launched from inside a linked git worktree and runs git diff against that worktree — no extra parameters needed in the common case. Pass "worktree" explicitly only when the server was started from a different directory than the worktree you are editing (e.g., the server runs from the canonical root but your changes are in a linked worktree at a different path).
 
 Returns: changed symbols, affected processes, and a risk summary.
-- partial: true — a step failed and was swallowed, so the result is incomplete and risk_level is "unknown" instead of a ranked level. Two causes, with different blast radii: the symbol query (or an unparseable diff) degrades everything — changed_symbols, both counts, and the processes derived from them — while a failed process lookup degrades only affected_processes and the risk read off it, leaving the changed-symbol counts sound. changed_count:0 with partial:true is NOT a clean pre-commit check; re-run before treating the diff as safe.
+- partial: true — mapping is incomplete, so risk_level is "unknown" instead of a ranked level. A failed symbol query (or an unparseable diff) degrades changed_symbols, both counts, and derived processes; a failed process lookup degrades only affected_processes and risk, leaving changed-symbol counts sound. unmapped_files lists changed supported source files with no mapped symbols, including source renames without hunks: their symbols may be missing, unindexed, or outside indexed ranges even when every query succeeded. Rebuild the index and inspect those diffs; retry alone may not resolve this state. changed_count:0 with partial:true is NOT a clean pre-commit check.
 - truncated: true — the changed_symbols LISTING was capped for this response. summary.changed_count counts every symbol the run observed: the true total normally, a LOWER BOUND when partial:true. Compare it with the array length rather than trusting the array.`,
     annotations: READ_ONLY_TOOL_ANNOTATIONS,
     inputSchema: {
@@ -467,37 +511,27 @@ A graph too large to analyze at all returns \`{ error, truncated: true }\` with 
   },
   {
     name: 'rename',
-    description: `Multi-file coordinated rename using the knowledge graph + text search.
-Finds all references via graph (high confidence) and regex text search (lower confidence). Preview by default.
-
-WHEN TO USE: Renaming a function, class, method, or variable across the codebase. Safer than find-and-replace.
-AFTER THIS: Run detect_changes() to verify no unexpected side effects.
-
-Each edit is tagged with confidence:
-- "graph": found via knowledge graph relationships (high confidence, safe to accept)
-- "text_search": found via regex text search (lower confidence, review carefully)
-
-Handles disambiguation via context()'s payload verbatim: an ambiguous symbol_name returns status "ambiguous" with ranked candidates and totalCandidates — the TRUE match count, not candidates[].length — plus candidatesTruncated:true and a "(showing M)" suffix on message when candidates[] is the shorter window. Re-call with symbol_uid.`,
+    description: `Rename using the indexed graph and GitNexus's own semantic layer. Previews by default: dry_run omitted or true never writes; dry_run:false requires the plan_token returned by a successful preview and applies exactly that captured edit set after checking source snapshots and targets. Preview first, review semantic_edits and coverage, then re-call with dry_run:false and plan_token.
+Pass symbol_uid from context() to select the declaration. Unsupported syntax, ambiguous bindings, and incomplete coverage fail closed; no compiler or text-search fallback is used.
+Returns result_version:2 with semantic_edits (occurrence count), exact UTF-16 spans, indexed-source coverage, and explicit planning/application status. Preview plan_token is single-use, expires after 15 minutes or a server restart, and can be evicted when retained previews reach 16 plans or 64 MiB. Apply rejects changed sources (including untracked files), source-file inventories, graph targets, repositories, and destination names; it never replans edits. Legacy graph_edits and text_search_edits are zero. Partial writes are not transactional: changes lists only landed edits, failed_files the file that failed, and unattempted_files later files never touched; reconcile and preview again before retrying.
+Ambiguous symbol_name returns context()'s ranked candidates and totalCandidates verbatim; re-call with symbol_uid. After application, run tests and detect_changes().`,
     annotations: DESTRUCTIVE_TOOL_ANNOTATIONS,
     inputSchema: {
       type: 'object',
       properties: {
-        symbol_name: { type: 'string', description: 'Current symbol name to rename' },
-        symbol_uid: {
+        ...RENAME_PROPERTIES,
+        plan_token: {
           type: 'string',
-          description: 'Direct symbol UID from prior tool results (zero-ambiguity)',
+          description:
+            'Opaque single-use token returned by the reviewed preview. Required with dry_run:false; keep the same repository, target, and new_name.',
         },
-        new_name: { type: 'string', description: 'The new name for the symbol' },
-        file_path: { type: 'string', description: 'File path to disambiguate common names' },
         dry_run: {
           type: 'boolean',
-          description: 'Preview edits without modifying files (default: true)',
+          description:
+            'Preview edits without modifying files (default: true). Pass false to apply.',
           default: true,
         },
-        repo: {
-          type: 'string',
-          description: `Repository name or path. ${MUTATING_REPO_OMISSION}`,
-        },
+        repo: { type: 'string', description: `Repository name or path. ${MUTATING_REPO_OMISSION}` },
       },
       required: ['new_name'],
     },
@@ -524,6 +558,7 @@ Output includes:
 - summary: direct callers, processes affected, modules affected
 - affected_processes: which execution flows break and at which step
 - affected_modules: which functional areas are hit (direct vs indirect; classification-unavailable when that secondary query fails)
+- affected_routes (callgraph mode only): [{ url, method? }] — HTTP endpoints served by the target or any impacted symbol (via HANDLES_ROUTE). Matching callgraph byDepth items also carry routes:[{ url, method? }]. PDG results do not include route enrichment. Reported only; not counted in risk.
 - byDepth: affected symbols grouped by traversal depth (paginated by limit/offset; omitted when summaryOnly:true — use byDepthCounts for totals per depth, pagination object when truncated). Each item includes a processes:[{id,label,processType,step}] field listing the execution flows that symbol participates in. Empty when the symbol has no process membership. Can ALSO be empty when partial:true is set — either the process-aggregation pass hit its cap before detecting affected processes, or per-symbol enrichment was capped on a very large page. When partial:true, do NOT treat processes:[] as proof of no participation; cross-check the top-level affected_processes list. An item carries staticGated:true only when the edge that reached it is provably unreachable at compile time from the indexed source (today: Zig calls inside an 'if (CONST_FALSE)' body or the else of 'if (CONST_TRUE)'); the field is absent when the edge is live or the language does not model it. Traversal and risk do NOT filter or rank on it: it is metadata for the caller to weigh.
 - epistemic: 'exact' | 'lower-bound' — whether impactedCount is the whole story. 'lower-bound' means the count is a FLOOR: either the walk provably missed callers, or a probe that would have established completeness could not run (a failed callable-value-reference query says so in boundaries). It is not itself proof that an omitted caller exists — branch on causes and read boundaries. Absent only on skipped probes (ambiguous-candidate lists, group fan-out).
 - boundaries: string[] — one plain-language sentence per reason the count is short. Prose for humans; branch on causes instead.
@@ -716,9 +751,10 @@ ANCHORED ("target" = file path or symbol/function name): full hop detail for tha
 CONTRACT CAVEATS (absent flows are NOT proof of safety):
 - Cross-function flows ARE modeled (#2084 M4): a source flowing through helper functions into a sink is found, via summary composition over the call graph (context-insensitive — return/call-site merging is accepted).
 - Cross-function matching is by callee NAME (context-insensitive): when one caller invokes two distinct same-named callees, a flow into one over-attributes to both — a cross-function finding does not prove the taint reached every same-named function (sound over-report, never a missed flow).
-- Closure/callback flows are invisible in both directions (e.g. arr.forEach(() => sink(y))) — the largest false-negative class.
+- Sources read inside inline callbacks and returned handlers can flow through helper functions. Captured closure-variable flows are not modeled (e.g. const y = source(); arr.forEach(() => sink(y))).
 - Property/field flows are not tracked (obj.x = taint; sink(obj.y) has no chain).
-- Guard-style sanitizers (if (isValid(x))) and implicit/control-dependence flows are not modeled.
+- ${GUARD_TAINT_LIMITATION}
+- Implicit/control-dependence flows are not modeled.
 - CommonJS aliasing is partially modeled (require('<literal>') joins resolve; dynamic requires do not).
 - Exception-path over-approximation can produce false-positive noise.
 
@@ -873,7 +909,7 @@ Returns routes that have both detected response keys AND consumers. Shows top-le
 
 WHEN TO USE: BEFORE modifying any API route handler. Shows what consumers depend on, what response fields they access, what middleware protects the route, and what execution flows it triggers. Requires at least "route" or "file" parameter.
 
-Risk levels: LOW (0-3 consumers), MEDIUM (4-9 or any mismatches), HIGH (10+ consumers or mismatches with 4+ consumers). Mismatches with confidence "low" indicate the consumer file fetches multiple routes — property attribution is approximate.
+Risk levels: LOW (0-3 consumers), MEDIUM (4-9 or any mismatches), HIGH (10+ consumers or mismatches with 4+ consumers). Mismatches with confidence "low" indicate the consumer file fetches multiple routes — property attribution is approximate. When impactSummary.epistemic is "lower-bound", impactSummary.unverifiedConsumers more files pass the route's URL to a function not proven to send HTTP requests, so directConsumers is a floor; riskLevel counts proven consumers only. "indirectConsumers" lists the callers of the function that sends the request, one level up, each with that function's name in "via"; impactSummary.indirectConsumers counts their distinct files. They are reported apart from the direct consumers and do not feed riskLevel. The field is absent on an index built before the requesting function was recorded.
 
 Response shape is keyed on how many routes match, not on the data: exactly one match returns a single route object; two or more return { routes: [...], total: N }. The same URL can expose multiple HTTP verbs (e.g. GET and POST /api/orders are distinct routes that share the URL), so a bare-URL lookup may return the wrapped form — every route object carries its own "method" so verbs are distinguishable. Pass "method" to narrow to one verb; the single-object shape is returned only when exactly one route remains after filtering — a substring route/file match spanning several URLs can still return the wrapped form. A URL/file that exists but has no route for the given verb returns an error. Each route's "method" is the literal "*" for method-agnostic routes (e.g. Django function views), which match any "method" selector, or null for method-less routes (filesystem, Laravel resource), which never match a selector. Every route also carries "runtimeEvidence"; treat it as authoritative only when runtimeEvidence.confirmed is true. Combines route_map, shape_check, and impact data.`,
     annotations: READ_ONLY_TOOL_ANNOTATIONS,
@@ -1018,6 +1054,94 @@ DESTINATION TRACE (cross-repo): for an "@groupName" trace, OMIT to/to_uid/to_fil
       required: [],
     },
   },
+  {
+    name: 'read_file',
+    description: `Read a file from the repository checkout, optionally sliced to a 0-indexed line range.
+Returns checkout bytes plus totalLines and the slice bounds. The realpath re-check matches HTTP GET /api/file. The lexical barrier is the CodeQL \`startsWith('..')\` form narrowed to the \`..\` segment, so a file named \`..config\` stays readable. A whole-file read is capped by maxLines (default ${READ_FILE_DEFAULT_MAX_LINES}, 0 = no cap), which is stricter than the uncapped HTTP body.
+
+WHEN TO USE: After query()/cypher()/context() gave you a filePath (or file:line), read the surrounding source: header context (open/variable/import lines), a full declaration, or any line window. Prefer context({name, include_content: true}) when you already have the symbol — it returns the symbol span plus call edges in one call.
+AFTER THIS: Use the read text to ground signatures verbatim; never invent names from memory.
+
+Paths that escape the repository are refused. A missing file returns a not-found error only when the checkout directory exists. When full source is unavailable (content retention is not "full", or the checkout directory is gone), the result is code "source-unavailable" — not an empty body and not "file not found". This tool reads the checkout and does not accept branch.`,
+    annotations: READ_ONLY_TOOL_ANNOTATIONS,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description:
+            'Repository-contained file path (e.g. "Mathlib/Analysis/SpecificLimits/Basic.lean"). Paths that escape the repository, including ".." escapes, are refused.',
+        },
+        startLine: {
+          type: 'integer',
+          description: 'Optional 0-indexed first line of the slice (inclusive).',
+          minimum: 0,
+        },
+        endLine: {
+          type: 'integer',
+          description: 'Optional 0-indexed last line of the slice (inclusive). Requires startLine.',
+          minimum: 0,
+        },
+        maxLines: {
+          type: 'integer',
+          description: `Maximum lines returned for a whole-file read (default ${READ_FILE_DEFAULT_MAX_LINES}, 0 = no cap). Ignored when startLine is set. Negative values are rejected.`,
+          default: READ_FILE_DEFAULT_MAX_LINES,
+          minimum: 0,
+        },
+        repo: {
+          type: 'string',
+          description: `Indexed repository name or path. ${CWD_AWARE_REPO_OMISSION}`,
+        },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'grep',
+    description: `Regex search of the live checkout for files the index retained — the MCP twin of HTTP GET /api/grep.
+The file list is indexed File nodes that still have content. Bytes are read from the working tree, so edits since the last analyze are visible. Hits are 1-based. read_file startLine/endLine are 0-based.
+
+WHEN TO USE: Only after graph tools came back empty or ambiguous — exact-name pinning, docstring fallback, or literal tokens the index does not model (e.g. tactic names inside proof bodies, notation). Graph first (query/context/cypher); grep is the offline-capable fallback, never the default.
+AFTER THIS: Read the matching line with read_file({path, startLine: hit.line - 1, endLine: hit.line - 1}) or pin the symbol with context({name}).
+
+Optional caseSensitive and literal match HTTP /api/grep (default: case-insensitive regex). When full source is unavailable the result is code "source-unavailable", not an empty hit list. This tool reads the checkout and does not accept branch. Results carry timedOut: true when the wall-clock budget expired first — re-issue narrower (fileFilter or a tighter pattern).`,
+    annotations: READ_ONLY_TOOL_ANNOTATIONS,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pattern: {
+          type: 'string',
+          description: 'Regex pattern (max 200 chars) matched against file content lines.',
+        },
+        fileFilter: {
+          type: 'string',
+          description: 'Optional case-insensitive substring filter on file paths.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum hits returned (default 50, max 200).',
+          default: 50,
+          minimum: 1,
+          maximum: 200,
+        },
+        caseSensitive: {
+          type: 'boolean',
+          description:
+            'Optional. When true, match case. Default is case-insensitive, matching HTTP /api/grep.',
+        },
+        literal: {
+          type: 'boolean',
+          description:
+            'Optional. When true, treat pattern as a literal substring (escaped), matching HTTP /api/grep literal=1. Default is a regex.',
+        },
+        repo: {
+          type: 'string',
+          description: `Indexed repository name or path. ${CWD_AWARE_REPO_OMISSION}`,
+        },
+      },
+      required: ['pattern'],
+    },
+  },
 ];
 
 /**
@@ -1025,9 +1149,16 @@ DESTINATION TRACE (cross-repo): for an "@groupName" trace, OMIT to/to_uid/to_fil
  * of truth: the schema property is injected here so it cannot drift from the
  * server-side default in `local-backend.ts` (`resolveRepo(repo, branch)`).
  * `list_repos` and the `group_*` tools are intentionally excluded — they are
- * not single-repo, single-branch operations.
+ * not single-repo, single-branch operations. `read_file` and `grep` are in
+ * this set so `repo` stays required with the other per-repo tools, and the
+ * loop below skips `branch` for `CHECKOUT_SOURCE_TOOLS` — a pin would label
+ * checkout bytes with another commit.
  */
+export const CHECKOUT_SOURCE_TOOLS = new Set(['read_file', 'grep', 'rename']);
+
 export const REPO_SCOPED_TOOLS = new Set([
+  'read_file',
+  'grep',
   'query',
   'cypher',
   'context',
@@ -1056,6 +1187,8 @@ for (const tool of GITNEXUS_TOOLS) {
   // advertising the aliases instead would re-break Claude Code on `query`.
   tool.inputSchema.additionalProperties = false;
   if (!REPO_SCOPED_TOOLS.has(tool.name)) continue;
+  // Checkout reads follow the working tree. Do not advertise `branch`.
+  if (CHECKOUT_SOURCE_TOOLS.has(tool.name)) continue;
   if (tool.inputSchema.properties.branch) continue;
   // Optional — `required` is left unchanged so omitting `branch` keeps today's
   // workspace-index behavior. Ignored in group mode (repo starts "@").

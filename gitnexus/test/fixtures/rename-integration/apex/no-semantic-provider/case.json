@@ -1,0 +1,35 @@
+{
+  "language": "apex",
+  "description": "Refuse an Apex rename and leave every file unchanged: Apex has no semantic rename provider, and a text rename would also miss its case-insensitive references.",
+  "categories": ["negative", "unchanged-on-error"],
+  "target": {
+    "name": "greet",
+    "kind": "Method",
+    "file": "Greeter.cls",
+    "startLine": 1
+  },
+  "newName": "welcome",
+  "expect": {
+    "status": "error",
+    "code": "unsupported_language",
+    "planningStatus": "unsupported"
+  },
+  "edges": [
+    {
+      "type": "CALLS",
+      "from": {
+        "name": "entry",
+        "kind": "Method",
+        "file": "Greeter.cls",
+        "startLine": 2
+      },
+      "to": {
+        "name": "greet",
+        "kind": "Method",
+        "file": "Greeter.cls",
+        "startLine": 1
+      }
+    }
+  ],
+  "exactOutgoing": true
+}

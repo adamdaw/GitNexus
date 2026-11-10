@@ -63,6 +63,20 @@ version that writes the completeness receipt. An older index or unreadable compl
 `incompleteReasons: ["scope-extraction-unverified"]`; re-analyze it before treating
 empty impact results as exact.
 
+**Invalid symbol identity:** `query`, `context`, or `impact` can return
+`The index returned an invalid symbol identity` with recovery guidance instead
+of returning malformed results. Rebuild from the affected repository root with
+`npx gitnexus analyze --force`. If the error returns, retain the failing command,
+GitNexus/Node versions and `gitnexus doctor` output for investigation. This check
+detects blank IDs and NUL-containing identity fields; it does not prove that
+every otherwise plausible name, path or source range is correct.
+
+**MCP freshness after rebuilding:** a warm session refreshes its index reference
+when it opens the replacement graph, including a rebuild at the same commit.
+A busy reader keeps its old reference until it can reopen. During an observed
+graph/metadata publication gap, freshness is `unknown`; retry after analysis
+finishes rather than treating that response as current.
+
 ---
 
 ## Embeddings
@@ -92,6 +106,14 @@ npx gitnexus analyze --force
 ```
 
 If it recurs, the cause is almost always environmental rather than a code defect: check free disk space on the volume holding `.gitnexus/`, make sure no second `analyze` is running against the same repo (both use `.gitnexus/csv` for staging), then run `npx gitnexus doctor`. The check compares in-memory relationship totals (including streamed rows) against what the DB hands back, and is deliberately skipped on incremental runs, where the two counts are not comparable.
+
+**Weak semantic recall despite existing embeddings:** If paraphrased queries look like keyword-only search, the distance cutoff may be too strict for the embedding model. CLI and MCP `query` default to `0.6`. From the indexed repository, try a broader cutoff:
+
+```bash
+GITNEXUS_VECTOR_MAX_DISTANCE=0.8 npx gitnexus query "how are expired sessions removed" --limit 10
+```
+
+Compare target inclusion and ranking against the default; a broader cutoff also admits less relevant hits. Set the variable in the MCP/serve launch environment and restart that process when tuning a server. A cutoff change needs no reindex and setting it only during `analyze` does not persist it. If the index has no vectors, generate embeddings first; if the embedding model or dimensions differ between indexing and querying, align that configuration and regenerate vectors. See [Vector cutoff tuning](README.md#vector-cutoff-tuning) for validation rules and the limited `voyage-code-4` evidence from #3457.
 
 **Large repos:** Analyze may skip or limit embedding work when node counts are very high; watch CLI output.
 
@@ -182,6 +204,30 @@ Orchestrator: `.github/workflows/ci.yml`.
 ## Memory / analyze crashes
 
 Analyze re-execs Node with a **large old-space heap** when needed (`analyze.ts`). If you still OOM on huge repos, close other processes, avoid `--embeddings` for a first pass, or analyze a smaller path if supported by your workflow.
+
+`Unable to allocate memory` / `The buffer pool is full` during graph writes
+refers to LadybugDB's native buffer pool. Increasing `NODE_OPTIONS`,
+`--memory-budget`, or worker heap limits does not resize that pool. Recognized
+pool exhaustion aborts analysis instead of retrying with row skipping.
+
+If the host has enough memory, set an explicit pool size in **bytes**, then
+rebuild. For example, 3 GiB is `3221225472` bytes:
+
+```bash
+GITNEXUS_LBUG_BUFFER_POOL_SIZE=3221225472 npx gitnexus analyze --force
+```
+
+The override bypasses automatic pool sizing. Budget for the Node heap, parse
+workers, other native allocations, and the OS alongside it; a larger pool can
+exhaust the host. `GITNEXUS_LBUG_BUFFER_POOL_SIZE=0` restores LadybugDB's native
+80%-of-RAM default, not an unlimited supply of memory. If memory is insufficient,
+exclude generated/vendor directories or use a larger host.
+
+A measured graph-write collapse aborts a staged build before publication,
+leaving the previous index, if any, intact. An in-place run cannot roll back:
+it records `graph-write-collapsed` and exits nonzero. Rebuild a previously
+collapsed index with `--force` after addressing memory, disk space, or the
+reported COPY error; do not rely on its incomplete query results.
 
 ---
 

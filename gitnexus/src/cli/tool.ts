@@ -142,17 +142,28 @@ export async function queryCommand(
   }
 
   const backend = await getBackend();
-  const result = await backend.callTool('query', {
-    // #2175: canonical param is search_query; the backend still accepts legacy "query".
-    search_query: resolvedQuery,
-    task_context: options?.context,
-    goal: options?.goal,
-    limit: parseLimit(options?.limit),
-    include_content: options?.content ?? false,
-    repo: options?.repo,
-    branch: options?.branch,
-  });
-  output(result);
+  try {
+    const result = await backend.callTool('query', {
+      // #2175: canonical param is search_query; the backend still accepts legacy "query".
+      search_query: resolvedQuery,
+      task_context: options?.context,
+      goal: options?.goal,
+      limit: parseLimit(options?.limit),
+      include_content: options?.content ?? false,
+      repo: options?.repo,
+      branch: options?.branch,
+    });
+    output(result);
+  } finally {
+    // A local embedding query may start the sidecar. Direct CLI commands are
+    // one-shot, so leaving the backend connected keeps that child (and Node's
+    // event loop) alive after the complete result has already been printed.
+    try {
+      await backend.disconnect();
+    } finally {
+      _backend = null;
+    }
+  }
 }
 
 export async function contextCommand(
@@ -282,6 +293,8 @@ export async function impactCommand(
         result.affected_processes = result.affected_processes.slice(0, parsedLimit);
       if (Array.isArray(result.affected_modules))
         result.affected_modules = result.affected_modules.slice(0, parsedLimit);
+      if (Array.isArray(result.affected_routes))
+        result.affected_routes = result.affected_routes.slice(0, parsedLimit);
     }
     output(result);
   } catch (err: unknown) {
