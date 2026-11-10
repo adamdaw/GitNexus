@@ -107,8 +107,8 @@ codex plugin marketplace add abhigyanpatwari/GitNexus
 {
   "mcpServers": {
     "gitnexus": {
-      "command": "npx",
-      "args": ["-y", "gitnexus@latest", "mcp"]
+      "command": "gitnexus",
+      "args": ["mcp"]
     }
   }
 }
@@ -771,7 +771,7 @@ On a host with memory to spare, override the pool in **bytes** and rebuild:
 
 ```bash
 # 3 GiB native pool; leave room for Node, workers, other native memory, and the OS
-GITNEXUS_LBUG_BUFFER_POOL_SIZE=3221225472 npx gitnexus analyze --force
+GITNEXUS_LBUG_BUFFER_POOL_SIZE=3221225472 gitnexus analyze --force
 ```
 
 An explicit value bypasses automatic pool sizing and can exhaust the host if

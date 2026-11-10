@@ -17,7 +17,7 @@ chunks eligible for reuse.
 
 ### Do I need to migrate?
 
-**No.** Run `npx gitnexus analyze` as usual. Legacy numeric caches and indexes
+**No.** Run `gitnexus analyze` as usual. Legacy numeric caches and indexes
 without the parser receipt miss once; successful analysis writes the new
 identities. Plan for a cold parse on the first run after upgrading. Missing,
 malformed, or foreign identities are also misses, including in shared stores.
