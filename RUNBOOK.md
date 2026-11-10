@@ -10,8 +10,8 @@ Short, copy-paste operations for **local development**, **MCP**, and **CI**. Com
 
 ## Prerequisites
 
-- **Node.js** ≥ 20 (`gitnexus-web/package.json` `engines`).  
-- **Git** (analyze requires a git repository).  
+- **Node.js** ≥ 20 (`gitnexus-web/package.json` `engines`).
+- **Git** (analyze requires a git repository).
 - From repo root, install and build the CLI package:
 
 ```bash
@@ -135,13 +135,15 @@ costs; compare complete-source candidates separately from older capped inputs.
 
 **Important:** If you already had embeddings, a plain `npx gitnexus analyze` **preserves** them (Non-negotiable 5 in [GUARDRAILS.md](GUARDRAILS.md)) — pass `--embeddings` when you also want vectors generated for new or changed nodes, and `--drop-embeddings` only for a deliberate wipe. See `stats.embeddings` in `.gitnexus/gitnexus.json` (or its legacy `meta.json` mirror; 0 means none) — but that figure isn't always freshly measured: if a run's embedding-count query can't answer, it carries the previous run's number forward instead of writing a wrong zero. For a certified read, check `capabilities.vectorSearch.status` instead — it reads `unavailable` (never a stale count) whenever GitNexus can't vouch for the live vector index.
 
-**Partial embedding index (analyze exits 0, but some nodes never got embedded):** A long run against a flaky embedding endpoint can finish successfully while a bounded number of sub-batches still fail. Affected nodes are dropped to zero rows (never left half-written) and recorded as a pending `embeddingCheckpoint`; `npx gitnexus status` then reports `incompleteReasons: ["embedding-checkpoint-pending"]`. Recovery is a plain:
+**Embedding work interrupted after graph publication:** The graph and keyword index become available before embedding work starts. An embedding failure makes analyze exit nonzero while keeping that graph available and retaining acknowledged embedding work. `gitnexus status --json` reports graph freshness separately from embedding progress and vector readiness. Resume with:
 
 ```bash
 npx gitnexus analyze
 ```
 
-No `--embeddings` flag needed — a retained checkpoint forces embedding generation for the pending nodes regardless of flags, and clears once they succeed. `--drop-embeddings` abandons the pending nodes instead of retrying them; `--force` also discards the checkpoint (with a warning) and rebuilds without resuming it.
+No `--embeddings` flag is needed for a retained job. `gitnexus embeddings sync` also resumes work against an already published graph. Compatible acknowledged units do not call the provider again; a unit interrupted before acknowledgement may replay. A source or embedding-configuration change revalidates reuse, and changing worker counts or memory budgets does not invalidate paid vectors. `--drop-embeddings` deliberately abandons retained vectors. `--force` rebuilds the graph while retaining compatible paid work for reuse.
+
+Older indexes may instead carry an `embeddingCheckpoint` and report `embedding-checkpoint-pending`. Plain analyze recovers that checkpoint, including any explicitly referenced staging data, before migrating it. Historical vectors without verified provider/model provenance are retained without being relabeled as output from the current model.
 
 **Collapsed graph write (analyze exits NON-ZERO and says INCOMPLETE):** A run can finish writing metadata while only a fraction of the relationships it produced are readable back from the index — edges collapsing to a small share of what was built, or a `CodeRelation` table that never materialized (which reads as a persisted count of zero). Because the metadata IS written and the DB does hold rows, nothing looks broken: queries answer with missing edges rather than an error, which is a confident empty answer rather than a failure. `npx gitnexus status` reports `incompleteReasons: ["graph-write-collapsed"]`, the analyze summary prints `Repository indexed INCOMPLETELY` with the expected and persisted counts, and the CLI exits non-zero so automation is not told an unusable index is fine.
 
@@ -164,6 +166,20 @@ Compare target inclusion and ranking against the default; a broader cutoff also 
 **Large repos:** Analyze may skip or limit embedding work when node counts are very high; watch CLI output.
 
 ---
+
+## Debugging reference provenance
+
+Analysis emits a structured `graph_reference_integrity` summary to stderr with checked sites, suppressed duplicates, and unverified counts by reason. These describe ingestion checks, not persisted database totals, query completeness, or resolution accuracy. Successful single-repository MCP graph object responses expose the corresponding `graph_integrity` status. Empty and non-tabular Cypher results retain their raw array shape without a receipt. A missing `graph_integrity` field means provenance is unverified.
+
+Run `gitnexus analyze --force` to replace an index with a missing or invalid receipt. This checks the new ingestion; it does not certify historical indexes or measurements. A fresh receipt can still be unverified when emitters lack original-file provenance. Responses that span mismatched database generations also remain unverified.
+
+For examples of unverified identities, enable debug logging:
+
+```bash
+GITNEXUS_LOG_LEVEL=debug gitnexus analyze --force 2>gitnexus-debug.log
+```
+
+`graph_reference_unverified` includes at most one example per reason per analysis: opaque IDs, collapsed IDs, point-only sites, extracted coordinates, and partial mappings. `graph_reference_rejected` identifies the invalid relationship, endpoints, source file, emission reason, and stack before the write is rejected. Source buffers are not logged; diagnostic IDs and emission reasons can contain source-derived names or literals. Concurrent edits and unreadable sources remain unverified (`sourceChanged` / `sourceUnavailable`, with the read error code); they do not abort analysis. A rejected record prevents a successful ingestion summary; the previous published index remains available when the failed run used staging.
 
 ## MCP: no repos / empty tools
 
@@ -236,12 +252,12 @@ npx gitnexus cypher "MATCH (n) RETURN count(n) LIMIT 1" --repo MyRepo
 
 Orchestrator: `.github/workflows/ci.yml`.
 
-| Job | Typical local repro |
-|-----|---------------------|
-| **quality** | `cd gitnexus && npx tsc --noEmit` |
-| **unit-tests** | `cd gitnexus && npx vitest run test/unit` |
-| **integration** | `cd gitnexus && npx vitest run test/integration` (see workflow matrix for groups) |
-| **e2e** | Triggered when `gitnexus-web/` changes; `cd gitnexus-web && E2E=1 npx playwright test` (requires `gitnexus serve` + `npm run dev`) |
+| Job             | Typical local repro                                                                                                                |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **quality**     | `cd gitnexus && npx tsc --noEmit`                                                                                                  |
+| **unit-tests**  | `cd gitnexus && npx vitest run test/unit`                                                                                          |
+| **integration** | `cd gitnexus && npx vitest run test/integration` (see workflow matrix for groups)                                                  |
+| **e2e**         | Triggered when `gitnexus-web/` changes; `cd gitnexus-web && E2E=1 npx playwright test` (requires `gitnexus serve` + `npm run dev`) |
 
 **Note:** Pushes that touch only certain markdown paths may be skipped by `paths-ignore` in CI — see workflow file for exact patterns.
 
@@ -286,6 +302,26 @@ on a partial result.
 
 Analyze re-execs Node with a **large old-space heap** when needed (`analyze.ts`). If you still OOM on huge repos, close other processes, avoid `--embeddings` for a first pass, or analyze a smaller path if supported by your workflow.
 
+`--resource-budget <MiB>` admits the analyzer process family within one memory
+reservation: the frontend, main heap, parser workers, native graph/vector pools,
+embedding model, bounded input queue, and headroom. For example:
+
+```bash
+gitnexus analyze --embeddings --resource-budget 8192 --memory-budget 1024 --workers 2
+```
+
+Node propagates the main V8 heap flag to parser workers, so each worker reserves
+at least the `--memory-budget` allocation. Explicit settings that do not fit
+the family budget fail before work starts. Without a family override,
+GitNexus fixes the family ceiling at 75% of effective process/container RAM,
+divided among concurrent auto-sync analyses. Automatic heap, worker and native
+pool allocations must fit that ceiling; it never grows to accommodate them.
+Explicit heap, worker or pool requests that cannot fit are rejected before work.
+Small hosts may need an HTTP embedding provider or more RAM for the local model.
+The budget controls
+admission and queue sizes; it is not an operating-system RSS limit. Watch mode
+accepts the same family budget and drains active work before shutdown.
+
 `Unable to allocate memory` / `The buffer pool is full` during graph writes
 refers to LadybugDB's native buffer pool. Increasing `NODE_OPTIONS`,
 `--memory-budget`, or worker heap limits does not resize that pool. Recognized
@@ -300,8 +336,11 @@ GITNEXUS_LBUG_BUFFER_POOL_SIZE=3221225472 gitnexus analyze --force
 
 The override bypasses automatic pool sizing. Budget for the Node heap, parse
 workers, other native allocations, and the OS alongside it; a larger pool can
-exhaust the host. `GITNEXUS_LBUG_BUFFER_POOL_SIZE=0` restores LadybugDB's native
-80%-of-RAM default, not an unlimited supply of memory. If memory is insufficient,
+exhaust the host. Outside bounded analysis, `GITNEXUS_LBUG_BUFFER_POOL_SIZE=0`
+selects LadybugDB's native 80%-of-RAM default. Analysis and embedding admission
+reject zero because that native allocation cannot fit alongside their other
+reservations. Unset the variable for automatic sizing, or set an explicit byte
+limit of at least 8 MiB that fits the resource budget. If memory is insufficient,
 exclude generated/vendor directories or use a larger host.
 
 A measured graph-write collapse aborts a staged build before publication,
@@ -374,6 +413,6 @@ recovery procedure above; never delete a possibly active successor's record.
 
 ## Where to dig deeper
 
-- Architecture overview: [ARCHITECTURE.md](ARCHITECTURE.md)  
-- Agent safety rules: [GUARDRAILS.md](GUARDRAILS.md)  
+- Architecture overview: [ARCHITECTURE.md](ARCHITECTURE.md)
+- Agent safety rules: [GUARDRAILS.md](GUARDRAILS.md)
 - Tests: [TESTING.md](TESTING.md)
