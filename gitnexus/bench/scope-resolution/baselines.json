@@ -1,4 +1,20 @@
 {
+  "apex/100/20": {
+    "fingerprint": "97dc890c867d34dab49e003b2a13a388ff82d438dad8119c42a49e4cb5041b1a",
+    "nodes": 2299,
+    "edges": 2397,
+    "crossFileCalls": 198,
+    "moduleTypeBindings": 0,
+    "typeBindings": 4297
+  },
+  "apex/1000/20": {
+    "fingerprint": "ac114741625195891644d6911982af5ba19e8cbcf792c621a2bdc022b504b219",
+    "nodes": 22999,
+    "edges": 23997,
+    "crossFileCalls": 1998,
+    "moduleTypeBindings": 0,
+    "typeBindings": 42997
+  },
   "c/100/20": {
     "fingerprint": "3c289f3c87de79d760e25b42eb7341796995d1bcb732909412cb28162cbf4f1b",
     "nodes": 2399,
