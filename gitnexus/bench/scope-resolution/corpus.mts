@@ -86,6 +86,16 @@ ${previous(i, (p) => `- (C${p} *)usePrevious:(C${p} *)value { return [[value mak
 `,
     },
   ],
+  // Apex has no imports: every top-level class is visible org-wide, so the
+  // cross-file chain resolves through the workspace channel by class name.
+  apex: (i, n) => ({
+    path: `force-app/main/default/classes/C${i}.cls`,
+    content: `public class C${i} {
+${members(n, (j) => `  public C${i} make${i}_${j}() { return this; }`)}
+${previous(i, (p) => `  public C${p} usePrevious(C${p} value) { return value.make${p}_0().make${p}_1(); }`)}
+}
+`,
+  }),
   csharp: (i, n) => ({
     path: `src/P${i}/C${i}.cs`,
     content: `${previous(i, (p) => `using P${p};`)}
