@@ -236,11 +236,10 @@ export interface PipelineOptions {
   parsedFileStorePath?: string;
   /**
    * Incremental-indexing parse cache. When provided:
-   *   - The parse phase looks up each chunk's content hash in
-   *     `parseCache.entries`. On hit, it replays the cached
-   *     `ParseWorkerResult[]` instead of dispatching to workers.
-   *   - On miss, it runs the workers as today and stores the new
-   *     results in `parseCache.entries` keyed by chunk hash.
+   *   - Each file's path, content and parser identity select a complete pair
+   *     of cached facts and scopes, independently of chunk membership.
+   *   - Only misses go to the existing batched worker pool. Workers encode
+   *     file-local output into bounded packs staged for publication.
    * The caller (`run-analyze.ts`) is responsible for loading the cache
    * before the pipeline runs and persisting it after. Cache survives
    * `--force` because keys are content-addressed.
@@ -393,18 +392,25 @@ export function buildPhaseList(options?: PipelineOptions): PipelinePhase[] {
 
 // ── Pipeline orchestrator ─────────────────────────────────────────────────
 
+// The graph keeps this lookup callback alive. Give it its own closure scope so
+// retaining a graph cannot also retain the pipeline's phase results and context.
+const createPipelineGraph = (repoPath: string) => {
+  const integrity = createRelationshipIntegrityCollector(
+    repoPath,
+    (id) => graph.getNode(id),
+    (filePath, text) => getProviderForFile(filePath)?.referenceSourceText?.(text, filePath),
+  );
+  const graph: ReturnType<typeof createKnowledgeGraph> = createKnowledgeGraph(integrity.inspect);
+  return { graph, integrity };
+};
+
 export const runPipelineFromRepo = async (
   repoPath: string,
   onProgress: (progress: PipelineProgress) => void,
   options?: PipelineOptions,
 ): Promise<PipelineResult> => {
   options?.signal?.throwIfAborted();
-  const integrity = createRelationshipIntegrityCollector(
-    repoPath,
-    (id) => graph.getNode(id),
-    (filePath, text) => getProviderForFile(filePath)?.referenceSourceText?.(text, filePath),
-  );
-  const graph = createKnowledgeGraph(integrity.inspect);
+  const { graph, integrity } = createPipelineGraph(repoPath);
   const pipelineStart = Date.now();
 
   // Streamed structural emit (#2680). The sink is a write-routing façade over
