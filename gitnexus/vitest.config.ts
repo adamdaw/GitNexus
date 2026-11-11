@@ -72,6 +72,7 @@ export default defineConfig({
         test: {
           name: 'lbug-db',
           include: [
+            'test/integration/dangling-owner-edges.test.ts',
             'test/integration/class-expression-owners.test.ts',
             'test/integration/rename-provider-*.test.ts',
             'test/integration/pdg-explicit-owner.test.ts',
@@ -85,6 +86,7 @@ export default defineConfig({
             'test/integration/go-incremental-method-owners.test.ts',
             'test/integration/query-symbol-integrity.test.ts',
             'test/integration/mcp-index-generation.test.ts',
+            'test/integration/mcp-refresh-index-e2e.test.ts',
             'test/integration/fts-repair-warm-session.test.ts',
             'test/integration/impact-epistemic-lower-bound.test.ts',
             'test/integration/impact-scope-omission-persistence.test.ts',
@@ -183,6 +185,7 @@ export default defineConfig({
           sequence: { groupOrder: 3 },
           include: ['test/**/*.test.ts'],
           exclude: [
+            'test/integration/dangling-owner-edges.test.ts',
             'test/integration/class-expression-owners.test.ts',
             'test/integration/rename-provider-*.test.ts',
             'test/integration/pdg-explicit-owner.test.ts',
@@ -196,6 +199,7 @@ export default defineConfig({
             'test/integration/go-incremental-method-owners.test.ts',
             'test/integration/query-symbol-integrity.test.ts',
             'test/integration/mcp-index-generation.test.ts',
+            'test/integration/mcp-refresh-index-e2e.test.ts',
             'test/integration/fts-repair-warm-session.test.ts',
             'test/integration/impact-epistemic-lower-bound.test.ts',
             'test/integration/impact-scope-omission-persistence.test.ts',
