@@ -49,7 +49,11 @@ describe('communitiesPhase', () => {
     expect(memberOf.filter((r) => graph.getNode(r.targetId)?.label !== 'Community')).toEqual([]);
     expect(memberOf.map((r) => r.sourceId).sort()).toEqual(['a', 'b']);
     // Skill generation groups singleton memberships by folder when no
-    // community forms, so the detection result keeps them.
-    expect(communityResult.memberships.map((m) => m.nodeId).sort()).toEqual(['a', 'b', 'lone']);
+    // community forms, so the detection result keeps them as raw assignments.
+    expect((communityResult.rawMemberships ?? []).map((m) => m.nodeId).sort()).toEqual([
+      'a',
+      'b',
+      'lone',
+    ]);
   });
 });

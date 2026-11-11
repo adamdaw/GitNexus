@@ -12,7 +12,16 @@ import os from 'os';
 import { execFile, execFileSync } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
-import { parseTree, modify, applyEdits, ParseError, parse as parseJsonc } from 'jsonc-parser';
+import {
+  parseTree,
+  findNodeAtLocation,
+  getNodeValue,
+  modify,
+  applyEdits,
+  ParseError,
+  parse as parseJsonc,
+} from 'jsonc-parser';
+import { parse as parseToml, TomlError } from 'smol-toml';
 import { getGlobalDir } from '../storage/repo-manager.js';
 import {
   getEditorTargets,
@@ -91,6 +100,7 @@ const CODING_AGENT_IDS = {
   codebuddy: 'codebuddy',
   qoder: 'qoder',
   codex: 'codex',
+  droid: 'droid',
 } as const satisfies Record<EditorId, EditorId>;
 const SUPPORTED_CODING_AGENTS = Object.values(CODING_AGENT_IDS);
 
@@ -197,7 +207,8 @@ async function mergeJsoncFile(
   filePath: string,
   keyPath: string[],
   value: unknown,
-): Promise<boolean> {
+  options?: { preserveHttpEntry?: boolean },
+): Promise<boolean | 'preserved-http'> {
   let raw: string;
   try {
     raw = await fs.readFile(filePath, 'utf-8');
@@ -223,6 +234,15 @@ async function mergeJsoncFile(
   const tree = parseTree(raw, parseErrors);
 
   if (tree && tree.type === 'object' && parseErrors.length === 0) {
+    const existingNode = options?.preserveHttpEntry ? findNodeAtLocation(tree, keyPath) : undefined;
+    const existingEntry = existingNode === undefined ? undefined : getNodeValue(existingNode);
+    if (
+      existingEntry !== null &&
+      typeof existingEntry === 'object' &&
+      typeof (existingEntry as Record<string, unknown>).url === 'string'
+    ) {
+      return 'preserved-http';
+    }
     const formattingOptions = detectIndentation(raw);
     const edits = modify(raw, keyPath, value, { formattingOptions });
     const result = applyEdits(raw, edits);
@@ -289,8 +309,12 @@ async function setupCursor(result: SetupResult): Promise<void> {
 
   const { file: mcpPath, keyPath } = mcpTarget('cursor');
   try {
-    const ok = await mergeJsoncFile(mcpPath, keyPath, getMcpEntry());
-    if (ok) {
+    const ok = await mergeJsoncFile(mcpPath, keyPath, getMcpEntry(), {
+      preserveHttpEntry: true,
+    });
+    if (ok === 'preserved-http') {
+      result.configured.push('Cursor (existing HTTP MCP entry kept)');
+    } else if (ok) {
       result.configured.push('Cursor');
     } else {
       result.errors.push('Cursor: mcp.json is corrupt — skipping to preserve existing content');
@@ -310,8 +334,12 @@ async function setupClaudeCode(result: SetupResult): Promise<void> {
   // Claude Code stores MCP config in ~/.claude.json
   const { file: mcpPath, keyPath } = mcpTarget('claude');
   try {
-    const ok = await mergeJsoncFile(mcpPath, keyPath, getMcpEntry());
-    if (ok) {
+    const ok = await mergeJsoncFile(mcpPath, keyPath, getMcpEntry(), {
+      preserveHttpEntry: true,
+    });
+    if (ok === 'preserved-http') {
+      result.configured.push('Claude Code (existing HTTP MCP entry kept)');
+    } else if (ok) {
       result.configured.push('Claude Code');
     } else {
       result.errors.push(
@@ -939,6 +967,59 @@ async function installQoderSkills(result: SetupResult): Promise<void> {
 }
 
 /**
+ * Configure the GitNexus MCP server for Factory Droid.
+ *
+ * Factory stores user-scope MCP config in ~/.factory/mcp.json using the same
+ * `{ mcpServers: { <name>: {...} } }` JSONC shape as Cursor/Claude
+ * (https://docs.factory.ai/cli/configuration/mcp), so we reuse mergeJsoncFile
+ * rather than shelling out to `droid mcp add` — that keeps setup working even
+ * when the `droid` binary isn't on PATH.
+ */
+async function setupDroid(result: SetupResult): Promise<void> {
+  const factoryDir = path.join(os.homedir(), '.factory');
+  if (!(await dirExists(factoryDir))) {
+    result.skipped.push('Factory Droid (not installed)');
+    return;
+  }
+
+  const { file: mcpPath, keyPath } = mcpTarget('droid');
+  try {
+    const ok = await mergeJsoncFile(mcpPath, keyPath, getMcpEntry());
+    if (ok) {
+      result.configured.push('Factory Droid');
+    } else {
+      result.errors.push(
+        'Factory Droid: mcp.json is corrupt — skipping to preserve existing content',
+      );
+    }
+  } catch (err: any) {
+    result.errors.push(`Factory Droid: ${err.message}`);
+  }
+}
+
+/**
+ * Install global Factory Droid skills to ~/.factory/skills/{name}/SKILL.md
+ * (https://docs.factory.ai/cli/configuration/skills — same SKILL.md layout as
+ * Claude Code).
+ */
+async function installDroidSkills(result: SetupResult): Promise<void> {
+  const factoryDir = path.join(os.homedir(), '.factory');
+  if (!(await dirExists(factoryDir))) return;
+
+  const skillsDir = skillTarget('droid').dir;
+  try {
+    const installed = await installSkillsTo(skillsDir);
+    if (installed.length > 0) {
+      result.configured.push(
+        `Factory Droid skills (${installed.length} skills → ~/.factory/skills/)`,
+      );
+    }
+  } catch (err: any) {
+    result.errors.push(`Factory Droid skills: ${err.message}`);
+  }
+}
+
+/**
  * Build a TOML section for Codex MCP config (~/.codex/config.toml).
  */
 function getCodexMcpTomlSection(): string {
@@ -974,10 +1055,44 @@ async function upsertCodexConfigToml(configPath: string): Promise<void> {
   await fs.writeFile(configPath, `${nextContent.trimEnd()}\n`, 'utf-8');
 }
 
+async function codexHasHttpMcpEntry(configPath: string): Promise<boolean> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(configPath, 'utf-8');
+  } catch (err) {
+    if (isEnoent(err)) return false;
+    throw err;
+  }
+  const config = parseToml(raw);
+  const servers = config.mcp_servers;
+  if (servers === null || typeof servers !== 'object') return false;
+  const entry = (servers as Record<string, unknown>).gitnexus;
+  return (
+    entry !== null &&
+    typeof entry === 'object' &&
+    typeof (entry as Record<string, unknown>).url === 'string'
+  );
+}
+
 async function setupCodex(result: SetupResult): Promise<void> {
-  const codexDir = path.join(os.homedir(), '.codex');
-  if (!(await dirExists(codexDir))) {
+  const configPath = getEditorTargets().codex.configFile;
+  const codexDir = path.dirname(configPath);
+  if (!process.env.CODEX_HOME && !(await dirExists(codexDir))) {
     result.skipped.push('Codex (not installed)');
+    return;
+  }
+
+  try {
+    if (await codexHasHttpMcpEntry(configPath)) {
+      result.configured.push('Codex (existing HTTP MCP entry kept)');
+      return;
+    }
+  } catch (err) {
+    result.errors.push(
+      err instanceof TomlError
+        ? `Codex: invalid config.toml (line ${err.line}, column ${err.column}); MCP entry unchanged`
+        : `Codex: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return;
   }
 
@@ -994,9 +1109,8 @@ async function setupCodex(result: SetupResult): Promise<void> {
   }
 
   try {
-    const configPath = getEditorTargets().codex.configFile;
     await upsertCodexConfigToml(configPath);
-    result.configured.push('Codex (MCP added to ~/.codex/config.toml)');
+    result.configured.push('Codex (MCP added to active config.toml)');
   } catch (err: any) {
     result.errors.push(`Codex: ${err.message}`);
   }
@@ -1195,7 +1309,7 @@ async function installOpenCodeSkills(result: SetupResult): Promise<void> {
  * Install global Codex skills to ~/.agents/skills/gitnexus/
  */
 async function installCodexSkills(result: SetupResult): Promise<void> {
-  const codexDir = path.join(os.homedir(), '.codex');
+  const codexDir = path.dirname(getEditorTargets().codex.configFile);
   if (!(await dirExists(codexDir))) return;
 
   const skillsDir = skillTarget('codex').dir;
@@ -1239,6 +1353,7 @@ export const setupCommand = async (options?: { codingAgent?: string[] | string }
   if (selected.has('codebuddy')) await setupCodeBuddy(result);
   if (selected.has('qoder')) await setupQoder(result);
   if (selected.has('codex')) await setupCodex(result);
+  if (selected.has('droid')) await setupDroid(result);
 
   // Install global skills for platforms that support them
   if (selected.has('claude')) {
@@ -1257,6 +1372,10 @@ export const setupCommand = async (options?: { codingAgent?: string[] | string }
     await installCodexSkills(result);
     await installClaudeSchemaHooks(result, 'codex');
   }
+  // MCP + skills only. Factory hooks (Execute matcher, PostToolUse) ship in the
+  // standalone gitnexus-factory-plugin instead of the setup path — add a droid
+  // hook target + adapter here if setup-installed hooks are wanted.
+  if (selected.has('droid')) await installDroidSkills(result);
 
   // Print results
   if (result.configured.length > 0) {

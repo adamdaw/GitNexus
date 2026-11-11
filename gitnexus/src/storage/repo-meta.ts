@@ -33,6 +33,7 @@ import type { NameFallbackSummary } from '../core/ingestion/scope-resolution/nam
 import type { UndecidedSatisfactionSummary } from '../core/ingestion/scope-resolution/undecided-satisfaction.js';
 import { resolveStoragePath } from './storage-resolver.js';
 import type { ScopeExtractionFailureSummary } from '../core/ingestion/scope-resolution/scope-extraction-failures.js';
+import type { StoredRebuildReason } from '../core/rebuild-reasons.js';
 import { INDEX_METADATA_FILE, LEGACY_METADATA_FILE } from './storage-constants.js';
 
 export { GITNEXUS_DIR, INDEX_METADATA_FILE, LEGACY_METADATA_FILE } from './storage-constants.js';
@@ -41,6 +42,15 @@ export { GITNEXUS_DIR, INDEX_METADATA_FILE, LEGACY_METADATA_FILE } from './stora
 export type ContentRetention = 'full' | 'symbol' | 'none';
 export type FtsProfile = 'full' | 'symbol-no-file-content' | 'name-only';
 export const CONTENT_RETENTION_SCHEMA_VERSION = 1;
+
+/** Exact staged generation whose completed embedding groups can survive a retry. */
+export interface EmbeddingRecoveryReference {
+  /** A run-minted basename within this metadata file's index slot. */
+  stagingFile: string;
+  schemaFingerprint: string;
+  /** Active-window and inherited incomplete groups: never reusable until completed. */
+  unsafeNodeIds: string[];
+}
 
 /**
  * Versioned receipt for the analyzer process that produced an index.
@@ -102,6 +112,12 @@ export interface RepoMeta {
   repoPath: string;
   /** Complete index directory selected for this successful analysis. */
   storagePath?: string;
+  /**
+   * Shared-store checkouts only (#3352): the graph this slot reads when it is
+   * not `<storagePath>/lbug` — a commit graph under the same store. Resolved
+   * and validated by `resolveGraphPath`.
+   */
+  graphPath?: string;
   lastCommit: string;
   indexedAt: string;
   /** Missing on legacy metadata means the upstream-compatible `full` profile. */
@@ -144,6 +160,13 @@ export interface RepoMeta {
    * matches the currently invoked analyzer.
    */
   runnerIdentity?: AnalyzerRunnerIdentity;
+  /** Parser artifacts and extraction options that produced the successful graph.
+   * Missing provenance never authorizes reuse. FTS-only repair preserves it.
+   */
+  parseCacheIdentity?: {
+    base: string;
+    pdg?: { identity: string; maxFunctionLines: number };
+  };
   /**
    * Canonical `origin` remote URL captured at index time. Used to
    * fingerprint the same logical repo across multiple on-disk clones
@@ -453,6 +476,12 @@ export interface RepoMeta {
      *  diagnostics must show whether the write set was already
      *  under-expanded when the run died. */
     droppedImporterChunks?: number;
+    /**
+     * Why this run rebuilds (#3137), so an interrupted rebuild can name its
+     * causes on the next run. Untrusted on read: parse it with
+     * `readStoredRebuildReasons`, since the file is schema-less JSON.
+     */
+    reasons?: StoredRebuildReason[];
   };
   /**
    * Durable embedding-resume marker, written in two distinct situations that
@@ -508,6 +537,11 @@ export interface RepoMeta {
      * subset of their chunks; for `'partial'` they hold none.
      */
     pendingNodeIds?: string[];
+    /**
+     * Interrupted atomic builds only. This does not publish the staged graph
+     * or advance live embedding statistics; it identifies a recovery source.
+     */
+    recovery?: EmbeddingRecoveryReference;
   };
   /**
    * Name of the git branch this index represents (#2106). Absent for the

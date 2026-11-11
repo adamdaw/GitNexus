@@ -17,7 +17,6 @@ import { createClassExtractor } from '../../class-extractors/generic.js';
 import { createFieldExtractor } from '../../field-extractors/generic.js';
 import { createMethodExtractor } from '../../method-extractors/generic.js';
 import { createCallExtractor } from '../../call-extractors/generic.js';
-import { createImportResolver } from '../../import-resolvers/resolver-factory.js';
 
 import { APEX_QUERIES } from './queries.js';
 import { apexClassConfig } from './class-config.js';
@@ -26,7 +25,6 @@ import { apexMethodConfig } from './method-config.js';
 import { apexTypeConfig } from './type-config.js';
 import { apexCallConfig } from './call-config.js';
 import { apexExportChecker } from './export-checker.js';
-import { apexImportConfig } from './import-resolver.js';
 import { emitApexScopeCaptures } from './captures.js';
 import {
   interpretApexTypeBinding,
@@ -41,7 +39,6 @@ export const apexProvider = defineLanguage({
   treeSitterQueries: APEX_QUERIES,
   typeConfig: apexTypeConfig,
   exportChecker: apexExportChecker,
-  importResolver: createImportResolver(apexImportConfig),
   fieldExtractor: createFieldExtractor(apexFieldConfig),
   methodExtractor: createMethodExtractor(apexMethodConfig),
   classExtractor: createClassExtractor(apexClassConfig),

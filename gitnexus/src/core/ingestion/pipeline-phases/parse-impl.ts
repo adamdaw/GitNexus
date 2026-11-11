@@ -15,6 +15,9 @@
  * @module
  */
 
+import type { LanguageProvider } from '../language-provider.js';
+import type { FetchWrapperCall, FetchWrapperReexport } from '../route-extractors/fetch-wrapper.js';
+import { resolveFetchWrapperTargets } from '../route-extractors/fetch-wrapper-index.js';
 import {
   BindingAccumulator,
   enrichExportedTypeMap,
@@ -27,7 +30,6 @@ import {
   loadParseCacheChunk,
   persistParseCacheChunk,
   markParseCacheChunkStale,
-  PARSE_CACHE_VERSION,
   packParseCacheChunks,
 } from '../../../storage/parse-cache.js';
 import {
@@ -41,6 +43,7 @@ import {
   durableChunkHasStaleShards,
 } from '../../../storage/parsedfile-store.js';
 import type { ParseWorkerResult } from '../workers/parse-worker.js';
+import { resolveParseWorkerUrl } from '../workers/worker-entry.js';
 import { DEFAULT_PDG_MAX_FUNCTION_LINES } from '../cfg/collect.js';
 import type { WorkerExtractedData } from '../parsing-processor.js';
 import {
@@ -98,6 +101,10 @@ import type {
   ExtractedRouterInclude,
   ExtractedRouterModuleAlias,
 } from '../route-extractors/fastapi-router-bindings.js';
+import {
+  mergeMountPrefixes,
+  resolveFastAPIRouterPrefixes,
+} from '../route-extractors/fastapi-router-prefixes.js';
 import { normalizeExtractedRoutePath } from '../route-extractors/route-path.js';
 import { resolveOperands } from '../route-extractors/python-const-resolver.js';
 import type { ModuleConstants } from '../route-extractors/constant-resolver.js';
@@ -109,10 +116,9 @@ import {
 import type { KnowledgeGraph } from '../../graph/types.js';
 import type { PipelineOptions } from '../pipeline.js';
 import fs from 'node:fs';
-import { effectiveRamBytes, memoryAutopilotDisabled } from '../utils/effective-ram.js';
+import { heapPressureRemedy, memoryAutopilotDisabled } from '../utils/effective-ram.js';
 import path from 'node:path';
 import v8 from 'node:v8';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { isDev } from '../utils/env.js';
 import { isVerboseIngestionEnabled } from '../utils/verbose.js';
@@ -175,33 +181,6 @@ export function projectParseHeapNeedBytes(parseableFileCount: number): number {
 export function shouldAbortForHeapPressure(heapUsedBytes: number, heapLimitBytes: number): boolean {
   if (memoryAutopilotDisabled()) return false;
   return heapUsedBytes > heapLimitBytes * HEAP_ABORT_FRACTION;
-}
-
-/**
- * The ONE action a user should take when this repository doesn't fit the
- * current heap (#2649). Users hitting memory limits are already frustrated —
- * a menu of env knobs at that moment is noise. Branch on whether the machine
- * itself has more memory to give: if this process's limit sits well below
- * what the RAM-aware auto-sizer would grant (an inherited NODE_OPTIONS pin or
- * explicit flag), the fix is to drop the pin — gitnexus sizes itself.
- * Otherwise the machine is the ceiling and only scope or hardware helps.
- * Escape hatches (GITNEXUS_MEMORY etc.) stay in the README env table.
- */
-export function heapPressureRemedy(heapLimitBytes: number): string {
-  // Effective RAM honors a real cgroup limit — raw os.totalmem() told users
-  // inside an 8GB-limited container on a 64GB host that "this machine has
-  // more memory available", an advice loop with no exit (#2649 review).
-  const autoCapBytes = effectiveRamBytes() * 0.75;
-  if (heapLimitBytes < autoCapBytes * 0.9) {
-    return (
-      `This machine has more memory available: re-run without the --max-old-space-size ` +
-      `pin (NODE_OPTIONS or node flag) — gitnexus sizes its heap to the machine automatically.`
-    );
-  }
-  return (
-    `This machine is at its memory ceiling: exclude generated or vendored directories ` +
-    `via .gitnexusignore, or analyze on a machine with more memory.`
-  );
 }
 
 /** Max bytes of source content to load per parse cache pack.
@@ -474,12 +453,15 @@ export async function runChunkedParseAndResolve(
   pipelineStart: number,
   onProgress: ProgressFn,
   options?: PipelineOptions,
+  capturedResolutionConfigs?: ReadonlyMap<SupportedLanguages, unknown>,
 ): Promise<{
   exportedTypeMap: ExportedTypeMap;
   allFetchCalls: ExtractedFetchCall[];
   allFetchWrapperDefs: FetchWrapperDef[];
+  allFetchWrapperCalls: FetchWrapperCall[];
   allExtractedRoutes: ExtractedRoute[];
   allDecoratorRoutes: ExtractedDecoratorRoute[];
+  selectedRoutes: ReadonlySet<ExtractedRoute | ExtractedDecoratorRoute>;
   allToolDefs: ExtractedToolDef[];
   allORMQueries: ExtractedORMQuery[];
   bindingAccumulator: BindingAccumulator;
@@ -740,32 +722,11 @@ export async function runChunkedParseAndResolve(
   const getOrCreateWorkerPool = (): WorkerPool => {
     if (workerPool) return workerPool;
     try {
-      // Test-only injection: integration tests pass a custom worker script URL
-      // via `workerUrlForTest` so they can drive the chunk-loop with
-      // deterministically-misbehaving workers without mocking the module import
-      // graph. When unset, the normal src/ → dist/ resolution runs.
-      let workerUrl =
-        options?.workerUrlForTest ?? new URL('../workers/parse-worker.js', import.meta.url);
-      // When running under vitest, import.meta.url points to src/ where no .js exists.
-      // Fall back to the compiled dist/ worker so the pool can spawn real worker threads.
-      const thisDir = fileURLToPath(new URL('.', import.meta.url));
-      if (!options?.workerUrlForTest && !fs.existsSync(fileURLToPath(workerUrl))) {
-        const distWorker = path.resolve(
-          thisDir,
-          '..',
-          '..',
-          '..',
-          '..',
-          'dist',
-          'core',
-          'ingestion',
-          'workers',
-          'parse-worker.js',
-        );
-        if (fs.existsSync(distWorker)) {
-          workerUrl = pathToFileURL(distWorker);
-        }
-      }
+      // Reuse the exact entry captured before cache lookup. Direct pipeline
+      // callers use the same resolver without loading a worker on cache hits.
+      const workerUrl =
+        options?.parseWorkerUrl ??
+        resolveParseWorkerUrl(import.meta.url, options?.workerUrlForTest);
       // Thread the ParsedFile store path into the pool so workers write their
       // own shards (#1983 parallel serialization). `parsedFileStorePath` is
       // declared below but this closure only runs from inside the chunk loop,
@@ -801,9 +762,12 @@ export async function runChunkedParseAndResolve(
   const exportedTypeMap: ExportedTypeMap = new Map();
   const bindingAccumulator = new BindingAccumulator();
   const allFetchCalls: ExtractedFetchCall[] = [];
-  const allFetchWrapperDefs: FetchWrapperDef[] = [];
+  let allFetchWrapperDefs: FetchWrapperDef[] = [];
+  let allFetchWrapperCalls: FetchWrapperCall[] = [];
+  const allFetchWrapperReexports: FetchWrapperReexport[] = [];
   const allExtractedRoutes: ExtractedRoute[] = [];
   const allDecoratorRoutes: ExtractedDecoratorRoute[] = [];
+  const allRouteFacts: { filePath: string; facts: unknown; routePosition: number }[] = [];
   const allRouterIncludes: ExtractedRouterInclude[] = [];
   const allRouterImports: ExtractedRouterImport[] = [];
   const allRouterConstructorPrefixes: ExtractedRouterConstructorPrefix[] = [];
@@ -836,20 +800,26 @@ export async function runChunkedParseAndResolve(
   // there is no storage path (tests / direct pipeline calls), we fall back to
   // retaining them in `allParsedFiles` (small-repo path, preserves prior
   // behavior). Cleared up-front so a prior run's shards never leak in.
-  const parsedFileStorePath = parseCache?.storagePath;
+  const parsedFileStorePath = options?.parsedFileStorePath ?? parseCache?.writeStoragePath;
   if (parsedFileStorePath) await clearParsedFileStore(parsedFileStorePath);
   // Durable, content-addressed ParsedFile store (#2038 warm-cache coverage) —
   // a sibling of the run-scoped store, NOT cleared per run. Workers write a
   // shard per chunk hash; on a warm parse-cache hit we restore the chunk's
   // shards into the run-scoped store so scope-resolution streams them without
   // re-parsing. `durableHitEntries` is the prior run's path-coverage index,
-  // version-gated by PARSE_CACHE_VERSION (a mismatch ⇒ empty ⇒ every chunk
+  // gated by the same base identity as the worker-result cache (a mismatch ⇒ every chunk
   // re-dispatches, which repopulates the durable store).
   const durableParsedFileDir =
-    parsedFileStorePath !== undefined ? getDurableParsedFileDir(parsedFileStorePath) : undefined;
+    parseCache?.writeStoragePath !== undefined
+      ? getDurableParsedFileDir(parseCache.writeStoragePath)
+      : undefined;
+  const durableReadStoragePath = parseCache?.storagePath;
   const durableHitEntries =
-    durableParsedFileDir !== undefined
-      ? await loadDurableParsedFileIndex(durableParsedFileDir, PARSE_CACHE_VERSION)
+    parseCache && durableReadStoragePath !== undefined
+      ? await loadDurableParsedFileIndex(
+          getDurableParsedFileDir(durableReadStoragePath),
+          parseCache.identity.base,
+        )
       : new Map<string, ReadonlySet<string>>();
   let chunkCacheHits = 0;
   let chunkCacheMisses = 0;
@@ -1023,12 +993,20 @@ export async function runChunkedParseAndResolve(
         if (chunkWorkerData.fetchCalls?.length) {
           for (const item of chunkWorkerData.fetchCalls) allFetchCalls.push(item);
         }
+        for (const item of chunkWorkerData.fetchWrapperCalls ?? []) allFetchWrapperCalls.push(item);
+        for (const item of chunkWorkerData.fetchWrapperReexports ?? [])
+          allFetchWrapperReexports.push(item);
         if (chunkWorkerData.fetchWrapperDefs?.length) {
           for (const item of chunkWorkerData.fetchWrapperDefs) allFetchWrapperDefs.push(item);
         }
         if (chunkWorkerData.routes?.length) {
           for (const item of chunkWorkerData.routes) allExtractedRoutes.push(item);
         }
+        for (const item of chunkWorkerData.routeFacts ?? [])
+          allRouteFacts.push({
+            ...item,
+            routePosition: item.routePosition + allDecoratorRoutes.length,
+          });
         if (chunkWorkerData.decoratorRoutes?.length) {
           for (const item of chunkWorkerData.decoratorRoutes) allDecoratorRoutes.push(item);
         }
@@ -1371,6 +1349,7 @@ export async function runChunkedParseAndResolve(
         }));
         chunkHash = computeChunkHash(
           entries,
+          parseCache.identity,
           // Only worker-visible pdg config participates in the key —
           // pdgMaxEdgesPerFunction is emit-time-only and deliberately
           // excluded (see PdgCacheKey in parse-cache.ts; #2099 F3). The line
@@ -1407,10 +1386,15 @@ export async function runChunkedParseAndResolve(
         cachedRaw !== undefined &&
         cachedRaw.length > 0 &&
         chunkHash !== null &&
-        durableParsedFileDir !== undefined &&
+        durableReadStoragePath !== undefined &&
         parsedFileStorePath !== undefined &&
         durableExpectedPaths !== undefined &&
-        (await durableChunkHasShards(parsedFileStorePath, chunkHash, durableExpectedPaths));
+        (await durableChunkHasShards(
+          parsedFileStorePath,
+          chunkHash,
+          durableExpectedPaths,
+          durableReadStoragePath,
+        ));
 
       // Set by whichever branch queues this chunk; drives the close below.
       let roundIsFull = false;
@@ -1588,6 +1572,102 @@ export async function runChunkedParseAndResolve(
     for (const [fp, exports] of graphExports) exportedTypeMap.set(fp, exports);
   }
 
+  const routeFilePaths = new Set(allPaths);
+  const routeResolutionConfigs = new Map<SupportedLanguages, unknown>();
+  const resolutionFilePaths = new Set<string>();
+  for (const facts of [
+    allRouteFacts,
+    allFetchWrapperDefs,
+    allFetchWrapperCalls,
+    allFetchWrapperReexports,
+  ] as const)
+    for (const { filePath } of facts) resolutionFilePaths.add(filePath);
+  for (const filePath of resolutionFilePaths) {
+    const language = getLanguageFromFilename(filePath);
+    if (language === null || routeResolutionConfigs.has(language)) continue;
+    const resolver = SCOPE_RESOLVERS.get(language);
+    routeResolutionConfigs.set(
+      language,
+      capturedResolutionConfigs?.has(language)
+        ? capturedResolutionConfigs.get(language)
+        : resolver?.loadResolutionConfig === undefined
+          ? undefined
+          : await resolver.loadResolutionConfig(repoPath),
+    );
+  }
+  let routeResolutionFiles = allParsedFiles;
+  const resolveRouteModuleTargets = (
+    fromFile: string,
+    moduleSpecifier: string,
+    parsedImport?: ParsedImport,
+  ): readonly string[] => {
+    const language = getLanguageFromFilename(fromFile);
+    if (language === null) return [];
+    const target = SCOPE_RESOLVERS.get(language)?.resolveImportTarget(
+      moduleSpecifier,
+      fromFile,
+      routeFilePaths,
+      routeResolutionConfigs.get(language),
+      { parsedFiles: routeResolutionFiles, ...(parsedImport ? { parsedImport } : {}) },
+    );
+    if (typeof target === 'string') return [target];
+    return target ?? [];
+  };
+  const resolveRouteImportTargets = (
+    parsedImport: ParsedImport,
+    fromFile: string,
+  ): readonly string[] =>
+    resolveRouteModuleTargets(fromFile, parsedImport.targetRaw ?? '', parsedImport);
+
+  const resolvedFetchWrappers = resolveFetchWrapperTargets(
+    allFetchWrapperDefs,
+    allFetchWrapperCalls,
+    resolveRouteModuleTargets,
+    allFetchWrapperReexports,
+  );
+  allFetchWrapperDefs = resolvedFetchWrappers.definitions;
+  allFetchWrapperCalls = resolvedFetchWrappers.calls;
+
+  // A resolver's identity defines a fact family, including providers sharing
+  // one language implementation. Shared ingestion never inspects the payload.
+  const routeFactGroups = new Map<
+    NonNullable<LanguageProvider['resolveRouteFacts']>,
+    typeof allRouteFacts
+  >();
+  for (const file of allRouteFacts) {
+    const resolve = getProviderForFile(file.filePath)?.resolveRouteFacts;
+    if (!resolve) continue;
+    const group = routeFactGroups.get(resolve) ?? [];
+    group.push(file);
+    routeFactGroups.set(resolve, group);
+  }
+  const resolvedRoutesByFile = new Map<string, ExtractedDecoratorRoute[]>();
+  for (const [resolve, files] of routeFactGroups) {
+    for (const route of resolve(files, { resolveImportTargets: resolveRouteModuleTargets })) {
+      const routes = resolvedRoutesByFile.get(route.filePath) ?? [];
+      routes.push(route);
+      resolvedRoutesByFile.set(route.filePath, routes);
+    }
+  }
+  // Preserve the capture slot across sub-batch, chunk and cache boundaries.
+  // Insert before path expansion can change the decorator array's positions.
+  const routesAtPosition = new Map<number, ExtractedDecoratorRoute[]>();
+  for (const file of allRouteFacts) {
+    const routes = resolvedRoutesByFile.get(file.filePath);
+    if (!routes) continue;
+    const slot = routesAtPosition.get(file.routePosition) ?? [];
+    for (const route of routes) slot.push(route);
+    routesAtPosition.set(file.routePosition, slot);
+    resolvedRoutesByFile.delete(file.filePath);
+  }
+  const withResolvedRoutes: ExtractedDecoratorRoute[] = [];
+  for (let index = 0; index <= allDecoratorRoutes.length; index++) {
+    for (const route of routesAtPosition.get(index) ?? []) withResolvedRoutes.push(route);
+    if (index < allDecoratorRoutes.length) withResolvedRoutes.push(allDecoratorRoutes[index]);
+  }
+  allDecoratorRoutes.length = 0;
+  for (const route of withResolvedRoutes) allDecoratorRoutes.push(route);
+
   // FastAPI router-prefix resolution (cross-file).
   //
   // #2391: resolve non-literal FastAPI decorator route paths (imported/composed
@@ -1702,11 +1782,9 @@ export async function runChunkedParseAndResolve(
       m.set(alias.localName, alias.moduleKeyLong);
     }
 
-    // Two parallel maps: long-key (precise) and short-key (basename
-    // fallback). Long-key entries are preferred when the file's own long
-    // key matches; short-key entries match any file with that basename and
-    // remain the fallback when no long key is known (e.g. Shape A includes
-    // without a corresponding import statement).
+    // Exact-file matches handle import-resolved mounts (including nested
+    // routers). These long/short maps preserve the older fallback for mounts
+    // whose import cannot be resolved to one file.
     const prefixesByLongKey = new Map<string, Set<string>>();
     const prefixesByShortKey = new Map<string, Set<string>>();
     // Constructor prefixes are `router`-only (the apply gate below and the
@@ -1714,6 +1792,13 @@ export async function runChunkedParseAndResolve(
     // flat file-key → prefix map suffices — mirrors the group layer's shape.
     const constructorPrefixesByLongKey = new Map<string, string>();
     const constructorPrefixesByShortKey = new Map<string, string>();
+    const { prefixesByFile, resolvedIncludes } = resolveFastAPIRouterPrefixes(
+      allPaths,
+      allRouterIncludes,
+      allRouterImports,
+      allRouterModuleAliases,
+      allRouterConstructorPrefixes,
+    );
 
     const recordPrefix = (target: Map<string, Set<string>>, key: string, prefix: string): void => {
       let set = target.get(key);
@@ -1725,6 +1810,9 @@ export async function runChunkedParseAndResolve(
     };
 
     for (const inc of allRouterIncludes) {
+      // Unprefixed includes only exist as propagation edges; recording `''`
+      // here would shadow a real short-key prefix for the same module.
+      if (resolvedIncludes.has(inc) || !inc.prefix) continue;
       // Shape A: `<module>.router`. The worker emits `routerExpr` already
       // including `.router`, so split it back. We only know a short module
       // key here — the call site doesn't carry the dotted package path. If
@@ -1755,6 +1843,7 @@ export async function runChunkedParseAndResolve(
     }
 
     if (
+      prefixesByFile.size > 0 ||
       prefixesByLongKey.size > 0 ||
       prefixesByShortKey.size > 0 ||
       allRouterConstructorPrefixes.length > 0
@@ -1795,15 +1884,17 @@ export async function runChunkedParseAndResolve(
           expanded.push(dr);
           continue;
         }
-        // Long-key lookup first; only fall back to the short key when no
-        // long-key prefix targets this file. This avoids prefix leakage
-        // between e.g. `api/users.py` and `admin/users.py`.
+        // Exact file matches plus the legacy long/short fallback for mounts
+        // whose import could not be resolved.
         const longKey = fileLongKey(dr.filePath);
         const longPrefixes = longKey ? prefixesByLongKey.get(longKey) : undefined;
         const shortPrefixes = longPrefixes
           ? undefined
           : prefixesByShortKey.get(fileShortKey(dr.filePath));
-        const prefixes = longPrefixes ?? shortPrefixes;
+        const prefixes = mergeMountPrefixes(
+          prefixesByFile.get(dr.filePath.replace(/\\/g, '/')),
+          longPrefixes ?? shortPrefixes,
+        );
         // Constructor prefixes are keyed like include_router prefixes:
         // long-key entries are precise, while short-key entries are only
         // valid for repo-root/single-segment files where `fileLongKey`
@@ -1853,40 +1944,35 @@ export async function runChunkedParseAndResolve(
     'parse-impl-return',
     `exportedTypeMap=${exportedTypeMap.size} parsedFiles=${allParsedFiles.length} nodes=${graph.nodeCount}`,
   );
-  const routeFilePaths = new Set(allPaths);
+  // Route files whose handlers resolve through imports: data route tables, and
+  // routes of a language that resolves its own handlers (`resolveRouteHandler`).
+  // Both need the file's parsed imports and its language's resolution config.
   const dataRouteFilePaths = new Set(
     allDecoratorRoutes
-      .filter((route) => route.source === DATA_ROUTE_TABLE_SOURCE)
+      .filter(
+        (route) =>
+          route.source === DATA_ROUTE_TABLE_SOURCE ||
+          getProviderForFile(route.filePath)?.resolveRouteHandler !== undefined,
+      )
       .map((route) => route.filePath),
   );
-  const routeResolutionConfigs = new Map<SupportedLanguages, unknown>();
   for (const filePath of dataRouteFilePaths) {
     const language = getLanguageFromFilename(filePath);
     if (language === null || routeResolutionConfigs.has(language)) continue;
     const resolver = SCOPE_RESOLVERS.get(language);
     routeResolutionConfigs.set(
       language,
-      resolver?.loadResolutionConfig === undefined
-        ? undefined
-        : await resolver.loadResolutionConfig(repoPath),
+      capturedResolutionConfigs?.has(language)
+        ? capturedResolutionConfigs.get(language)
+        : await resolver?.loadResolutionConfig?.(repoPath),
     );
   }
-  let routeResolutionFiles = allParsedFiles;
   const resolveRouteImportTarget = (
     parsedImport: ParsedImport,
     fromFile: string,
   ): string | null => {
-    const language = getLanguageFromFilename(fromFile);
-    if (language === null) return null;
-    const target = SCOPE_RESOLVERS.get(language)?.resolveImportTarget(
-      parsedImport.targetRaw ?? '',
-      fromFile,
-      routeFilePaths,
-      routeResolutionConfigs.get(language),
-      { parsedFiles: routeResolutionFiles, parsedImport },
-    );
-    if (typeof target === 'string') return target;
-    return target?.length === 1 ? target[0] : null;
+    const targets = resolveRouteImportTargets(parsedImport, fromFile);
+    return targets.length === 1 ? targets[0] : null;
   };
   if (parsedFileStorePath !== undefined && dataRouteFilePaths.size > 0) {
     const byPath = await loadParsedFilesForPaths(parsedFileStorePath, dataRouteFilePaths);
@@ -1907,6 +1993,35 @@ export async function runChunkedParseAndResolve(
   }
   // Part 2 (#2138): resolve each route's handler to a real symbol UID now that
   // the model is fully populated and decorator-route prefixes are finalized.
+  const routeSourceTexts = new Map<string, string | undefined>();
+  const routeSourceTextFor = (filePath: string): string | undefined => {
+    if (!routeSourceTexts.has(filePath)) {
+      try {
+        routeSourceTexts.set(filePath, fs.readFileSync(path.join(repoPath, filePath), 'utf-8'));
+      } catch {
+        routeSourceTexts.set(filePath, undefined);
+      }
+    }
+    return routeSourceTexts.get(filePath);
+  };
+  routeResolutionFiles = routeResolutionFiles.map((parsed) => {
+    if (!dataRouteFilePaths.has(parsed.filePath)) return parsed;
+    const language = getLanguageFromFilename(parsed.filePath);
+    const resolveBinding =
+      language === null ? undefined : SCOPE_RESOLVERS.get(language)?.resolveImportBinding;
+    if (!resolveBinding) return parsed;
+    return {
+      ...parsed,
+      parsedImports: parsed.parsedImports.map((parsedImport) =>
+        resolveBinding(
+          parsedImport,
+          () => resolveRouteImportTargets(parsedImport, parsed.filePath),
+          routeSourceTextFor,
+        ),
+      ),
+    };
+  });
+  const selectedRoutes = new Set<ExtractedRoute | ExtractedDecoratorRoute>();
   const routeHandlerSymbols = resolveRouteHandlerSymbols(
     model,
     allExtractedRoutes,
@@ -1914,19 +2029,24 @@ export async function runChunkedParseAndResolve(
     {
       files: routeResolutionFiles,
       resolveImportTarget: resolveRouteImportTarget,
+      resolveImportTargets: resolveRouteImportTargets,
+      providerRouteHandler: (filePath) => getProviderForFile(filePath)?.resolveRouteHandler,
       isExportedSymbol: (nodeId: string) => graph.getNode(nodeId)?.properties.isExported === true,
       nodeStartLine: (id) => {
         const n = graph.getNode(id);
         return typeof n?.properties.startLine === 'number' ? n.properties.startLine : undefined;
       },
     },
+    selectedRoutes,
   );
   return {
     exportedTypeMap,
     allFetchCalls,
     allFetchWrapperDefs,
+    allFetchWrapperCalls,
     allExtractedRoutes,
     allDecoratorRoutes,
+    selectedRoutes,
     allToolDefs,
     allORMQueries,
     bindingAccumulator,

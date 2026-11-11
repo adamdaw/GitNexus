@@ -304,6 +304,43 @@ describe('processProcesses', () => {
     expect(testProcess).toBeUndefined();
   });
 
+  it('excludes Dart *_test.dart entry points outside the test directory', async () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({
+      id: 'func:dartTestMain',
+      label: 'Function',
+      properties: {
+        name: 'main',
+        filePath: 'lib/pages/dashboard_test.dart',
+        startLine: 1,
+        endLine: 10,
+        isExported: true,
+      },
+    });
+    graph.addNode({
+      id: 'func:dartHelper',
+      label: 'Function',
+      properties: {
+        name: 'loadDashboard',
+        filePath: 'lib/pages/dashboard.dart',
+        startLine: 1,
+        endLine: 5,
+        isExported: true,
+      },
+    });
+    graph.addRelationship({
+      id: 'call:dartTest',
+      sourceId: 'func:dartTestMain',
+      targetId: 'func:dartHelper',
+      type: 'CALLS',
+      confidence: 0.9,
+      reason: '',
+    });
+
+    const result = await processProcesses(graph, []);
+    expect(result.processes.some((p) => p.entryPointId === 'func:dartTestMain')).toBe(false);
+  });
+
   it('filters out low-confidence calls (below 0.5)', async () => {
     const graph = createKnowledgeGraph();
 
@@ -743,6 +780,40 @@ describe('sink-terminated flows (R3-6)', () => {
     const sinks = buildSinkFunctionSet(graph, [{ filePath: 'src/a.ts', lineNumber: 15 }]);
     expect(sinks.has('func:inner')).toBe(true);
     expect(sinks.has('func:outer')).toBe(false);
+  });
+
+  it('prefers the enclosing callable the parser recorded over the innermost span', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({
+      id: 'func:outer',
+      label: 'Function',
+      properties: { name: 'outer', filePath: 'src/a.ts', startLine: 1, endLine: 30 },
+    });
+    graph.addNode({
+      id: 'func:helper',
+      label: 'Function',
+      properties: { name: 'helper', filePath: 'src/a.ts', startLine: 15, endLine: 15 },
+    });
+    const sinks = buildSinkFunctionSet(graph, [
+      { filePath: 'src/a.ts', lineNumber: 15, enclosingId: 'func:outer' },
+    ]);
+    expect(sinks.has('func:outer')).toBe(true);
+    expect(sinks.has('func:helper')).toBe(false);
+  });
+
+  it('does not make a same-line callable a sink for a known module-scope request', () => {
+    const graph = createKnowledgeGraph();
+    graph.addNode({
+      id: 'func:decode',
+      label: 'Function',
+      properties: { name: 'decode', filePath: 'src/a.ts', startLine: 3, endLine: 3 },
+    });
+
+    const sinks = buildSinkFunctionSet(graph, [
+      { filePath: 'src/a.ts', lineNumber: 3, enclosingId: null },
+    ]);
+
+    expect([...sinks]).toEqual([]);
   });
 });
 

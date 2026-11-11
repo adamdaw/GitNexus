@@ -9,6 +9,7 @@ import { closeQueryResults } from './query-result-utils.js';
 import { chunk } from '../../lib/utils.js';
 import { warnIfQueryTextUnbounded } from './query-batch.js';
 import { escapeCypherString } from './cypher-escape.js';
+import { MODULE_MEMBERSHIP_REASON } from '../graph/edge-reasons.js';
 import { withConnLock } from './conn-lock.js';
 import { isWalDriverActive } from './wal-driver-state.js';
 import { KnowledgeGraph } from '../graph/types.js';
@@ -1102,30 +1103,97 @@ const doInitLbug = async (
 
 export type LbugProgressCallback = (message: string) => void;
 
+const throwIfBufferPoolExhausted = (error: unknown, context?: string): void => {
+  const message = error instanceof Error ? error.message : String(error);
+  const remedy = bufferPoolExhaustionRemedy(message);
+  if (remedy) throw new Error(`${context ?? message} ${remedy}`, { cause: error });
+};
+
 /**
  * Run a COPY, retrying once with IGNORE_ERRORS=true (which skips row-level
- * errors) on first failure. On a second failure, hand the RAW retry error to
- * `onError` — each call site formats + slices its own message (#2226 F5: node
- * COPY slices to 200 chars and throws; relationship COPY slices to 80 and warns,
- * so the helper must not pre-format and lose that distinction). `onError` may
- * throw to propagate the failure.
+ * errors) on a non-resource first failure. Buffer exhaustion is fatal, including
+ * retained retry warnings, and bypasses the recoverable-error callback. Log the
+ * original failure and native COPY/warning receipts even when the retry succeeds.
+ * Node COPY requires every row; a skipped-node receipt is a failure. Call sites
+ * retain their own message limits and relationship fallback policy.
  */
 const copyCsvWithRetry = async (
   targetConn: lbug.Connection,
   copyQuery: string,
   onError: (retryErr: unknown) => void,
+  expectedRows?: number,
 ): Promise<void> => {
   try {
     await queryAndDrain(targetConn, copyQuery);
-  } catch {
+  } catch (firstError) {
+    throwIfBufferPoolExhausted(firstError);
+    logger.warn(
+      { err: firstError, copyQuery },
+      'First COPY failure; retrying with IGNORE_ERRORS=true',
+    );
     try {
       const retryQuery = copyQuery.replace(
         'auto_detect=false)',
         'auto_detect=false, IGNORE_ERRORS=true)',
       );
-      await queryAndDrain(targetConn, retryQuery);
+      // Keep COPY and its connection-local warning receipt in one critical
+      // section. Only project diagnostics, never skipped_line_or_record: that
+      // column contains source text. Warnings are retained at a bounded native
+      // limit, so their count is a lower bound, not the exact skipped total.
+      const retry = async () => {
+        await drainQueryResult(await targetConn.query('CALL CLEAR_WARNINGS()'));
+        const result = await readQueryRows(await targetConn.query(retryQuery));
+        const warnings = await readQueryRows(
+          await targetConn.query('CALL SHOW_WARNINGS() RETURN message, file_path, line_number'),
+        );
+        // The native warning limit can be zero; warning rows alone cannot
+        // prove that every CSV row landed. Node COPY exposes its copied count
+        // in the result receipt even when warning retention is disabled.
+        const countReceipt = result
+          .map((row) => String(row.result ?? ''))
+          .map((message) => /^(\d+) tuples have been copied/.exec(message))
+          .find(Boolean);
+        const copiedRows = countReceipt ? Number(countReceipt[1]) : undefined;
+        logger.warn(
+          {
+            copyQuery,
+            copyResult: result,
+            expectedRows,
+            copiedRows,
+            skippedRows:
+              expectedRows !== undefined && copiedRows !== undefined
+                ? Math.max(0, expectedRows - copiedRows)
+                : undefined,
+            retainedWarnings: warnings.length,
+            warningSamples: warnings.slice(0, 5),
+          },
+          'COPY retry completed; retained warnings describe skipped rows (a lower bound)',
+        );
+        // Inspect every retained warning, not just the diagnostic samples.
+        // Exhaustion cannot be recovered by discarding rows or replaying a
+        // partially committed relationship COPY through the fallback path.
+        const resourceWarning = warnings.find((warning) =>
+          bufferPoolExhaustionRemedy(String(warning.message ?? '')),
+        );
+        if (resourceWarning) throw new Error(String(resourceWarning.message));
+        if (expectedRows !== undefined && (copiedRows !== expectedRows || warnings.length > 0)) {
+          throw new Error(
+            `COPY retry skipped rows or could not verify a complete node load ` +
+              `(copied ${copiedRows ?? 'unknown'} of ${expectedRows}; ${warnings.length} retained warning(s))`,
+          );
+        }
+      };
+      await (isSharedSingletonConn(targetConn) ? withConnLock(retry) : retry());
     } catch (retryErr) {
-      onError(retryErr);
+      const firstMessage = firstError instanceof Error ? firstError.message : String(firstError);
+      const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+      const message = `COPY retry failed: ${retryMessage}; first failure: ${firstMessage}`;
+      throwIfBufferPoolExhausted(retryErr, message);
+      onError(
+        new Error(message, {
+          cause: retryErr,
+        }),
+      );
     }
   }
 };
@@ -1195,17 +1263,15 @@ const copyNodeCSVs = async (
     if (!(await stagingCsvExists(csvPath))) throw missingStagingCsvError(table, csvPath, rows);
 
     const copyQuery = getCopyQuery(table, normalizeCopyPath(csvPath));
-    await copyCsvWithRetry(targetConn, copyQuery, (retryErr) => {
-      const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
-      // Pool exhaustion gets a remedy (#2631): the raw binder text gives the
-      // operator nothing to act on, and on non-4K-page hosts (Ascend aarch64,
-      // Apple Silicon) the pool bills up to pageSize/4KiB x faster than the
-      // sizing was calibrated for — name the knob and the mechanism.
-      const remedy = bufferPoolExhaustionRemedy(retryMsg);
-      throw new Error(
-        `COPY failed for ${table}: ${retryMsg.slice(0, 200)}${remedy ? ` ${remedy}` : ''}`,
-      );
-    });
+    await copyCsvWithRetry(
+      targetConn,
+      copyQuery,
+      (retryErr) => {
+        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        throw new Error(`COPY failed for ${table}: ${retryMsg.slice(0, 200)}`);
+      },
+      rows,
+    );
   }
 };
 
@@ -1402,7 +1468,6 @@ export const loadGraphToLbug = async (
 
   const insertedRels = totalValidRels + (graphEmitManifest?.totalRows ?? 0);
   const warnings: string[] = [];
-  let poolRemedyIssued = false;
   if (insertedRels > 0) {
     log(`Loading edges: ${insertedRels.toLocaleString()} across ${copyJobs.length} CSV files`);
 
@@ -1435,17 +1500,6 @@ export const loadGraphToLbug = async (
       await copyCsvWithRetry(writeConn, copyQuery, (retryErr) => {
         const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
         warnings.push(`${fromLabel}->${toLabel} (${rows} edges): ${retryMsg.slice(0, 80)}`);
-        // One remedy per bulk load, not per pair (#2631): pool exhaustion
-        // repeats for every remaining pair once it starts. logger.warn, not
-        // just warnings.push — the returned warnings array has no consumer at
-        // any call site, so a push alone would leave the remedy invisible
-        // while the row-by-row fallback quietly degrades the load.
-        const remedy = poolRemedyIssued ? undefined : bufferPoolExhaustionRemedy(retryMsg);
-        if (remedy) {
-          poolRemedyIssued = true;
-          warnings.push(remedy);
-          logger.warn(remedy);
-        }
         failedPairEdges += rows;
         failedPairCsvPaths.add(pairCsvPath);
       });
@@ -1644,8 +1698,9 @@ export const fallbackRelationshipInserts = async (
         CREATE (a)-[:${REL_TABLE_NAME} {type: ${formatCypherValue(relType)}, confidence: ${confidence}, reason: ${formatCypherValue(reason)}, step: ${step}, staticGated: ${staticGated}}]->(b)
       `,
       );
-    } catch {
-      // skip
+    } catch (error) {
+      throwIfBufferPoolExhausted(error);
+      // Ordinary per-row failures remain skippable.
     }
   }
 };
@@ -1677,7 +1732,7 @@ export const getCopyQuery = (table: NodeTableName, filePath: string): string => 
     return `COPY ${t}(id, name, filePath, startLine, endLine, level, content, description) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
   if (table === 'Route') {
-    return `COPY ${t}(id, name, filePath, responseKeys, errorKeys, middleware, method, handlerSymbolId, runtimeConfirmed, runtimeSource, runtimeStatus) FROM "${filePath}" ${COPY_CSV_OPTS}`;
+    return `COPY ${t}(id, name, filePath, responseKeys, errorKeys, middleware, method, handlerSymbolId, runtimeConfirmed, runtimeSource, runtimeStatus, unverifiedConsumers) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
   if (table === 'Tool') {
     return `COPY ${t}(id, name, filePath, description) FROM "${filePath}" ${COPY_CSV_OPTS}`;
@@ -1689,7 +1744,7 @@ export const getCopyQuery = (table: NodeTableName, filePath: string): string => 
     // Taint/PDG substrate (issue #2080) — no name column. `callees` is the
     // statement-precise inter-procedural reach substrate (space-joined leaf names);
     // `calleeIds` is its SOUND parallel (space-joined resolved callee ids, #2227).
-    return `COPY ${t}(id, filePath, startLine, endLine, text, callees, calleeIds) FROM "${filePath}" ${COPY_CSV_OPTS}`;
+    return `COPY ${t}(id, filePath, startLine, endLine, text, callees, calleeIds, ownerId) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
   if (table === 'Class') {
     return `COPY ${t}(id, name, filePath, startLine, endLine, isExported, content, description, frameworkAnnotations) FROM "${filePath}" ${COPY_CSV_OPTS}`;
@@ -1752,7 +1807,7 @@ export const insertNodeToLbug = async (
     } else if (label === 'BasicBlock') {
       // Taint/PDG substrate (issue #2080) — no name column. `calleeIds` (#2227)
       // is the sound resolved-id parallel to the leaf-name `callees` set.
-      query = `CREATE (n:BasicBlock {id: ${formatCypherValue(properties.id)}, filePath: ${formatCypherValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, text: ${formatCypherValue(properties.text || '')}, callees: ${formatCypherValue(properties.callees || '')}, calleeIds: ${formatCypherValue(properties.calleeIds || '')}})`;
+      query = `CREATE (n:BasicBlock {id: ${formatCypherValue(properties.id)}, filePath: ${formatCypherValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, text: ${formatCypherValue(properties.text || '')}, callees: ${formatCypherValue(properties.callees || '')}, calleeIds: ${formatCypherValue(properties.calleeIds || '')}, ownerId: ${formatCypherValue(properties.ownerId || '')}})`;
     } else if (label === 'Class') {
       const descPart = properties.description
         ? `, description: ${formatCypherValue(properties.description)}`
@@ -1852,7 +1907,7 @@ export const batchInsertNodesToLbug = async (
         } else if (label === 'BasicBlock') {
           // Taint/PDG substrate (issue #2080) — no name column. `calleeIds`
           // (#2227) is the sound resolved-id parallel to the `callees` set.
-          query = `MERGE (n:BasicBlock {id: ${formatCypherValue(properties.id)}}) SET n.filePath = ${formatCypherValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.text = ${formatCypherValue(properties.text || '')}, n.callees = ${formatCypherValue(properties.callees || '')}, n.calleeIds = ${formatCypherValue(properties.calleeIds || '')}`;
+          query = `MERGE (n:BasicBlock {id: ${formatCypherValue(properties.id)}}) SET n.filePath = ${formatCypherValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.text = ${formatCypherValue(properties.text || '')}, n.callees = ${formatCypherValue(properties.callees || '')}, n.calleeIds = ${formatCypherValue(properties.calleeIds || '')}, n.ownerId = ${formatCypherValue(properties.ownerId || '')}`;
         } else if (label === 'Class') {
           const descPart = properties.description
             ? `, n.description = ${formatCypherValue(properties.description)}`
@@ -2982,6 +3037,30 @@ export const restoreDerivedRels = async (rels: readonly DerivedRelSnapshot[]): P
 export const getEmbeddingTableName = (): string => EMBEDDING_TABLE_NAME;
 
 /**
+ * The two importer queries for a `b.filePath <predicate>` target set:
+ *   1. direct importers — any IMPORTS edge into a target file;
+ *   2. module co-members — files with a `MODULE_MEMBERSHIP_REASON` edge to a
+ *      `Module` node that a target file also has one. Whole-module visibility
+ *      means a declaration added to one member can change how any other member
+ *      resolves, so co-members are importers of each other. The hub form keeps
+ *      this linear in module size (#3355).
+ */
+const importerCyphers = (targetPredicate: string): string[] => [
+  `
+    MATCH (a)-[r:${REL_TABLE_NAME}]->(b)
+    WHERE r.type = 'IMPORTS' AND b.filePath ${targetPredicate}
+    RETURN DISTINCT a.filePath AS importer
+  `,
+  `
+    MATCH (a:File)-[r1:${REL_TABLE_NAME}]->(m:Module)<-[r2:${REL_TABLE_NAME}]-(b:File)
+    WHERE r1.type = 'IMPORTS' AND r1.reason = '${MODULE_MEMBERSHIP_REASON}'
+      AND r2.type = 'IMPORTS' AND r2.reason = '${MODULE_MEMBERSHIP_REASON}'
+      AND b.filePath ${targetPredicate} AND a.filePath <> b.filePath
+    RETURN DISTINCT a.filePath AS importer
+  `,
+];
+
+/**
  * Return the distinct repo-relative paths of files that import
  * `targetFilePath` according to the IMPORTS edges currently in the
  * DB. Used by the incremental writeback path to expand the
@@ -3002,31 +3081,29 @@ export const queryImporters = async (targetFilePath: string): Promise<string[]> 
     throw new Error('LadybugDB not initialized. Call initLbug first.');
   }
   const escaped = escapeCypherString(targetFilePath);
-  const cypher = `
-    MATCH (a)-[r:${REL_TABLE_NAME}]->(b)
-    WHERE r.type = 'IMPORTS' AND b.filePath = '${escaped}'
-    RETURN DISTINCT a.filePath AS importer
-  `;
+  const cyphers = importerCyphers(`= '${escaped}'`);
   // Runs inside the connection lock: queryImporters is called in the importer-BFS
   // loop during incremental --pdg writeback while the WAL driver is live, so an
   // unlocked conn.query here could race a concurrent CHECKPOINT on the singleton.
   return withConnLock(async () => {
-    let queryResult: lbug.QueryResult | lbug.QueryResult[] | undefined;
-    try {
-      queryResult = await c.query(cypher);
-      const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
-      const rows = await result.getAll();
-      const out: string[] = [];
-      for (const row of rows) {
-        const v = (row as { importer?: unknown }).importer;
-        if (typeof v === 'string' && v.length > 0) out.push(v);
+    const out = new Set<string>();
+    for (const cypher of cyphers) {
+      let queryResult: lbug.QueryResult | lbug.QueryResult[] | undefined;
+      try {
+        queryResult = await c.query(cypher);
+        const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
+        const rows = await result.getAll();
+        for (const row of rows) {
+          const v = (row as { importer?: unknown }).importer;
+          if (typeof v === 'string' && v.length > 0) out.add(v);
+        }
+      } catch {
+        return [];
+      } finally {
+        if (queryResult) await closeQueryResults(queryResult);
       }
-      return out;
-    } catch {
-      return [];
-    } finally {
-      if (queryResult) await closeQueryResults(queryResult);
     }
+    return [...out];
   });
 };
 
@@ -3064,21 +3141,24 @@ export const queryImportersBatch = async (
   const importers = new Set<string>();
   for (const [chunkIndex, batch] of chunk(targetFilePaths, DELETE_FILES_CHUNK_SIZE).entries()) {
     const listLiteral = `[${batch.map((p) => `'${escapeCypherString(p)}'`).join(', ')}]`;
-    const cypher = `
-      MATCH (a)-[r:${REL_TABLE_NAME}]->(b)
-      WHERE r.type = 'IMPORTS' AND b.filePath IN ${listLiteral}
-      RETURN DISTINCT a.filePath AS importer
-    `;
     await withConnLock(async () => {
       let queryResult: lbug.QueryResult | lbug.QueryResult[] | undefined;
       try {
-        queryResult = await c.query(cypher);
-        const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
-        const rows = await result.getAll();
-        for (const row of rows) {
-          const v = (row as { importer?: unknown }).importer;
-          if (typeof v === 'string' && v.length > 0) importers.add(v);
+        // Collect into a chunk-local set so a failure on the second query
+        // drops the whole chunk, as it did when there was one query.
+        const found: string[] = [];
+        for (const cypher of importerCyphers(`IN ${listLiteral}`)) {
+          queryResult = await c.query(cypher);
+          const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
+          const rows = await result.getAll();
+          for (const row of rows) {
+            const v = (row as { importer?: unknown }).importer;
+            if (typeof v === 'string' && v.length > 0) found.push(v);
+          }
+          await closeQueryResults(queryResult);
+          queryResult = undefined;
         }
+        for (const v of found) importers.add(v);
       } catch (err) {
         // Degrade-don't-fail, mirroring queryImporters — but LOUDLY
         // (tri-review 4669518496 P2-5): a dropped chunk means every importer
@@ -3987,6 +4067,7 @@ export const buildFtsQueryCypher = (
  * @param query - Search query string
  * @param limit - Maximum results
  * @param conjunctive - If true, all terms must match (AND); if false, any term matches (OR)
+ * @param missingIndex - Preserve the empty-result default, or propagate missing indexes for diagnostics
  * @returns Array of { node properties, score }
  */
 export const queryFTS = async (
@@ -3995,6 +4076,7 @@ export const queryFTS = async (
   query: string,
   limit: number = 20,
   conjunctive: boolean = false,
+  missingIndex: 'empty' | 'throw' = 'empty',
 ): Promise<
   Array<{ nodeId: string; name: string; filePath: string; score: number; [key: string]: any }>
 > => {
@@ -4025,7 +4107,7 @@ export const queryFTS = async (
     // NEW-6 — this used to be a bare `.includes('does not exist')` check
     // that could not tell the two apart).
     const message = e instanceof Error ? e.message : String(e);
-    if (classifyFtsQueryError(message) === 'missing-index') {
+    if (missingIndex === 'empty' && classifyFtsQueryError(message) === 'missing-index') {
       return [];
     }
     throw e;
