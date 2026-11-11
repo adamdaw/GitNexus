@@ -61,6 +61,7 @@
  */
 
 import type {
+  CallResultAssignmentSite,
   ParsedFile,
   ReferenceSite,
   ScopeId,
@@ -70,7 +71,7 @@ import type {
 import type { KnowledgeGraph } from '../../../graph/types.js';
 import type { ScopeResolutionIndexes } from '../../model/scope-resolution-indexes.js';
 import type { SemanticModel } from '../../model/semantic-model.js';
-import type { ScopeResolver } from '../contract/scope-resolver.js';
+import type { ReceiverMemberResolution, ScopeResolver } from '../contract/scope-resolver.js';
 import { LINKABLE_LABELS, type GraphNodeLookup } from '../graph-bridge/node-lookup.js';
 import type { WorkspaceResolutionIndex } from '../workspace-index.js';
 import { createNamespaceTargetCache } from '../scope/namespace-target-cache.js';
@@ -128,6 +129,13 @@ import type {
   ResolutionSuppressionReason,
 } from '../resolution-outcome.js';
 import { classifyReceiverShape } from '../resolution-outcome.js';
+import {
+  callSuppressionIdentities,
+  callResultBindingKey,
+  providerCallOutcome,
+  selectedCallKey,
+  type CallOutcomeContext,
+} from './provider-call-outcome.js';
 import type { ReceiverOrigin } from '../resolution-outcome.js';
 import { decodeReceiverChain } from '../../utils/receiver-chain-codec.js';
 import type { DecodedReceiverChain } from '../../utils/receiver-chain-codec.js';
@@ -207,6 +215,9 @@ type ReceiverBoundProviderSubset = Pick<
   | 'namespaceSkipsEnclosingClasses'
   | 'createReceiverNamespaceResolver'
   | 'resolveReceiverMember'
+  | 'receiverMemberLookupCoversAllCalls'
+  | 'receiverCallSite'
+  | 'resolveSelectedMethodImplementation'
   | 'suppressReceiverLookup'
   | 'isModuleExportAssignment'
   | 'resolveThisViaEnclosingClass'
@@ -666,6 +677,13 @@ export function emitReceiverBoundCalls(
     readonly allFilePaths?: ReadonlySet<string>;
     readonly recordResolutionOutcome?: ResolutionOutcomeRecorder;
     readonly recordSourceBinding?: SourceBindingRecorder;
+    /** Compile-time primaries, separate from runtime fanout in calleeIdSink. */
+    readonly selectedCalls?: Map<string, SymbolDefinition | null>;
+    /** Apply only assignments fed by this newly selected compile-time primary. */
+    readonly onSelectedCall?: (key: string, definition: SymbolDefinition | null) => void;
+    /** Full source identity to the legacy handled-site key, finalized after replay. */
+    readonly pendingCallReceivers?: Map<string, string>;
+    readonly callResultProducers?: ReadonlyMap<string, CallResultAssignmentSite>;
     /** Resolved-callee-id capture sink (#2227 U2). Threaded in under `--pdg`
      *  OR for callable-flow's direct-target index (#2437, position-filtered);
      *  `undefined` ⇒ zero overhead, byte-identity (R4). Per-file capture
@@ -705,6 +723,40 @@ export function emitReceiverBoundCalls(
   // them resolve the same site to the same target. NEVER pre-seed
   // from the reference index — see Contract Invariant I5.
   const seen = new Set<string>();
+  const outcomeContext: CallOutcomeContext = {
+    graph,
+    scopes,
+    nodeLookup,
+    model,
+  };
+  const suppressProviderResult = (
+    result: ReceiverMemberResolution | undefined,
+    site: ReferenceSite,
+    filePath: string,
+  ): boolean => {
+    if (result === undefined || result.kind === 'resolved') return false;
+    if (site.kind === 'call') {
+      const key = selectedCallKey(filePath, site.atRange);
+      options.selectedCalls?.set(key, null);
+      options.onSelectedCall?.(key, null);
+      options.pendingCallReceivers?.delete(key);
+    }
+    options.recordSourceBinding?.(site, {
+      status:
+        result.kind === 'ambiguous'
+          ? 'ambiguous'
+          : result.kind === 'inapplicable'
+            ? 'blocked'
+            : 'unresolved',
+      targetDefIds: result.candidateIds,
+      basis: result.kind === 'ambiguous' ? 'member-lookup-ambiguous' : `overload-${result.kind}`,
+    });
+    options.recordResolutionOutcome?.(
+      providerCallOutcome(result, site, filePath, 'receiver-bound-calls', outcomeContext),
+    );
+    handledSites.add(`${filePath}:${site.atRange.startLine}:${site.atRange.startCol}`);
+    return true;
+  };
   // Active only while a source site is being resolved; nested class/chain
   // lookups report a name guess at the actual decision that made it.
   let onNameFallback: (() => void) | undefined;
@@ -1211,7 +1263,17 @@ export function emitReceiverBoundCalls(
      *  cases call this unconditionally, and the overwhelming majority of
      *  receivers are concrete classes that return at the first line. */
     receiverTypeSpelling: string | undefined,
+    callerFilePath: string,
   ): number => {
+    // A provider may select an interface declaration from a concrete receiver.
+    // Runtime fan-out follows that selected declaration's owner.
+    const concreteReceiver = ownerDef.type === 'Interface' ? undefined : ownerDef;
+    const selectedOwner =
+      primaryMemberDef.ownerId === undefined
+        ? undefined
+        : scopes.defs.get(primaryMemberDef.ownerId);
+    if (concreteReceiver !== undefined && selectedOwner?.type === 'Interface')
+      ownerDef = selectedOwner;
     if (ownerDef.type !== 'Interface') return 0;
     if (subtypesBySupertypeDefId.get(ownerDef.nodeId) === undefined) return 0;
     const receiverTypeArguments =
@@ -1246,6 +1308,10 @@ export function emitReceiverBoundCalls(
       readonly typeArguments: readonly string[] | undefined;
     };
     const targetByMemberId = new Map<string, DispatchTarget>();
+    const unresolvedDispatchCandidates = new Set<string>();
+    const unresolvedDispatchOwners = new Set<string>();
+    let hasUnresolvedDispatch = false;
+    let dispatchCandidatesComplete = true;
     const bestIncomingCount = new Map<string, number>([[ownerDef.nodeId, 0]]);
     const queue: DispatchTraversal[] = [
       {
@@ -1266,6 +1332,15 @@ export function emitReceiverBoundCalls(
       const superGraphId =
         current.typeArguments === undefined ? undefined : classGraphIdByDefId.get(current.typeId);
       for (const subDef of subtypesBySupertypeDefId.get(current.typeId) ?? []) {
+        // Preserve a proven concrete receiver branch when the provider selects
+        // an interface signature; sibling implementations are not its targets.
+        if (
+          concreteReceiver !== undefined &&
+          subDef.nodeId !== concreteReceiver.nodeId &&
+          !scopes.methodDispatch.mroFor(concreteReceiver.nodeId).includes(subDef.nodeId) &&
+          !scopes.methodDispatch.mroFor(subDef.nodeId).includes(concreteReceiver.nodeId)
+        )
+          continue;
         const previousIncomingCount = bestIncomingCount.get(subDef.nodeId);
         if (
           previousIncomingCount !== undefined &&
@@ -1311,11 +1386,54 @@ export function emitReceiverBoundCalls(
 
         bestIncomingCount.set(subDef.nodeId, current.ancestorImplementationCount);
 
-        const implMember = pickOverload(subDef.nodeId, memberName, site, model, provider);
+        const signatureResolution = provider.resolveSelectedMethodImplementation?.(
+          primaryMemberDef,
+          subDef,
+          scopes,
+          model,
+        );
+        const implMember =
+          provider.resolveSelectedMethodImplementation === undefined
+            ? pickOverload(subDef.nodeId, memberName, site, model, provider)
+            : signatureResolution?.kind === 'resolved'
+              ? signatureResolution.definition
+              : undefined;
+        const implementationGraphId =
+          signatureResolution?.kind === 'resolved'
+            ? resolveDefGraphId(
+                signatureResolution.definition.filePath,
+                signatureResolution.definition,
+                nodeLookup,
+              )
+            : undefined;
+        const implementationUnmapped =
+          signatureResolution?.kind === 'resolved' &&
+          (implementationGraphId === undefined ||
+            graph.getNode(implementationGraphId) === undefined);
+        if (
+          signatureResolution?.kind === 'unknown' ||
+          signatureResolution?.kind === 'ambiguous' ||
+          implementationUnmapped
+        ) {
+          hasUnresolvedDispatch = true;
+          if (signatureResolution?.kind === 'resolved') {
+            unresolvedDispatchCandidates.add(signatureResolution.definition.nodeId);
+            dispatchCandidatesComplete = false;
+          } else if (signatureResolution !== undefined) {
+            for (const id of signatureResolution.candidateIds) unresolvedDispatchCandidates.add(id);
+            if (signatureResolution.candidateSetComplete === false)
+              dispatchCandidatesComplete = false;
+          }
+          const ownerGraphId = resolveDefGraphId(subDef.filePath, subDef, nodeLookup);
+          if (ownerGraphId === undefined || graph.getNode(ownerGraphId) === undefined)
+            dispatchCandidatesComplete = false;
+          else unresolvedDispatchOwners.add(ownerGraphId);
+        }
         let descendantImplementationCount = current.ancestorImplementationCount;
         if (
           implMember !== undefined &&
           implMember !== OVERLOAD_AMBIGUOUS &&
+          !implementationUnmapped &&
           implMember.isDeleted !== true &&
           implMember.nodeId !== primaryMemberDef.nodeId &&
           !isDeclarationOnly(implMember) &&
@@ -1342,6 +1460,29 @@ export function emitReceiverBoundCalls(
           typeId: subDef.nodeId,
           ancestorImplementationCount: descendantImplementationCount,
           typeArguments: subtypeArguments,
+        });
+      }
+    }
+
+    if (hasUnresolvedDispatch) {
+      const outcome = providerCallOutcome(
+        {
+          kind: 'unknown',
+          candidateIds: [...unresolvedDispatchCandidates],
+          candidateSetComplete: dispatchCandidatesComplete,
+          detail: 'An implementation of the selected signature could not be established.',
+        },
+        site,
+        callerFilePath,
+        'receiver-dispatch',
+        outcomeContext,
+      );
+      if (outcome.kind === 'suppressed') {
+        options.recordResolutionOutcome?.({
+          ...outcome,
+          candidateOwnerIds: [
+            ...new Set([...(outcome.candidateOwnerIds ?? []), ...unresolvedDispatchOwners]),
+          ],
         });
       }
     }
@@ -1476,9 +1617,34 @@ export function emitReceiverBoundCalls(
     // calls can share only the key (`ns.make().m()` starts where `ns.make()`
     // does), so one's resolution must not hide the other's drop (#3498).
     const siteIdentitiesByKey = new Map<string, string | Set<string>>();
-    for (const site of parsed.referenceSites) {
+    // Producer dependencies are local to the call's file. A source range is
+    // attempted once initially, then only when a producer it awaited resolves.
+    // This handles reverse capture order without rescanning the workspace.
+    const workQueue = options.selectedCalls === undefined ? undefined : [...parsed.referenceSites];
+    const sites = workQueue ?? parsed.referenceSites;
+    const waitingByProducer = new Map<string, Map<string, ReferenceSite>>();
+    const waitForProducer = (producerKey: string, site: ReferenceSite): void => {
+      if (options.selectedCalls === undefined || options.selectedCalls.has(producerKey)) return;
+      let waiting = waitingByProducer.get(producerKey);
+      if (waiting === undefined) waitingByProducer.set(producerKey, (waiting = new Map()));
+      waiting.set(selectedCallKey(parsed.filePath, site.atRange), site);
+    };
+    const releaseConsumers = (producerKey: string): void => {
+      const waiting = waitingByProducer.get(producerKey);
+      if (waiting === undefined) return;
+      waitingByProducer.delete(producerKey);
+      for (const site of waiting.values()) workQueue?.push(site);
+    };
+    for (const site of sites) {
       if (site.kind !== 'call' && site.kind !== 'read' && site.kind !== 'write') continue;
       if (site.explicitReceiver === undefined) continue;
+      // Primaries and terminal suppressions are stable across dependency
+      // replay. Revisit only consumers whose producer was not known yet.
+      if (
+        site.kind === 'call' &&
+        options.selectedCalls?.has(selectedCallKey(parsed.filePath, site.atRange))
+      )
+        continue;
       // A receiver-specific decision supersedes the provisional registry
       // answer even when it deliberately declines to emit an edge.
       options.recordSourceBinding?.(site, {
@@ -1487,6 +1653,7 @@ export function emitReceiverBoundCalls(
         basis: 'receiver',
       });
       let sourceBindingGrounded = true;
+      let providerSelectedMember = false;
       onNameFallback =
         options.recordSourceBinding === undefined
           ? undefined
@@ -1494,6 +1661,24 @@ export function emitReceiverBoundCalls(
               sourceBindingGrounded = false;
             };
       const recordMember = (definition: SymbolDefinition): void => {
+        if (site.kind === 'call') {
+          const key = selectedCallKey(parsed.filePath, site.atRange);
+          options.selectedCalls?.set(key, definition);
+          options.onSelectedCall?.(key, definition);
+          options.pendingCallReceivers?.delete(key);
+          releaseConsumers(key);
+        }
+        if (providerSelectedMember && site.kind === 'call') {
+          options.recordResolutionOutcome?.(
+            providerCallOutcome(
+              { kind: 'resolved', definition },
+              site,
+              parsed.filePath,
+              'receiver-bound-calls',
+              outcomeContext,
+            ),
+          );
+        }
         options.recordSourceBinding?.(
           site,
           sourceBindingGrounded
@@ -1535,11 +1720,71 @@ export function emitReceiverBoundCalls(
         decodeReceiverChain(site.receiverChain)?.baseReceiverName ??
         receiverName.split(/[.([\s]/, 1)[0];
 
+      if (
+        site.kind === 'call' &&
+        baseName !== undefined &&
+        options.callResultProducers !== undefined
+      ) {
+        const claim = lookupNameClaim(site.inScope, baseName, scopes, {
+          position: site.atRange,
+          purpose: 'value',
+        });
+        let currentScopeId: ScopeId | null = site.inScope;
+        let unresolvedAssignment = false;
+        let selectedProducer: SymbolDefinition | null | undefined;
+        let producerKey: string | undefined;
+        while (currentScopeId !== null) {
+          const currentScope = scopes.scopeTree.getScope(currentScopeId);
+          if (currentScope === undefined) break;
+          const assignment = options.callResultProducers.get(
+            callResultBindingKey(currentScopeId, baseName),
+          );
+          if (
+            assignment !== undefined &&
+            (assignment.callSite.startLine < site.atRange.startLine ||
+              (assignment.callSite.startLine === site.atRange.startLine &&
+                assignment.callSite.startCol <= site.atRange.startCol))
+          ) {
+            producerKey = selectedCallKey(parsed.filePath, assignment.callSite);
+            selectedProducer = options.selectedCalls?.get(producerKey);
+            unresolvedAssignment =
+              selectedProducer == null ||
+              !index.declaredReturnTypeByCallableId.has(selectedProducer.nodeId);
+            break;
+          }
+          // A nearer declaration owns the receiver even when it has no type.
+          if (claim.scope?.id === currentScopeId || currentScope.typeBindings.has(baseName)) break;
+          currentScopeId = currentScope.parent;
+        }
+        if (unresolvedAssignment) {
+          if (producerKey !== undefined) waitForProducer(producerKey, site);
+          options.pendingCallReceivers?.set(
+            selectedCallKey(parsed.filePath, site.atRange),
+            siteKey,
+          );
+          options.recordResolutionOutcome?.({
+            kind: 'suppressed',
+            reason: 'receiver-unresolved',
+            candidateIds: [],
+            phase: 'receiver-bound-calls',
+            filePath: parsed.filePath,
+            name: site.name,
+            range: site.atRange,
+            siteKind: 'call',
+            receiverOrigin: selectedProducer == null ? 'unknown' : 'in-program',
+            receiverShape: classifyReceiverShape(decodeReceiverChain(site.receiverChain)),
+          });
+          continue;
+        }
+      }
+
       if (provider.suppressReceiverLookup !== undefined) {
         const baseTypeRef =
           baseName === undefined
             ? undefined
-            : findReceiverTypeBinding(site.inScope, baseName, scopes, { position: site.atRange });
+            : findReceiverTypeBinding(site.inScope, baseName, scopes, {
+                position: site.atRange,
+              });
         if (baseTypeRef !== undefined && provider.suppressReceiverLookup(baseTypeRef)) {
           options.recordResolutionOutcome?.({
             kind: 'suppressed',
@@ -1605,9 +1850,19 @@ export function emitReceiverBoundCalls(
             extendsOnly !== undefined
               ? extendsOnly(enclosingClass.nodeId)
               : scopes.methodDispatch.mroFor(enclosingClass.nodeId);
-          let memberDef: SymbolDefinition | undefined;
+          const baseDef = ancestors.length > 0 ? scopes.defs.get(ancestors[0]!) : undefined;
+          const languageResolution =
+            provider.receiverMemberLookupCoversAllCalls === true &&
+            site.kind === 'call' &&
+            baseDef !== undefined
+              ? provider.resolveReceiverMember?.(baseDef, memberName, site, scopes, model)
+              : undefined;
+          if (suppressProviderResult(languageResolution, site, parsed.filePath)) continue;
+          providerSelectedMember = languageResolution?.kind === 'resolved';
+          let memberDef =
+            languageResolution?.kind === 'resolved' ? languageResolution.definition : undefined;
           let ambiguousOwnerId: string | undefined;
-          for (const ownerId of ancestors) {
+          for (const ownerId of memberDef === undefined ? ancestors : []) {
             const picked =
               site.kind === 'call'
                 ? pickOverload(ownerId, memberName, site, model, provider)
@@ -1631,6 +1886,7 @@ export function emitReceiverBoundCalls(
               model,
               provider,
               options.recordSourceBinding,
+              outcomeContext,
             );
             handledSites.add(siteKey);
             continue;
@@ -1710,20 +1966,80 @@ export function emitReceiverBoundCalls(
         receiverName.includes('(') ||
         site.receiverChain !== undefined
       ) {
-        const resolved = resolveCompoundReceiverTyped(
-          receiverName,
-          site.inScope,
-          scopes,
-          index,
-          // Group A: the receiver IS this site's expression, so the site's
-          // captured chain describes it and the structural fold applies.
-          { ...fileCompoundOpts, receiverChain: site.receiverChain },
-        );
+        const producer =
+          site.kind === 'call' ? provider.receiverCallSite?.(site, scopes) : undefined;
+        const selected =
+          producer === undefined
+            ? undefined
+            : options.selectedCalls?.get(selectedCallKey(parsed.filePath, producer.range));
+        const returned =
+          selected == null ? undefined : index.declaredReturnTypeByCallableId.get(selected.nodeId);
+        const returnedClass =
+          returned === undefined
+            ? undefined
+            : resolveClassBindingForName(
+                returned.declaredAtScope,
+                returned.declaredSpelling ?? returned.rawName,
+                scopes,
+                provider.stripTypePreservingDecoration,
+                {
+                  purpose: 'type',
+                  position: returned.lookupPosition,
+                  qualifiedTypeSpellings: provider.resolveQualifiedTypeSpellings === true,
+                },
+              );
+        const resolved =
+          producer === undefined
+            ? resolveCompoundReceiverTyped(receiverName, site.inScope, scopes, index, {
+                ...fileCompoundOpts,
+                receiverChain: site.receiverChain,
+              })
+            : returnedClass === undefined
+              ? undefined
+              : {
+                  def: returnedClass,
+                  declaredSpelling: returned?.declaredSpelling ?? returned?.rawName,
+                };
+        if (producer !== undefined && resolved === undefined) {
+          // Defer without claiming the shared start-position key: the inner
+          // free call may still need that key during this pass. Finalization
+          // blocks generic fallback after the producer queue is exhausted.
+          waitForProducer(selectedCallKey(parsed.filePath, producer.range), site);
+          options.pendingCallReceivers?.set(
+            selectedCallKey(parsed.filePath, site.atRange),
+            siteKey,
+          );
+          options.recordResolutionOutcome?.({
+            kind: 'suppressed',
+            reason: 'receiver-unresolved',
+            candidateIds: [],
+            phase: 'receiver-bound-calls',
+            filePath: parsed.filePath,
+            name: site.name,
+            range: site.atRange,
+            siteKind: 'call',
+            receiverOrigin:
+              returned !== undefined && options.isBuiltInName?.(returned.rawName) === true
+                ? 'external'
+                : selected == null
+                  ? 'unknown'
+                  : 'in-program',
+            receiverShape: classifyReceiverShape(decodeReceiverChain(site.receiverChain)),
+          });
+          continue;
+        }
         const currentClass = resolved?.def;
         compoundReceiverUnresolved = currentClass === undefined;
         if (resolved !== undefined && currentClass !== undefined) {
+          const languageResolution =
+            provider.receiverMemberLookupCoversAllCalls === true && site.kind === 'call'
+              ? provider.resolveReceiverMember?.(currentClass, memberName, site, scopes, model)
+              : undefined;
+          if (suppressProviderResult(languageResolution, site, parsed.filePath)) continue;
+          providerSelectedMember = languageResolution?.kind === 'resolved';
           const chain = [currentClass.nodeId, ...scopes.methodDispatch.mroFor(currentClass.nodeId)];
-          let memberDef: SymbolDefinition | undefined;
+          let memberDef =
+            languageResolution?.kind === 'resolved' ? languageResolution.definition : undefined;
           let ambiguousOwnerId: string | undefined;
           // Static-only filter (#1756 / U3): same shape as Case 4's
           // overload-aware chain walk (skip-and-walk-on). When
@@ -1737,7 +2053,7 @@ export function emitReceiverBoundCalls(
           // reference index has no compound-receiver entry for
           // shapes like `Logger.create("a")`), so there's no wrong
           // target to suppress.
-          for (const ownerId of chain) {
+          for (const ownerId of memberDef === undefined ? chain : []) {
             const picked =
               site.kind === 'call'
                 ? pickFirstNonStaticOnly(ownerId, memberName, site, model, provider)
@@ -1762,6 +2078,7 @@ export function emitReceiverBoundCalls(
               model,
               provider,
               options.recordSourceBinding,
+              outcomeContext,
             );
             handledSites.add(siteKey);
             continue;
@@ -1839,6 +2156,7 @@ export function emitReceiverBoundCalls(
               0.85,
               calleeCapture,
               resolved.declaredSpelling,
+              parsed.filePath,
             );
             // Always mark handled when the site was resolved, even
             // if the edge was deduplicated (collapse mode), so
@@ -1876,24 +2194,8 @@ export function emitReceiverBoundCalls(
             scopes,
             model,
           );
-          if (languageResolution?.kind === 'ambiguous') {
-            options.recordSourceBinding?.(site, {
-              status: 'ambiguous',
-              targetDefIds: languageResolution.candidateIds,
-              basis: 'member-lookup-ambiguous',
-            });
-            options.recordResolutionOutcome?.({
-              kind: 'suppressed',
-              phase: 'receiver-bound-calls',
-              filePath: parsed.filePath,
-              name: site.name,
-              range: site.atRange,
-              reason: 'member-lookup-ambiguous',
-              candidateIds: languageResolution.candidateIds,
-            });
-            handledSites.add(siteKey);
-            continue;
-          }
+          if (suppressProviderResult(languageResolution, site, parsed.filePath)) continue;
+          providerSelectedMember = languageResolution?.kind === 'resolved';
           if (languageResolution?.kind === 'resolved') {
             const memberDef = languageResolution.definition;
             if (
@@ -2266,24 +2568,8 @@ export function emitReceiverBoundCalls(
           scopes,
           model,
         );
-        if (languageResolution?.kind === 'ambiguous') {
-          options.recordSourceBinding?.(site, {
-            status: 'ambiguous',
-            targetDefIds: languageResolution.candidateIds,
-            basis: 'member-lookup-ambiguous',
-          });
-          options.recordResolutionOutcome?.({
-            kind: 'suppressed',
-            phase: 'receiver-bound-calls',
-            filePath: parsed.filePath,
-            name: site.name,
-            range: site.atRange,
-            reason: 'member-lookup-ambiguous',
-            candidateIds: languageResolution.candidateIds,
-          });
-          handledSites.add(siteKey);
-          continue;
-        }
+        if (suppressProviderResult(languageResolution, site, parsed.filePath)) continue;
+        providerSelectedMember = languageResolution?.kind === 'resolved';
         const chain = [classDef.nodeId, ...scopes.methodDispatch.mroFor(classDef.nodeId)];
         let memberDef: SymbolDefinition | undefined =
           languageResolution?.kind === 'resolved' ? languageResolution.definition : undefined;
@@ -2324,6 +2610,7 @@ export function emitReceiverBoundCalls(
             model,
             provider,
             options.recordSourceBinding,
+            outcomeContext,
           );
           handledSites.add(siteKey);
           continue;
@@ -2439,10 +2726,21 @@ export function emitReceiverBoundCalls(
               ? chainDef3
               : lookupNamespaceMember(targetFile3, className);
             if (classDef3 !== undefined) {
+              const languageResolution =
+                provider.receiverMemberLookupCoversAllCalls === true && site.kind === 'call'
+                  ? provider.resolveReceiverMember?.(classDef3, memberName, site, scopes, model)
+                  : undefined;
+              if (suppressProviderResult(languageResolution, site, parsed.filePath)) {
+                found3 = true;
+                break;
+              }
+              providerSelectedMember = languageResolution?.kind === 'resolved';
               const picked =
-                site.kind === 'call'
-                  ? pickOverload(classDef3.nodeId, memberName, site, model, provider)
-                  : findOwnedMember(classDef3.nodeId, memberName, model);
+                languageResolution?.kind === 'resolved'
+                  ? languageResolution.definition
+                  : site.kind === 'call'
+                    ? pickOverload(classDef3.nodeId, memberName, site, model, provider)
+                    : findOwnedMember(classDef3.nodeId, memberName, model);
               if (picked === OVERLOAD_AMBIGUOUS) {
                 recordReceiverOverloadSuppression(
                   options.recordResolutionOutcome,
@@ -2453,6 +2751,7 @@ export function emitReceiverBoundCalls(
                   model,
                   provider,
                   options.recordSourceBinding,
+                  outcomeContext,
                 );
                 handledSites.add(siteKey);
                 found3 = true;
@@ -2559,8 +2858,15 @@ export function emitReceiverBoundCalls(
           ownerDef = findClassBindingInScope(typeRef.declaredAtScope, typeRef.rawName, scopes);
         }
         if (ownerDef !== undefined) {
+          const languageResolution =
+            provider.receiverMemberLookupCoversAllCalls === true && site.kind === 'call'
+              ? provider.resolveReceiverMember?.(ownerDef, memberName, site, scopes, model)
+              : undefined;
+          if (suppressProviderResult(languageResolution, site, parsed.filePath)) continue;
+          providerSelectedMember = languageResolution?.kind === 'resolved';
           const chain = [ownerDef.nodeId, ...scopes.methodDispatch.mroFor(ownerDef.nodeId)];
-          let memberDef: SymbolDefinition | undefined;
+          let memberDef =
+            languageResolution?.kind === 'resolved' ? languageResolution.definition : undefined;
           let ambiguousOwnerId: string | undefined;
           // Static-only filter (#1756 / U3): mirrors Case 0's
           // overload-aware chain walk. When
@@ -2570,7 +2876,7 @@ export function emitReceiverBoundCalls(
           // by chain-typebinding receivers, not pre-emitted by
           // `emitReferencesViaLookup` for compound shapes, so no
           // handled-site marker is needed for chain-only-static).
-          for (const ownerId of chain) {
+          for (const ownerId of memberDef === undefined ? chain : []) {
             const picked =
               site.kind === 'call'
                 ? pickFirstNonStaticOnly(ownerId, memberName, site, model, provider)
@@ -2595,6 +2901,7 @@ export function emitReceiverBoundCalls(
               model,
               provider,
               options.recordSourceBinding,
+              outcomeContext,
             );
             handledSites.add(siteKey);
             continue;
@@ -2671,6 +2978,7 @@ export function emitReceiverBoundCalls(
               0.85,
               calleeCapture,
               resolved?.declaredSpelling,
+              parsed.filePath,
             );
             // Always mark handled when the site was resolved, even
             // if the edge was deduplicated (collapse mode), so
@@ -2796,65 +3104,11 @@ export function emitReceiverBoundCalls(
             scopes,
             model,
           );
-          if (languageResolution?.kind === 'ambiguous') {
-            options.recordSourceBinding?.(site, {
-              status: 'ambiguous',
-              targetDefIds: languageResolution.candidateIds,
-              basis: 'member-lookup-ambiguous',
-            });
-            options.recordResolutionOutcome?.({
-              kind: 'suppressed',
-              phase: 'receiver-bound-calls',
-              filePath: parsed.filePath,
-              name: site.name,
-              range: site.atRange,
-              reason: 'member-lookup-ambiguous',
-              candidateIds: languageResolution.candidateIds,
-            });
-            handledSites.add(siteKey);
-            continue;
-          }
-          if (languageResolution?.kind === 'resolved') {
-            const memberDef = languageResolution.definition;
-            if (
-              suppressDeletedCallTarget(
-                options.recordResolutionOutcome,
-                parsed.filePath,
-                site,
-                memberDef,
-                options.recordSourceBinding,
-              )
-            ) {
-              handledSites.add(siteKey);
-              continue;
-            }
-            const reason =
-              site.kind === 'write' || site.kind === 'read'
-                ? site.kind
-                : memberDef.filePath !== parsed.filePath
-                  ? 'import-resolved'
-                  : 'global';
-            const confidence = site.kind === 'write' || site.kind === 'read' ? 1.0 : 0.85;
-            recordMember(memberDef);
-            const ok = tryEmitEdge(
-              graph,
-              scopes,
-              nodeLookup,
-              site,
-              memberDef,
-              reason,
-              seen,
-              confidence,
-              collapse,
-              calleeCapture,
-            );
-            if (ok) emitted++;
-            handledSites.add(siteKey);
-            continue;
-          }
-
+          if (suppressProviderResult(languageResolution, site, parsed.filePath)) continue;
+          providerSelectedMember = languageResolution?.kind === 'resolved';
           const chain = [ownerDef.nodeId, ...scopes.methodDispatch.mroFor(ownerDef.nodeId)];
-          let memberDef: SymbolDefinition | undefined;
+          let memberDef =
+            languageResolution?.kind === 'resolved' ? languageResolution.definition : undefined;
           let ambiguous = false;
           let ambiguousOwnerId: string | undefined;
           // Track whether the chain walk filtered out any static-only
@@ -2884,7 +3138,7 @@ export function emitReceiverBoundCalls(
           // such a pair unambiguously to the instance method because
           // companion members are not legal instance-dispatch
           // candidates.
-          for (const ownerId of chain) {
+          for (const ownerId of memberDef === undefined ? chain : []) {
             const picked = pickFirstNonStaticOnly(ownerId, memberName, site, model, provider);
             if (picked === OVERLOAD_AMBIGUOUS) {
               ambiguous = true;
@@ -2919,6 +3173,7 @@ export function emitReceiverBoundCalls(
               model,
               provider,
               options.recordSourceBinding,
+              outcomeContext,
             );
             handledSites.add(siteKey);
             continue;
@@ -2991,6 +3246,7 @@ export function emitReceiverBoundCalls(
                 confidence,
                 calleeCapture,
                 typeApplication ?? typeRef.rawName,
+                parsed.filePath,
               );
             }
             // Always mark handled when the site was resolved, even
@@ -3159,6 +3415,7 @@ export function emitReceiverBoundCalls(
                 range: site.atRange,
                 reason: 'member-lookup-ambiguous',
                 candidateIds: [...ambiguousCandidateIds],
+                ...callSuppressionIdentities([...ambiguousCandidateIds], site, outcomeContext),
               });
             }
 
@@ -3262,6 +3519,7 @@ export function emitReceiverBoundCalls(
             model,
             provider,
             options.recordSourceBinding,
+            outcomeContext,
           );
           handledSites.add(siteKey);
           continue;
@@ -3436,13 +3694,20 @@ export function emitReceiverBoundCalls(
                   },
                 );
           if (receiverClass !== undefined) {
+            const languageResolution =
+              provider.receiverMemberLookupCoversAllCalls === true && site.kind === 'call'
+                ? provider.resolveReceiverMember?.(receiverClass, memberName, site, scopes, model)
+                : undefined;
+            if (suppressProviderResult(languageResolution, site, parsed.filePath)) continue;
+            providerSelectedMember = languageResolution?.kind === 'resolved';
             const chain = [
               receiverClass.nodeId,
               ...scopes.methodDispatch.mroFor(receiverClass.nodeId),
             ];
-            let memberDef: SymbolDefinition | undefined;
+            let memberDef =
+              languageResolution?.kind === 'resolved' ? languageResolution.definition : undefined;
             let ambiguousOwnerId: string | undefined;
-            for (const ownerId of chain) {
+            for (const ownerId of memberDef === undefined ? chain : []) {
               const picked = pickFirstNonStaticOnly(ownerId, memberName, site, model, provider);
               if (picked === OVERLOAD_AMBIGUOUS) {
                 ambiguousOwnerId = ownerId;
@@ -3464,6 +3729,7 @@ export function emitReceiverBoundCalls(
                 model,
                 provider,
                 options.recordSourceBinding,
+                outcomeContext,
               );
               handledSites.add(siteKey);
               continue;
@@ -3518,6 +3784,7 @@ export function emitReceiverBoundCalls(
                 confidence,
                 calleeCapture,
                 fieldDeclaredType?.name,
+                parsed.filePath,
               );
               handledSites.add(siteKey);
               continue;
@@ -3848,7 +4115,8 @@ function recordReceiverOverloadSuppression(
   memberName: string,
   model: SemanticModel,
   provider: ReceiverBoundProviderSubset,
-  recordSourceBinding?: SourceBindingRecorder,
+  recordSourceBinding: SourceBindingRecorder | undefined,
+  identityContext: CallOutcomeContext,
 ): void {
   if (record === undefined && recordSourceBinding === undefined) return;
   const overloads = model.methods.lookupAllByOwner(ownerId, memberName);
@@ -3879,6 +4147,13 @@ function recordReceiverOverloadSuppression(
     range: site.atRange,
     reason,
     candidateIds: candidates.map((d) => d.nodeId),
+    ...callSuppressionIdentities(
+      candidates.map((d) => d.nodeId),
+      site,
+      identityContext,
+      true,
+      candidates,
+    ),
   });
 }
 
