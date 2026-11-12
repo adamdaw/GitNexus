@@ -22,10 +22,13 @@ vi.mock('../../src/storage/repo-manager.js', async (importActual) => ({
 
 // Pass-through by default. A test may install `failure` to make the outgoing
 // and/or incoming context reads reject; they are told apart by the column they
-// project (`target.id` for outgoing, `caller.id` for incoming).
+// project (`target.id` for outgoing, `caller.id` for incoming). While a failure
+// is installed, `events` records, in order, when each outgoing read starts and
+// when each injected incoming rejection settles.
 type Failure = { incoming?: Error; outgoing?: Error; outgoingDelayMs?: number };
 const db = vi.hoisted(() => ({
   failure: undefined as Failure | undefined,
+  events: [] as string[],
   lastLbugPath: undefined as string | undefined,
   realExecuteParameterized: undefined as unknown as (...args: any[]) => Promise<any[]>,
 }));
@@ -40,13 +43,22 @@ vi.mock('../../src/core/lbug/pool-adapter.js', async (importOriginal) => {
       const query = String(args[1]);
       const failure: Failure | undefined = db.failure;
       if (failure?.outgoing && query.includes('target.id AS uid')) {
+        db.events.push(
+          query.includes('ADVISED_BY') ? 'outgoing:advised:start' : 'outgoing:regular:start',
+        );
         const err = failure.outgoing;
         return new Promise((_, reject) =>
           setTimeout(() => reject(err), failure.outgoingDelayMs ?? 0),
         );
       }
       if (failure?.incoming && query.includes('caller.id AS uid')) {
-        return Promise.reject(failure.incoming);
+        const err = failure.incoming;
+        return new Promise((_, reject) =>
+          setTimeout(() => {
+            db.events.push('incoming:rejected');
+            reject(err);
+          }, 0),
+        );
       }
       return db.realExecuteParameterized(...args);
     },
@@ -148,6 +160,7 @@ withTestLbugDB(
 
     afterEach(() => {
       db.failure = undefined;
+      db.events = [];
     });
 
     describe('context() outgoing window with overlapped reads', () => {
@@ -182,7 +195,7 @@ withTestLbugDB(
     });
 
     describe('context() outgoing read failures', () => {
-      it('does not leave the early outgoing read unhandled when an incoming read throws first', async () => {
+      it('starts both outgoing reads before an incoming read rejects, and leaves neither unhandled', async () => {
         const unhandled: unknown[] = [];
         const onUnhandled = (reason: unknown) => unhandled.push(reason);
         process.on('unhandledRejection', onUnhandled);
@@ -202,6 +215,17 @@ withTestLbugDB(
           process.off('unhandledRejection', onUnhandled);
         }
 
+        // The outgoing reads were launched early: both had started before the
+        // first injected incoming rejection settled. Without the early launch
+        // they start only after the incoming reads resolve, i.e. never here.
+        const firstIncomingRejection = db.events.indexOf('incoming:rejected');
+        expect(firstIncomingRejection, 'no injected incoming rejection settled').toBeGreaterThan(
+          -1,
+        );
+        expect(
+          db.events.slice(0, firstIncomingRejection).sort(),
+          `outgoing reads did not start before the incoming rejection settled: ${db.events.join(', ')}`,
+        ).toEqual(['outgoing:advised:start', 'outgoing:regular:start']);
         expect(unhandled, 'outgoing rejection escaped as an unhandled rejection').toEqual([]);
       });
 
