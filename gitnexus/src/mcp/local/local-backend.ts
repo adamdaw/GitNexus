@@ -5696,6 +5696,40 @@ export class LocalBackend {
       ? `(n:\`${referenceLabel}\` {id: $symId})`
       : '(n {id: $symId})';
 
+    // Outgoing refs are started here, before the incoming reads are awaited, so
+    // their latency overlaps the incoming/class-expansion round-trips instead of
+    // adding to them (LadybugDB 0.22.0 made the outgoing traversal slower). The
+    // regular read anchors on `n` from the target side; it returns the same rows
+    // under the same uid-major ORDER BY/LIMIT window (#2787), consumed below.
+    const outgoingPromise = Promise.all([
+      executeParameterized(
+        repo.lbugPath,
+        `
+      MATCH (target)<-[r:CodeRelation]-${referenceAnchor}
+      WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'MEMBER_OF', 'USES', 'DECLARES', 'HAS_METHOD', 'HAS_PROPERTY', 'METHOD_OVERRIDES', 'OVERRIDES', 'METHOD_IMPLEMENTS', 'ACCESSES']
+        AND (r.type <> 'MEMBER_OF' OR labels(target) <> 'Community')
+      RETURN DISTINCT r.type AS relType, target.id AS uid, target.name AS name, target.filePath AS filePath, labels(target)[0] AS kind
+      ORDER BY uid, relType
+      LIMIT 30
+    `,
+        { symId },
+      ),
+      executeParameterized(
+        repo.lbugPath,
+        `
+      MATCH ${referenceAnchor}-[r:CodeRelation {type: 'ADVISED_BY'}]->(target)
+      RETURN DISTINCT r.type AS relType, target.id AS uid, target.name AS name, target.filePath AS filePath, labels(target)[0] AS kind
+      ORDER BY uid
+      LIMIT 30
+    `,
+        { symId },
+      ),
+    ]);
+    // If an incoming read throws first, this promise is never awaited; mark it
+    // handled so its rejection cannot surface as an unhandled rejection. The
+    // `await outgoingPromise` below still rethrows it on the normal path.
+    outgoingPromise.catch(() => {});
+
     // Categorized incoming refs.
     // Collapse repeated call sites in each query before LIMIT: the response
     // lists symbol references, and duplicates must not crowd out other symbols.
@@ -5880,30 +5914,7 @@ export class LocalBackend {
 
     // Categorized outgoing refs. uid-major for the same reason as the incoming
     // window above — a category-major key starves whole buckets (#2787 F1).
-    const [outgoingRows, outgoingAdvisedRows] = await Promise.all([
-      executeParameterized(
-        repo.lbugPath,
-        `
-      MATCH ${referenceAnchor}-[r:CodeRelation]->(target)
-      WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'MEMBER_OF', 'USES', 'DECLARES', 'HAS_METHOD', 'HAS_PROPERTY', 'METHOD_OVERRIDES', 'OVERRIDES', 'METHOD_IMPLEMENTS', 'ACCESSES']
-        AND (r.type <> 'MEMBER_OF' OR labels(target) <> 'Community')
-      RETURN DISTINCT r.type AS relType, target.id AS uid, target.name AS name, target.filePath AS filePath, labels(target)[0] AS kind
-      ORDER BY uid, relType
-      LIMIT 30
-    `,
-        { symId },
-      ),
-      executeParameterized(
-        repo.lbugPath,
-        `
-      MATCH ${referenceAnchor}-[r:CodeRelation {type: 'ADVISED_BY'}]->(target)
-      RETURN DISTINCT r.type AS relType, target.id AS uid, target.name AS name, target.filePath AS filePath, labels(target)[0] AS kind
-      ORDER BY uid
-      LIMIT 30
-    `,
-        { symId },
-      ),
-    ]);
+    const [outgoingRows, outgoingAdvisedRows] = await outgoingPromise;
     assertContextRefs(outgoingRows);
     assertContextRefs(outgoingAdvisedRows);
     outgoingRows.push(...outgoingAdvisedRows);
