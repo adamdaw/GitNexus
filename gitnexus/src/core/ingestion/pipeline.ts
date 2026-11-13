@@ -16,6 +16,8 @@
  */
 
 import { createKnowledgeGraph } from '../graph/graph.js';
+import { createRelationshipIntegrityCollector } from '../graph/relationship-integrity.js';
+import { getProviderForFile } from './languages/index.js';
 import type { KnowledgeGraph } from '../graph/types.js';
 import type { RouteHookConfig } from './language-provider.js';
 import { GLOBAL_NAME_FALLBACK_REASON } from '../graph/edge-reasons.js';
@@ -397,7 +399,12 @@ export const runPipelineFromRepo = async (
   options?: PipelineOptions,
 ): Promise<PipelineResult> => {
   options?.signal?.throwIfAborted();
-  const graph = createKnowledgeGraph();
+  const integrity = createRelationshipIntegrityCollector(
+    repoPath,
+    (id) => graph.getNode(id),
+    (filePath, text) => getProviderForFile(filePath)?.referenceSourceText?.(text, filePath),
+  );
+  const graph = createKnowledgeGraph(integrity.inspect);
   const pipelineStart = Date.now();
 
   // Streamed structural emit (#2680). The sink is a write-routing façade over
@@ -430,6 +437,7 @@ export const runPipelineFromRepo = async (
     options,
     pipelineStart,
     graphEmit: graphEmitSink,
+    recordSourceHash: integrity.recordSourceHash,
   };
 
   let graphEmitManifest: GraphEmitManifest | undefined;
@@ -497,6 +505,7 @@ export const runPipelineFromRepo = async (
     },
   });
 
+  integrity.logSummary();
   const result: PipelineResult = {
     // The RAW graph, deliberately — NOT `graphEmitSink`. Phases above received
     // the sink so their reads are complete, but `loadGraphToLbug` feeds this to
@@ -520,6 +529,7 @@ export const runPipelineFromRepo = async (
     unavailableScopeLanguageFiles,
     pdgEmitManifest,
     propertyInference,
+    relationshipIntegrity: integrity.snapshot(),
   };
 
   // #3016: hand back a way to run the derived phases `skipDerivedGraphPhases`
