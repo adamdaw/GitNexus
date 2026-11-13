@@ -8,10 +8,17 @@ import jsGrammar from 'tree-sitter-javascript';
 
 // These four legacy keys collapsed independently verified nested calls in the
 // benchmark corpus. Other multiplicity changes fail closed.
+//
+// Fork-only: the corpus is the PR's base tree. This fork's pipeline.ts (with
+// the Salesforce metadata phase) starts the audited `new PhaseRegistry` chain
+// in buildPhaseList one line earlier than upstream's (347, not 348), so the
+// three pipeline.ts keys are pinned to the fork's line. Re-pin them on each
+// sync to the base tree's `new PhaseRegistry` line
+// (grep -n 'new PhaseRegistry' gitnexus/src/core/ingestion/pipeline.ts).
 const COLLAPSED_CALLS = new Set([
-  'rel:CALLS:Function:gitnexus/src/core/ingestion/pipeline.ts:buildPhaseList->Method:gitnexus/src/core/ingestion/pipeline-phases/registry.ts:PhaseRegistry.register#2:348:4',
-  'rel:CALLS:Function:gitnexus/src/core/ingestion/pipeline.ts:buildPhaseList->Function:gitnexus/src/core/ingestion/model/field-registry.ts:createFieldRegistry.register@68:2:348:4',
-  'rel:CALLS:Function:gitnexus/src/core/ingestion/pipeline.ts:buildPhaseList->Function:gitnexus/src/core/ingestion/model/method-registry.ts:createMethodRegistry.register@184:2:348:4',
+  'rel:CALLS:Function:gitnexus/src/core/ingestion/pipeline.ts:buildPhaseList->Method:gitnexus/src/core/ingestion/pipeline-phases/registry.ts:PhaseRegistry.register#2:347:4',
+  'rel:CALLS:Function:gitnexus/src/core/ingestion/pipeline.ts:buildPhaseList->Function:gitnexus/src/core/ingestion/model/field-registry.ts:createFieldRegistry.register@68:2:347:4',
+  'rel:CALLS:Function:gitnexus/src/core/ingestion/pipeline.ts:buildPhaseList->Function:gitnexus/src/core/ingestion/model/method-registry.ts:createMethodRegistry.register@184:2:347:4',
   'rel:CALLS:Function:gitnexus/src/core/ingestion/languages/objective-c/import-target.ts:resolveObjectiveCImportTarget->Function:gitnexus/src/core/ingestion/languages/objective-c/import-target.ts:augmentedFilePathsFor:69:8',
 ]);
 const REFERENCE_TYPES = new Set(['CALLS', 'ACCESSES', 'USES', 'EXTENDS', 'IMPLEMENTS', 'INHERITS']);
