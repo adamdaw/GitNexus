@@ -130,21 +130,21 @@ describe('lexical benchmark reference migration parity', () => {
     const source = `Function:${file}:buildPhaseList`;
     const target =
       'Method:gitnexus/src/core/ingestion/pipeline-phases/registry.ts:PhaseRegistry.register#2';
-    // Fork-only: the audited key is pinned to the fork's pipeline.ts layout,
-    // where `new PhaseRegistry` starts at line 347 (upstream: 348). Keep this
-    // fixture on the same line as COLLAPSED_CALLS in reference-migration.mjs.
-    const id = `rel:CALLS:${source}->${target}:347:4`;
+    // Fork-only: the audited key carries the PR base tree's `new PhaseRegistry`
+    // line, re-pinned on every sync stage (351 at stage 5a). Keep this fixture
+    // on the same line as COLLAPSED_CALLS in reference-migration.mjs.
+    const id = `rel:CALLS:${source}->${target}:351:4`;
     const baseline = edge(id, { sourceId: source, targetId: target });
-    const first = edge(`${id}:347:24`, { sourceId: source, targetId: target });
-    const second = edge(`${id}:347:36`, { sourceId: source, targetId: target });
-    const text = `${'\n'.repeat(346)}    registry.register(x).register(y).build();`;
+    const first = edge(`${id}:351:24`, { sourceId: source, targetId: target });
+    const second = edge(`${id}:351:36`, { sourceId: source, targetId: target });
+    const text = `${'\n'.repeat(350)}    registry.register(x).register(y).build();`;
     expect(() => compare([baseline], [first, second], text, source, file)).not.toThrow();
     expect(() => compare([baseline], [first], text, source, file)).toThrow(
       /Incomplete nested call spans/,
     );
     // Another migrated edge must not mask leaving an audited group collapsed.
-    const other = edge(`rel:CALLS:${source}->other:347:4`, { sourceId: source, targetId: 'other' });
-    const otherSpan = { ...other, id: `${other.id}:347:24` };
+    const other = edge(`rel:CALLS:${source}->other:351:4`, { sourceId: source, targetId: 'other' });
+    const otherSpan = { ...other, id: `${other.id}:351:24` };
     expect(() => compare([baseline, other], [baseline, otherSpan], text, source, file)).toThrow(
       /did not migrate/,
     );
