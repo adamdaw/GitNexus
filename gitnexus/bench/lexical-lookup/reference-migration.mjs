@@ -13,12 +13,12 @@ import jsGrammar from 'tree-sitter-javascript';
 // carry the line where that tree's buildPhaseList starts the audited
 // `new PhaseRegistry` chain. This fork's pipeline.ts (with the Salesforce
 // metadata phase) does not match upstream's line, so the keys are re-pinned on
-// every sync stage to the line in that stage's PR base tree (351 at stage 5a):
+// every sync stage to the line in that stage's PR base tree (353 at stage 5b):
 //   git show <base>:gitnexus/src/core/ingestion/pipeline.ts | grep -n 'new PhaseRegistry'
 const COLLAPSED_CALLS = new Set([
-  'rel:CALLS:Function:gitnexus/src/core/ingestion/pipeline.ts:buildPhaseList->Method:gitnexus/src/core/ingestion/pipeline-phases/registry.ts:PhaseRegistry.register#2:351:4',
-  'rel:CALLS:Function:gitnexus/src/core/ingestion/pipeline.ts:buildPhaseList->Function:gitnexus/src/core/ingestion/model/field-registry.ts:createFieldRegistry.register@68:2:351:4',
-  'rel:CALLS:Function:gitnexus/src/core/ingestion/pipeline.ts:buildPhaseList->Function:gitnexus/src/core/ingestion/model/method-registry.ts:createMethodRegistry.register@184:2:351:4',
+  'rel:CALLS:Function:gitnexus/src/core/ingestion/pipeline.ts:buildPhaseList->Method:gitnexus/src/core/ingestion/pipeline-phases/registry.ts:PhaseRegistry.register#2:353:4',
+  'rel:CALLS:Function:gitnexus/src/core/ingestion/pipeline.ts:buildPhaseList->Function:gitnexus/src/core/ingestion/model/field-registry.ts:createFieldRegistry.register@68:2:353:4',
+  'rel:CALLS:Function:gitnexus/src/core/ingestion/pipeline.ts:buildPhaseList->Function:gitnexus/src/core/ingestion/model/method-registry.ts:createMethodRegistry.register@184:2:353:4',
   'rel:CALLS:Function:gitnexus/src/core/ingestion/languages/objective-c/import-target.ts:resolveObjectiveCImportTarget->Function:gitnexus/src/core/ingestion/languages/objective-c/import-target.ts:augmentedFilePathsFor:69:8',
 ]);
 const REFERENCE_TYPES = new Set(['CALLS', 'ACCESSES', 'USES', 'EXTENDS', 'IMPLEMENTS', 'INHERITS']);
