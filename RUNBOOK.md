@@ -135,13 +135,13 @@ costs; compare complete-source candidates separately from older capped inputs.
 
 **Important:** If you already had embeddings, a plain `npx gitnexus analyze` **preserves** them (Non-negotiable 5 in [GUARDRAILS.md](GUARDRAILS.md)) — pass `--embeddings` when you also want vectors generated for new or changed nodes, and `--drop-embeddings` only for a deliberate wipe. See `stats.embeddings` in `.gitnexus/gitnexus.json` (or its legacy `meta.json` mirror; 0 means none) — but that figure isn't always freshly measured: if a run's embedding-count query can't answer, it carries the previous run's number forward instead of writing a wrong zero. For a certified read, check `capabilities.vectorSearch.status` instead — it reads `unavailable` (never a stale count) whenever GitNexus can't vouch for the live vector index.
 
-**Embedding work interrupted after graph publication:** The graph and keyword index become available before embedding work starts. An embedding failure makes analyze exit nonzero while keeping that graph available and retaining acknowledged embedding work. `npx gitnexus status --json` reports graph freshness separately from embedding progress and vector readiness. Resume with:
+**Embedding work interrupted after graph publication:** The graph and keyword index become available before embedding work starts. An embedding failure makes analyze exit nonzero while keeping that graph available and retaining acknowledged embedding work. `gitnexus status --json` reports graph freshness separately from embedding progress and vector readiness. Resume with:
 
 ```bash
 npx gitnexus analyze
 ```
 
-No `--embeddings` flag is needed for a retained job. `npx gitnexus embeddings sync` also resumes work against an already published graph. Compatible acknowledged units do not call the provider again; a unit interrupted before acknowledgement may replay. A source or embedding-configuration change revalidates reuse, and changing worker counts or memory budgets does not invalidate paid vectors. `--drop-embeddings` deliberately abandons retained vectors. `--force` rebuilds the graph while retaining compatible paid work for reuse.
+No `--embeddings` flag is needed for a retained job. `gitnexus embeddings sync` also resumes work against an already published graph. Compatible acknowledged units do not call the provider again; a unit interrupted before acknowledgement may replay. A source or embedding-configuration change revalidates reuse, and changing worker counts or memory budgets does not invalidate paid vectors. `--drop-embeddings` deliberately abandons retained vectors. `--force` rebuilds the graph while retaining compatible paid work for reuse.
 
 Older indexes may instead carry an `embeddingCheckpoint` and report `embedding-checkpoint-pending`. Plain analyze recovers that checkpoint, including any explicitly referenced staging data, before migrating it. Historical vectors without verified provider/model provenance are retained without being relabeled as output from the current model.
 
@@ -293,7 +293,7 @@ reservation: the frontend, main heap, parser workers, native graph/vector pools,
 embedding model, bounded input queue, and headroom. For example:
 
 ```bash
-npx gitnexus analyze --embeddings --resource-budget 8192 --memory-budget 3000 --workers 2
+gitnexus analyze --embeddings --resource-budget 8192 --memory-budget 3000 --workers 2
 ```
 
 `--memory-budget` still controls only the main V8 heap. Explicit settings that do
