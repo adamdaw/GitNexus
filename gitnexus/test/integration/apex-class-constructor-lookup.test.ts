@@ -22,10 +22,23 @@ const SEED = [
   `CREATE (zero:Constructor {id:'${ZERO_ARG_CTOR_UID}', name:'Widget', filePath:'${WIDGET_PATH}', startLine:3, endLine:5, content:'public Widget() {}', description:''})`,
   `CREATE (one:Constructor {id:'${ONE_ARG_CTOR_UID}', name:'Widget', filePath:'${WIDGET_PATH}', startLine:6, endLine:8, content:'public Widget(String name) {}', description:''})`,
   `CREATE (caller:Method {id:'${CALLER_UID}', name:'make', filePath:'force-app/main/default/classes/WidgetFactory.cls', startLine:3, endLine:5, content:'return new Widget(\\'y\\');', description:''})`,
-  `CREATE (collision:Method {id:'${COLLIDING_METHOD_UID}', name:'Widget', filePath:'force-app/main/default/classes/WidgetHelpers.cls', startLine:3, endLine:5, content:'public static void Widget() {}', description:''})`,
   `MATCH (widget:Class {id:'${CLASS_UID}'}), (zero:Constructor {id:'${ZERO_ARG_CTOR_UID}'}) CREATE (widget)-[:CodeRelation {type:'HAS_METHOD', confidence:1.0, reason:'class-method', step:0}]->(zero)`,
   `MATCH (widget:Class {id:'${CLASS_UID}'}), (one:Constructor {id:'${ONE_ARG_CTOR_UID}'}) CREATE (widget)-[:CodeRelation {type:'HAS_METHOD', confidence:1.0, reason:'class-method', step:0}]->(one)`,
   `MATCH (caller:Method {id:'${CALLER_UID}'}), (one:Constructor {id:'${ONE_ARG_CTOR_UID}'}) CREATE (caller)-[:CodeRelation {type:'CALLS', confidence:1.0, reason:'new Widget(String)', step:0}]->(one)`,
+];
+
+const COLLISION_SEED = [
+  ...SEED,
+  `CREATE (collision:Method {id:'${COLLIDING_METHOD_UID}', name:'Widget', filePath:'force-app/main/default/classes/WidgetHelpers.cls', startLine:3, endLine:5, content:'public static void Widget() {}', description:''})`,
+];
+
+const BARE_WIDGET_PATH = 'force-app/main/default/classes/BareWidget.cls';
+const BARE_WIDGET_CLASS_UID = `Class:${BARE_WIDGET_PATH}:BareWidget`;
+const BARE_WIDGET_METHOD_UID =
+  'Method:force-app/main/default/classes/BareWidgetHelpers.cls:BareWidgetHelpers.BareWidget';
+const CONSTRUCTORLESS_SEED = [
+  `CREATE (widget:Class {id:'${BARE_WIDGET_CLASS_UID}', name:'BareWidget', filePath:'${BARE_WIDGET_PATH}', startLine:1, endLine:3, content:'public class BareWidget {}', description:''})`,
+  `CREATE (collision:Method {id:'${BARE_WIDGET_METHOD_UID}', name:'BareWidget', filePath:'force-app/main/default/classes/BareWidgetHelpers.cls', startLine:3, endLine:5, content:'public static void BareWidget() {}', description:''})`,
 ];
 
 withTestLbugDB(
@@ -64,7 +77,7 @@ withTestLbugDB(
 
       it('target_uid selects exactly the Apex Class', async () => {
         const result = await backend.callTool('impact', {
-          target: 'Widget',
+          target: 'name-that-does-not-match-the-class',
           target_uid: CLASS_UID,
           direction: 'upstream',
         });
@@ -93,20 +106,6 @@ withTestLbugDB(
           symbol: { uid: ZERO_ARG_CTOR_UID, kind: 'Constructor' },
         });
       });
-
-      it('still selects the Class when another class has a method named Widget', async () => {
-        const context = await backend.callTool('context', { name: 'Widget' });
-        const impact = await backend.callTool('impact', {
-          target: 'Widget',
-          direction: 'upstream',
-        });
-
-        expect(context).toMatchObject({
-          status: 'found',
-          symbol: { uid: CLASS_UID, kind: 'Class' },
-        });
-        expect(impact.target).toMatchObject({ id: CLASS_UID, type: 'Class' });
-      });
     });
   },
   {
@@ -121,6 +120,104 @@ withTestLbugDB(
           indexedAt: new Date().toISOString(),
           lastCommit: 'abc123',
           stats: { files: 3, nodes: 5, communities: 0, processes: 0 },
+        },
+      ]);
+      const backend = new LocalBackend();
+      await backend.init();
+      (handle as typeof handle & { _backend: LocalBackend })._backend = backend;
+    },
+  },
+);
+
+withTestLbugDB(
+  'apex-class-constructor-method-collision',
+  (handle) => {
+    let backend: LocalBackend;
+
+    beforeAll(() => {
+      backend = (handle as typeof handle & { _backend: LocalBackend })._backend;
+    });
+
+    it('still selects the Class when its constructors and another class method share its name', async () => {
+      const context = await backend.callTool('context', { name: 'Widget' });
+      const impact = await backend.callTool('impact', {
+        target: 'Widget',
+        direction: 'upstream',
+      });
+
+      expect(context).toMatchObject({
+        status: 'found',
+        symbol: { uid: CLASS_UID, kind: 'Class' },
+      });
+      expect(impact.target).toMatchObject({ id: CLASS_UID, type: 'Class' });
+    });
+  },
+  {
+    seed: COLLISION_SEED,
+    poolAdapter: true,
+    afterSetup: async (handle) => {
+      vi.mocked(listRegisteredRepos).mockResolvedValue([
+        {
+          name: 'test-repo',
+          path: '/test/repo',
+          storagePath: handle.tmpHandle.dbPath,
+          indexedAt: new Date().toISOString(),
+          lastCommit: 'abc123',
+          stats: { files: 3, nodes: 5, communities: 0, processes: 0 },
+        },
+      ]);
+      const backend = new LocalBackend();
+      await backend.init();
+      (handle as typeof handle & { _backend: LocalBackend })._backend = backend;
+    },
+  },
+);
+
+withTestLbugDB(
+  'apex-constructorless-class-method-collision',
+  (handle) => {
+    let backend: LocalBackend;
+
+    beforeAll(() => {
+      backend = (handle as typeof handle & { _backend: LocalBackend })._backend;
+    });
+
+    it('returns ambiguity for a constructor-less Class and same-named Method, then resolves by target_uid', async () => {
+      const context = await backend.callTool('context', { name: 'BareWidget' });
+      const impact = await backend.callTool('impact', {
+        target: 'BareWidget',
+        direction: 'upstream',
+      });
+      const byUid = await backend.callTool('impact', {
+        target: 'name-that-does-not-match-the-class',
+        target_uid: BARE_WIDGET_CLASS_UID,
+        direction: 'upstream',
+      });
+      const expectedCandidates = [BARE_WIDGET_CLASS_UID, BARE_WIDGET_METHOD_UID].sort();
+
+      expect(context).toMatchObject({ status: 'ambiguous', totalCandidates: 2 });
+      expect(context.candidates.map((candidate: { uid: string }) => candidate.uid).sort()).toEqual(
+        expectedCandidates,
+      );
+      expect(impact).toMatchObject({ status: 'ambiguous', totalCandidates: 2 });
+      expect(impact.candidates.map((candidate: { uid: string }) => candidate.uid).sort()).toEqual(
+        expectedCandidates,
+      );
+      expect(byUid.target).toMatchObject({ id: BARE_WIDGET_CLASS_UID, type: 'Class' });
+    });
+  },
+  {
+    seed: CONSTRUCTORLESS_SEED,
+    poolAdapter: true,
+    afterSetup: async (handle) => {
+      vi.mocked(listRegisteredRepos).mockResolvedValue([
+        {
+          name: 'test-repo',
+          path: '/test/repo',
+          storagePath: handle.tmpHandle.dbPath,
+          indexedAt: new Date().toISOString(),
+          lastCommit: 'abc123',
+          stats: { files: 2, nodes: 2, communities: 0, processes: 0 },
         },
       ]);
       const backend = new LocalBackend();
