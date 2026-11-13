@@ -8913,11 +8913,16 @@ export class LocalBackend {
         // not every node table carries `isExported` (Protocol/Category do
         // not), so an untyped `n.isExported` is not a safe projection.
         const typeLabel = symType === 'Class' ? 'Class' : 'Interface';
+        // #18: upstream on a Class also seeds every HAS_METHOD member, so the
+        // callers of its (static) methods count as the class's dependants.
+        // Members are seeds, not results: a caller of several members counts
+        // once, and the class's own methods calling each other add nothing.
+        const memberLabel = direction === 'upstream' && symType === 'Class' ? '' : ':Constructor';
         const [ctorRows, fileRows] = await Promise.all([
           executeParameterized(
             repo.lbugPath,
             `
-            MATCH (n)-[hm:CodeRelation]->(c:Constructor)
+            MATCH (n)-[hm:CodeRelation]->(c${memberLabel})
             WHERE n.id = $symId AND hm.type = 'HAS_METHOD'
             RETURN c.id AS id, c.name AS name, labels(c)[0] AS type, c.filePath AS filePath
           `,
