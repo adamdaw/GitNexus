@@ -1812,7 +1812,10 @@ jobs:
   # the real namespace test mandatory; a missing/blocked bwrap is a failure.
   eval-containment-linux:
     name: eval / containment (ubuntu)
-    runs-on: ubuntu-latest
+    # Pinned: on ubuntu-26.04 (what ubuntu-latest now resolves to) bwrap fails
+    # with "No permissions to create a new namespace" even after the AppArmor
+    # userns sysctl below is set to 0. Unpin once the 26.04 cause is found.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       GITNEXUS_REQUIRE_BWRAP_CANARY: '1'
