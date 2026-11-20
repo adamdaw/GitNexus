@@ -1,7 +1,7 @@
 name: Diagnostic bwrap 26.04
 
 # THROWAWAY DIAGNOSTIC. Never merge. Confirms why nested bubblewrap fails on
-# ubuntu-26.04. Every probe is non-fatal so the job log is always readable.
+# ubuntu-26.04 (v2: nested probe mounts a fresh /proc so uid_map is writable). Every probe is non-fatal so the job log is always readable.
 
 on:
   pull_request:
@@ -51,57 +51,73 @@ jobs:
           bwrap --version || true
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           sysctl kernel.apparmor_restrict_unprivileged_userns || true
-      - name: 3-5. Probes before profile change
-        id: before
+      - name: 3. Probes A-D (v2)
         shell: bash
         run: |
-          echo '## outer probe'
-          outer=0
-          bwrap --ro-bind / / --unshare-pid --dev /dev true || outer=$?
-          echo "outer rc=${outer}"
-          echo '## nested probe'
-          nested=0
-          bwrap --ro-bind / / --unshare-pid --dev /dev \
-            bwrap --ro-bind / / --unshare-pid --dev /dev true || nested=$?
-          echo "nested rc=${nested}"
-          echo '## dmesg tail'; sudo dmesg | tail -n 40 || true
-          echo '## journalctl -k apparmor'
-          sudo journalctl -k --no-pager | grep -i apparmor | tail -n 40 || true
-          echo '## dmesg userns/bwrap denials'
-          sudo dmesg | grep -i -E 'unpriv_bwrap|bwrap|userns|DENIED' | tail -n 40 || true
-          echo "outer=${outer}" >> "$GITHUB_OUTPUT"
-          echo "nested=${nested}" >> "$GITHUB_OUTPUT"
-      - name: 6. Replace profile and repeat probes
-        id: after
-        shell: bash
-        run: |
-          bwrap_path="$(readlink -f "$(command -v bwrap)")"
-          echo "bwrap_path=${bwrap_path}"
+          SHIPPED=/etc/apparmor.d/bwrap-userns-restrict
+          BW="$(readlink -f "$(command -v bwrap)")"
+          INNER=(bwrap --ro-bind / / --dev /dev --proc /proc --unshare-pid true)
+          show_denied() {
+            echo "--- kernel AppArmor DENIED lines:"
+            sudo dmesg | grep -E 'apparmor="DENIED"' | tail -n 20 || true
+            echo "--- end"
+          }
+          outer_probe() {
+            sudo dmesg -C || true
+            local rc=0
+            bwrap --ro-bind / / --dev /dev --proc /proc --unshare-pid true || rc=$?
+            echo "outer rc=${rc}"; show_denied; OUTER_RC=$rc
+          }
+          nested_probe() {
+            sudo dmesg -C || true
+            local rc=0
+            bwrap --ro-bind / / --dev /dev --proc /proc --unshare-pid "${INNER[@]}" || rc=$?
+            echo "nested rc=${rc}"; show_denied; NESTED_RC=$rc
+          }
+          echo "bwrap=${BW}"
+          sysctl kernel.apparmor_restrict_unprivileged_userns || true
+
+          echo '=== A: outer probe, shipped profiles'
+          outer_probe || true; A=$OUTER_RC
+
+          echo '=== B: nested probe, shipped profiles'
+          nested_probe || true; B=$NESTED_RC
+
+          echo '=== C: CONTROL, shipped bwrap profile unloaded, nested probe'
+          sudo apparmor_parser -R "$SHIPPED" || true
+          sudo aa-status | grep -i -E 'bwrap|bubblewrap' || echo '(no bwrap profiles loaded)'
+          nested_probe || true; C=$NESTED_RC
+          sudo apparmor_parser -r "$SHIPPED" || true
+          sudo aa-status | grep -i -E 'bwrap|bubblewrap' || true
+
+          echo '=== D1: permissive replacement profile'
           sudo tee /etc/apparmor.d/diag-bwrap >/dev/null <<PROFILE
           abi <abi/4.0>,
           include <tunables/global>
-          profile bwrap ${bwrap_path} flags=(unconfined) {
+          profile bwrap ${BW} flags=(unconfined) {
             userns,
           }
           PROFILE
           cat /etc/apparmor.d/diag-bwrap || true
           sudo apparmor_parser -r /etc/apparmor.d/diag-bwrap || true
           sudo aa-status | grep -i -E 'bwrap|bubblewrap' || true
-          echo '## outer probe (after)'
-          outer=0
-          bwrap --ro-bind / / --unshare-pid --dev /dev true || outer=$?
-          echo "outer rc=${outer}"
-          echo '## nested probe (after)'
-          nested=0
-          bwrap --ro-bind / / --unshare-pid --dev /dev \
-            bwrap --ro-bind / / --unshare-pid --dev /dev true || nested=$?
-          echo "nested rc=${nested}"
-          sudo dmesg | tail -n 20 || true
-          echo "nested_after=${nested}" >> "$GITHUB_OUTPUT"
-      - name: Summary
-        shell: bash
-        env:
-          OUTER: ${{ steps.before.outputs.outer }}
-          NESTED: ${{ steps.before.outputs.nested }}
-          NESTED_AFTER: ${{ steps.after.outputs.nested_after }}
-        run: echo "OUTER=${OUTER} NESTED=${NESTED} NESTED_AFTER_PROFILE=${NESTED_AFTER}"
+          echo '--- D1 nested'; nested_probe || true; D1=$NESTED_RC
+          echo '--- D1 outer'; outer_probe || true; D1_OUTER=$OUTER_RC
+
+          # D2 variants: shipped file with the stacking line replaced.
+          # Restore shipped profile first, then load each variant over it.
+          sudo apparmor_parser -r "$SHIPPED" || true
+          D2=skipped; D2B=skipped
+            echo '=== D2: shipped copy, stacking line -> pix /** -> unconfined'
+            sudo sed 's#^\( *\)allow pix /\*\* -> &bwrap//&unpriv_bwrap,#\1pix /** -> unconfined,#' "$SHIPPED" | sudo tee /etc/apparmor.d/diag-bwrap-d2 >/dev/null
+            grep -n 'pix /\*\*' /etc/apparmor.d/diag-bwrap-d2 || true
+            sudo apparmor_parser -r /etc/apparmor.d/diag-bwrap-d2 || true
+            echo '--- D2 nested'; nested_probe || true; D2=$NESTED_RC
+            echo '--- D2 outer'; outer_probe || true
+            sudo apparmor_parser -r "$SHIPPED" || true
+            echo '=== D2b: shipped copy, stacking line -> ix'
+            sudo sed 's#^\( *\)allow pix /\*\* -> &bwrap//&unpriv_bwrap,#\1ix /**,#' "$SHIPPED" | sudo tee /etc/apparmor.d/diag-bwrap-d2b >/dev/null
+            grep -n 'ix /\*\*' /etc/apparmor.d/diag-bwrap-d2b || true
+            sudo apparmor_parser -r /etc/apparmor.d/diag-bwrap-d2b || true
+            echo '--- D2b nested'; nested_probe || true; D2B=$NESTED_RC
+          echo "A_OUTER=${A} B_NESTED=${B} C_CONTROL_NESTED=${C} D1_NESTED=${D1} D2_NESTED=${D2} (D1_OUTER=${D1_OUTER} D2B_NESTED=${D2B})"
