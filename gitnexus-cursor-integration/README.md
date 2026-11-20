@@ -6,7 +6,7 @@
 > a failure you would notice. Build from source and `npm link` instead, then use the
 > `gitnexus` binary on PATH. See the Apex setup guide.
 
-Static config that adds GitNexus knowledge-graph augmentation and skill files to Cursor.
+Static config that adds GitNexus knowledge-graph augmentation and skill files to Cursor. The hook uses the installed CLI or the `gitnexus` binary on PATH; if neither is available, augmentation is skipped without fetching from npm. This fork deviation must be retained when syncing upstream.
 
 > **Hooks require Cursor 2.4+.** Earlier versions don't expose `postToolUse` and the hook will silently no-op.
 
@@ -94,6 +94,6 @@ Empty stdout means "no augmentation, continue normally" — the hook never block
 
 ## Troubleshooting
 
-- **Nothing happens** — Confirm Cursor is on 2.4+ and the project root has `.cursor/hooks.json` plus the hook files at `hooks/gitnexus-hook.cjs`, `hooks/hook-lock.cjs`, and `hooks/registry-query.cjs`. Then `npx gitnexus list` to confirm the project is indexed.
-- **`gitnexus` not found** — The hook prefers a locally-resolvable `gitnexus/dist/cli/index.js` and falls back to `npx -y gitnexus`. Install globally with `npm i -g gitnexus` to skip the npx cold-start latency.
+- **Nothing happens** — Confirm Cursor is on 2.4+ and the project root has `.cursor/hooks.json` plus the hook files at `hooks/gitnexus-hook.cjs`, `hooks/hook-lock.cjs`, and `hooks/registry-query.cjs`. Then `gitnexus list` to confirm the project is indexed.
+- **`gitnexus` not found** — The hook prefers a locally-resolvable `gitnexus/dist/cli/index.js` and falls back to the `gitnexus` binary on PATH. If neither is available, augmentation is skipped without fetching from npm. Build and link this fork's CLI so `gitnexus` is on PATH.
 - **Wrong pattern extracted** — Set `GITNEXUS_DEBUG=1` and run a tool call. The raw stdin payload is logged to stderr; use it to confirm Cursor's actual `tool_input` field names against the table above. If they differ, file an issue with the captured payload.
