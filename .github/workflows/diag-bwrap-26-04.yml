@@ -1,0 +1,107 @@
+name: Diagnostic bwrap 26.04
+
+# THROWAWAY DIAGNOSTIC. Never merge. Confirms why nested bubblewrap fails on
+# ubuntu-26.04. Every probe is non-fatal so the job log is always readable.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/diag-bwrap-26-04.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    name: diag / bwrap nesting (ubuntu-26.04)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: 1. Record environment
+        shell: bash
+        run: |
+          echo '## uname'; uname -a || true
+          echo '## image'; echo "${ImageVersion:-unset}" || true
+          echo '## bwrap path'; command -v bwrap || true
+          readlink -f "$(command -v bwrap)" || true
+          bwrap --version || true
+          echo '## LSM'; cat /sys/kernel/security/lsm || true; echo
+          echo '## sysctls'
+          sysctl kernel.apparmor_restrict_unprivileged_userns || true
+          sysctl user.max_user_namespaces || true
+          sysctl kernel.unprivileged_userns_clone || true
+          echo '## apparmor tools'
+          command -v aa-status || true
+          command -v apparmor_parser || true
+          echo '## shipped profiles mentioning bwrap/bubblewrap'
+          grep -rlsiE 'bwrap|bubblewrap' /etc/apparmor.d || true
+          for f in $(grep -rlsiE 'bwrap|bubblewrap' /etc/apparmor.d || true); do
+            echo "### $f"; cat "$f" || true
+          done
+          echo '## aa-status | grep bwrap'
+          sudo aa-status | grep -i -E 'bwrap|bubblewrap' || true
+      - name: 2. Install bubblewrap and set userns sysctl
+        shell: bash
+        run: |
+          command -v bwrap || { sudo apt-get update || true; sudo apt-get install --yes --no-install-recommends bubblewrap || true; }
+          command -v bwrap || true
+          bwrap --version || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sysctl kernel.apparmor_restrict_unprivileged_userns || true
+      - name: 3-5. Probes before profile change
+        id: before
+        shell: bash
+        run: |
+          echo '## outer probe'
+          outer=0
+          bwrap --ro-bind / / --unshare-pid --dev /dev true || outer=$?
+          echo "outer rc=${outer}"
+          echo '## nested probe'
+          nested=0
+          bwrap --ro-bind / / --unshare-pid --dev /dev \
+            bwrap --ro-bind / / --unshare-pid --dev /dev true || nested=$?
+          echo "nested rc=${nested}"
+          echo '## dmesg tail'; sudo dmesg | tail -n 40 || true
+          echo '## journalctl -k apparmor'
+          sudo journalctl -k --no-pager | grep -i apparmor | tail -n 40 || true
+          echo '## dmesg userns/bwrap denials'
+          sudo dmesg | grep -i -E 'unpriv_bwrap|bwrap|userns|DENIED' | tail -n 40 || true
+          echo "outer=${outer}" >> "$GITHUB_OUTPUT"
+          echo "nested=${nested}" >> "$GITHUB_OUTPUT"
+      - name: 6. Replace profile and repeat probes
+        id: after
+        shell: bash
+        run: |
+          bwrap_path="$(readlink -f "$(command -v bwrap)")"
+          echo "bwrap_path=${bwrap_path}"
+          sudo tee /etc/apparmor.d/diag-bwrap >/dev/null <<PROFILE
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap ${bwrap_path} flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+          cat /etc/apparmor.d/diag-bwrap || true
+          sudo apparmor_parser -r /etc/apparmor.d/diag-bwrap || true
+          sudo aa-status | grep -i -E 'bwrap|bubblewrap' || true
+          echo '## outer probe (after)'
+          outer=0
+          bwrap --ro-bind / / --unshare-pid --dev /dev true || outer=$?
+          echo "outer rc=${outer}"
+          echo '## nested probe (after)'
+          nested=0
+          bwrap --ro-bind / / --unshare-pid --dev /dev \
+            bwrap --ro-bind / / --unshare-pid --dev /dev true || nested=$?
+          echo "nested rc=${nested}"
+          sudo dmesg | tail -n 20 || true
+          echo "nested_after=${nested}" >> "$GITHUB_OUTPUT"
+      - name: Summary
+        shell: bash
+        env:
+          OUTER: ${{ steps.before.outputs.outer }}
+          NESTED: ${{ steps.before.outputs.nested }}
+          NESTED_AFTER: ${{ steps.after.outputs.nested_after }}
+        run: echo "OUTER=${OUTER} NESTED=${NESTED} NESTED_AFTER_PROFILE=${NESTED_AFTER}"
