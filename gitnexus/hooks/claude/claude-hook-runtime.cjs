@@ -179,14 +179,11 @@ let unguardedCliWarned = false;
 
 /**
  * Execute a CLI target chosen by the installation adapter. A target carries
- * its command and prefix arguments; npx targets need an extra installation
- * budget and process-group KILL because the CLI is a grandchild of the guard.
- * Direct children use TERM followed by KILL. The guard always outlives Node's
- * inner timeout by at least one second, preserving supervised exit behavior.
- *
- * The npx group kill relies on coreutils semantics: busybox guards only signal
- * their direct child. On the supervised path, Node's timeout can also stop the
- * guard before escalation. These existing limitations remain unchanged.
+ * its command and prefix arguments. The CLI is always the guard's direct child
+ * (this fork removed the npm-fetch arm), so the guard uses TERM followed by
+ * KILL. The guard always outlives Node's inner timeout by at least one second,
+ * preserving supervised exit behavior. On the supervised path, Node's timeout
+ * can also stop the guard before escalation; that existing limitation remains.
  */
 function runGitNexusCli(target, args, cwd, timeout) {
   const isWin = process.platform === 'win32';
@@ -197,22 +194,15 @@ function runGitNexusCli(target, args, cwd, timeout) {
       '[GitNexus hook] no usable timeout/gtimeout guard; augment CLI child runs unguarded\n',
     );
   }
-  const effectiveTimeout = timeout + (target.npx ? 5000 : 0);
   const commandArgs = [...target.args, ...args];
-  const guardArgs = target.npx ? ['-s', 'KILL', '-k', '1'] : ['-k', '1'];
   return spawnSync(
     guard || target.command,
     guard
-      ? [
-          ...guardArgs,
-          String(Math.ceil(effectiveTimeout / 1000) + 1),
-          target.command,
-          ...commandArgs,
-        ]
+      ? ['-k', '1', String(Math.ceil(timeout / 1000) + 1), target.command, ...commandArgs]
       : commandArgs,
     {
       encoding: 'utf-8',
-      timeout: effectiveTimeout,
+      timeout,
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,

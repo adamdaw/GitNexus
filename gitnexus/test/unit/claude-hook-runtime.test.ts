@@ -13,7 +13,6 @@ const RUNTIME = path.join(HOOK_DIR, 'claude-hook-runtime.cjs');
 interface CliTarget {
   command: string;
   args: string[];
-  npx?: boolean;
 }
 
 interface HookRuntime {
@@ -66,22 +65,6 @@ describe('shared Claude hook CLI execution', () => {
       },
     );
     expect(target.args).toEqual(['/cli path/index.js']);
-  });
-
-  it('gives npx its extra budget and kills the whole child process group', () => {
-    const runtime = loadRuntime({ guard: '/tools/timeout' });
-    runtime.runGitNexusCli(
-      { command: 'npx', args: ['-y', 'gitnexus'], npx: true },
-      ['augment'],
-      '/repo',
-      7000,
-    );
-
-    expect(runtime.spawnSync).toHaveBeenCalledExactlyOnceWith(
-      '/tools/timeout',
-      ['-s', 'KILL', '-k', '1', '13', 'npx', '-y', 'gitnexus', 'augment'],
-      expect.objectContaining({ timeout: 12000, windowsHide: true }),
-    );
   });
 
   it.each(['C:\\nodejs\\node.exe', 'C:\\Program Files\\nodejs\\node.exe'])(
