@@ -1812,10 +1812,7 @@ jobs:
   # the real namespace test mandatory; a missing/blocked bwrap is a failure.
   eval-containment-linux:
     name: eval / containment (ubuntu)
-    # Pinned: on ubuntu-26.04 (what ubuntu-latest now resolves to) bwrap fails
-    # with "No permissions to create a new namespace" even after the AppArmor
-    # userns sysctl below is set to 0. Unpin once the 26.04 cause is found.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       GITNEXUS_REQUIRE_BWRAP_CANARY: '1'
@@ -1871,6 +1868,32 @@ jobs:
             "${canary_runtime}/node_modules/@anthropic-ai/claude-code/package.json"
           test "$("${canary_runtime}/node_modules/@anthropic-ai/claude-code-linux-x64/claude" --version)" = \
             '2.1.214 (Claude Code)'
+      # ubuntu-26.04 ships /etc/apparmor.d/bwrap-userns-restrict, which stacks
+      # profile `unpriv_bwrap` (audit deny capability) onto everything bwrap
+      # launches. A nested bwrap (eval/workflow_bench/mcp_transport.py,
+      # proposer_sandbox.py) is then denied CAP_SYS_ADMIN ("DENIED capable ...
+      # profile=unpriv_bwrap capname=sys_admin") and fails with "bwrap: No
+      # permissions to create a new namespace". Replace it with an unconfined
+      # bwrap profile that only grants userns. This loosens bwrap's AppArmor
+      # confinement on this ephemeral runner only. Absent on 24.04: skipped.
+      - name: Allow nested bwrap under AppArmor (ubuntu 26.04+)
+        run: |
+          set -euo pipefail
+          shipped=/etc/apparmor.d/bwrap-userns-restrict
+          if [[ ! -e "${shipped}" ]]; then
+            echo "${shipped} not present; no AppArmor bwrap profile to replace"
+            exit 0
+          fi
+          profile="${RUNNER_TEMP}/bwrap-nested.apparmor"
+          cat > "${profile}" <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+          sudo apparmor_parser -r "${profile}"
+          sudo aa-status | grep -i bwrap
       - name: Install and build pinned GitNexus runtime
         run: |
           npm ci
