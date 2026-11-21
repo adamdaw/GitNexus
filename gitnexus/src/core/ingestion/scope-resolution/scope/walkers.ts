@@ -20,7 +20,12 @@
  * as-is for TypeScript, Java, Kotlin, Ruby, etc.
  */
 
-import { importTargetDirectory, lookupLexicalName, nameClaimsFor } from 'gitnexus-shared';
+import {
+  importNameFiltersAllow,
+  importTargetDirectory,
+  lookupLexicalName,
+  nameClaimsFor,
+} from 'gitnexus-shared';
 import type {
   NameLookupOptions,
   NameClaimResult,
@@ -682,12 +687,17 @@ export function findUntypedReceiverBinder(
 ): Scope | undefined {
   const claim = lookupNameClaim(startScope, receiverName, scopes, options);
   const scope = claim.scope;
+  const localCallable =
+    claim.bindings.length > 0 &&
+    claim.bindings.every(
+      (binding) => binding.origin === 'local' && binding.def.type === 'Function',
+    );
   if (
     scope === undefined ||
-    claim.status !== 'blocked' ||
+    (claim.status !== 'blocked' && !localCallable) ||
     claim.typeBinding !== undefined ||
     claim.claims.length > 0 ||
-    claim.bindings.length > 0 ||
+    (claim.bindings.length > 0 && !localCallable) ||
     claim.imports.length > 0 ||
     scope.lexicalNames?.has(receiverName) !== true
   ) {
@@ -1117,6 +1127,26 @@ export function findClassBindingInScope(
       );
       const candidates = new Map<string, SymbolDefinition>();
       const memberName = receiverName.slice(rootName.length).replace(/^[.:]+/, '');
+      for (const target of targetFiles) {
+        const exports = scopes.namespaceExportsByFile?.get(target);
+        if (exports === undefined) continue;
+        const def = exports.get(memberName);
+        if (
+          def !== undefined &&
+          isClassLike(def.type) &&
+          namespaceImportAllowsMember(
+            startScope,
+            rootName,
+            memberName,
+            scopes,
+            lookup?.position,
+            target,
+          ) &&
+          (lookup?.namespaceMemberVisible?.(def) ?? true) &&
+          (lookup?.classCandidateFilter?.(def) ?? true)
+        )
+          candidates.set(def.nodeId, def);
+      }
       for (const spelling of [receiverName, memberName]) {
         for (const id of scopes.qualifiedNames.get(spelling)) {
           const def = scopes.defs.get(id);
@@ -1124,6 +1154,15 @@ export function findClassBindingInScope(
             def !== undefined &&
             isClassLike(def.type) &&
             targetFiles.has(def.filePath) &&
+            !scopes.namespaceExportsByFile?.has(def.filePath) &&
+            namespaceImportAllowsMember(
+              startScope,
+              rootName,
+              memberName,
+              scopes,
+              lookup?.position,
+              def.filePath,
+            ) &&
             (lookup?.namespaceMemberVisible?.(def) ?? true) &&
             (lookup?.classCandidateFilter?.(def) ?? true)
           )
@@ -1876,9 +1915,9 @@ function enclosingScopeSegments(
  * different headers/namespaces).
  *
  * Disambiguates by the referencing file's import graph: the enclosing
- * module scope's finalized `ImportEdge[]` (C++ `#include`, C# `using`, etc.)
- * each carry the exporting file in `targetFile`. A candidate whose defining
- * file is brought in by one of those edges is preferred. Resolution is
+ * module scope's `ImportVisibility` covers explicit edges and shared wildcard
+ * targets. A candidate whose defining file is reachable through those imports
+ * is preferred. Resolution is
  * tiered, strictest first, and only commits when EXACTLY ONE candidate
  * survives a tier — so a still-ambiguous name keeps the historical
  * "return undefined" refusal:
@@ -1890,7 +1929,7 @@ function enclosingScopeSegments(
  *      namespace import resolves to ONE representative file in the namespace's
  *      directory, not necessarily the file declaring the referenced type).
  *
- * Language-neutral: keyed only on the finalized import edges and the
+ * Language-neutral: keyed only on finalized import visibility and the
  * candidate defs' `filePath`. Returns `undefined` (preserving refusal) when
  * the name is single-match-resolvable already (never reached — caller gates
  * on `findClassBindingInScope` miss), when no import disambiguates, or when
@@ -2560,6 +2599,11 @@ export function findExportedDef(
    */
   isVisible?: (def: SymbolDefinition) => boolean,
 ): SymbolDefinition | undefined {
+  const exports = index.namespaceExportsByFile?.get(targetFile);
+  if (exports !== undefined) {
+    const def = exports.get(memberName);
+    return def !== undefined && (isVisible === undefined || isVisible(def)) ? def : undefined;
+  }
   const moduleScope = index.moduleScopeByFile.get(targetFile);
   if (moduleScope === undefined) return undefined;
   const refs = moduleScope.bindings.get(memberName);
@@ -2568,6 +2612,24 @@ export function findExportedDef(
     if (ref.origin === 'local' && (isVisible === undefined || isVisible(ref.def))) return ref.def;
   }
   return undefined;
+}
+
+/** Per-statement namespace filters apply to the first member reached through a prefix. */
+export function namespaceImportAllowsMember(
+  inScope: ScopeId,
+  prefix: string,
+  member: string,
+  scopes: ScopeResolutionIndexes,
+  position?: TypeRef['lookupPosition'],
+  targetFile?: string,
+): boolean {
+  const imports = lookupNameClaim(inScope, prefix, scopes, { position }).imports.filter(
+    (edge) =>
+      edge.kind === 'namespace' && (targetFile === undefined || edge.targetFile === targetFile),
+  );
+  return (
+    imports.length === 0 || imports.some((edge) => importNameFiltersAllow(edge.nameFilters, member))
+  );
 }
 
 /**

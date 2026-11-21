@@ -21,11 +21,7 @@
  * parameter stops the walk too. PHP emits no lexical binder names: its pins
  * characterize today's edges, including known wrong ones, until it opts in.
  */
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { runPipelineFromRepo } from '../../../src/core/ingestion/pipeline.js';
+import { describe, expect, it } from 'vitest';
 import type { PipelineResult } from '../../../src/types/pipeline.js';
 import {
   isLanguageAvailable,
@@ -33,7 +29,7 @@ import {
   loadParser,
 } from '../../../src/core/tree-sitter/parser-loader.js';
 import { SupportedLanguages } from '../../../src/config/supported-languages.js';
-import { getRelationships, getResolutionOutcomes, writeFixtureRepo } from './helpers.js';
+import { getRelationships, getResolutionOutcomes, useFixture } from './helpers.js';
 
 // The Dart grammar is optional; its suites skip where it cannot load.
 let dartAvailable = isLanguageAvailable(SupportedLanguages.Dart);
@@ -44,24 +40,6 @@ if (dartAvailable) {
   } catch {
     dartAvailable = false;
   }
-}
-
-/** Materialize `files`, run the pipeline once, and clean up after the block. */
-function useFixture(prefix: string, files: Record<string, string>): () => PipelineResult {
-  let root = '';
-  let result: PipelineResult | undefined;
-  beforeAll(async () => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), `gitnexus-${prefix}-`));
-    writeFixtureRepo(root, files);
-    result = await runPipelineFromRepo(root, () => {});
-  }, 60000);
-  afterAll(() => {
-    if (root !== '') fs.rmSync(root, { recursive: true, force: true });
-  });
-  return () => {
-    if (result === undefined) throw new Error('pipeline did not run');
-    return result;
-  };
 }
 
 /**
@@ -836,7 +814,7 @@ void k1(Address cs) {
         'Function:app.dart:k1 -> Method:models.dart:Address.save#0 @8:5',
       ]);
       expect(memberCalls(run(), 'run')).toEqual([
-        'Function:app.dart:k1 -> Method:models.dart:Other.run#0 @6:7',
+        'Function:app.dart:k1.inner@3:2 -> Method:models.dart:Other.run#0 @6:7',
       ]);
     });
   },
@@ -943,7 +921,7 @@ void g5(Address cs, List<dynamic> xs) {
     it('inside the loop, the loop variable hides the typed parameter', () => {
       expect(memberCalls(run(), 'save').filter((e) => e.includes('g5'))).toEqual([]);
       expect(declinesAt(run(), 'app.dart', 33, 7, 'save')).toEqual([
-        `${UNTYPED} scope:app.dart#32:2-34:3:Block`,
+        `${UNTYPED} scope:app.dart#32:22-34:3:Block`,
       ]);
     });
   },
@@ -973,11 +951,14 @@ class Holder {
     });
 
     it('`_` inside the closure is the field, not an `Other`', () => {
-      expect(memberCalls(run(), 'save')).toEqual([]);
-      expect(declinesAt(run(), 'app.dart', 7, 8, 'save')).toEqual(['receiver-owned-but-unbound']);
+      expect(memberCalls(run(), 'save')).toEqual([
+        'Function:app.dart:fn@9:2.h@10:4 -> Method:models.dart:Address.save#0 @12:8',
+        'Method:app.dart:Holder.run#1 -> Method:models.dart:Address.save#0 @7:8',
+      ]);
+      expect(declinesAt(run(), 'app.dart', 7, 8, 'save')).toEqual([]);
       // A closure bound to a name always has its scope, so its `_` parameter
       // must not type it either.
-      expect(declinesAt(run(), 'app.dart', 12, 8, 'save')).toEqual(['receiver-owned-but-unbound']);
+      expect(declinesAt(run(), 'app.dart', 12, 8, 'save')).toEqual([]);
     });
   },
 );
@@ -1011,7 +992,7 @@ void ft(Address a, List<int> items) {
 
   it("a function-typed parameter's own parameter `a` does not hide the outer `a`", () => {
     expect(memberCalls(run(), 'save').filter((e) => e.includes('ft'))).toEqual([
-      'Function:app.dart:ft -> Method:models.dart:Address.save#0 @12:6',
+      'Function:app.dart:ft.inner@10:2 -> Method:models.dart:Address.save#0 @12:6',
     ]);
   });
 });

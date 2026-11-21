@@ -76,6 +76,9 @@ export type DottedHeritageBaseResolution =
   | { readonly kind: 'pass-through' };
 
 export interface ScopeResolutionIndexes {
+  /** Optional authoritative namespace exports, installed when the bundle is
+   *  built, before return propagation. */
+  readonly namespaceExportsByFile?: ReadonlyMap<string, ReadonlyMap<string, SymbolDefinition>>;
   readonly scopeTree: ScopeTree;
   readonly defs: DefIndex;
   readonly qualifiedNames: QualifiedNameIndex;

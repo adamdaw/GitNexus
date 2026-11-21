@@ -1439,6 +1439,15 @@ jobs:
         run: node --import tsx bench/cpp-qualified-ns/measure.mjs --check
         working-directory: gitnexus
 
+      - name: Group manifest-link matching guards (#1188)
+        if: ${{ !cancelled() }}
+        # Build-free: a group.yaml link's consumer may only match providers in
+        # the repo the link names. Fingerprints every cross-link and unmatched
+        # contract of the matching stage and guards that its cost stays linear
+        # in the number of links. See bench/group-link-matching/measure.mjs.
+        run: node --import tsx bench/group-link-matching/measure.mjs --check
+        working-directory: gitnexus
+
       - name: Import-target resolution guards (every registered language, #2877–#2909, PR #2911)
         if: ${{ !cancelled() }}
         # Build-free: runs EVERY import-target resolver registered in
@@ -1610,8 +1619,39 @@ jobs:
         # scaling against input/output growth across geometric 16x function,
         # closure and depth sweeps. Deterministic AST and Map visit guards
         # also reject cheap quadratic scans.
-        # Work and timing budgets: see baseline.json.
-        run: node --import tsx bench/dart-closure-binders/measure.mjs --check
+        # Use the full sampling profile: the short profile's maximum-of-pairs
+        # timing statistic is noisy even on the base. Work/timing budgets stay
+        # unchanged; accuracy and RSS cells run in fresh processes.
+        run: node --import tsx bench/dart-closure-binders/measure.mjs --full --check
+        working-directory: gitnexus
+
+      - name: HTTP route symbol time / memory / work scaling (#3929)
+        if: ${{ !cancelled() }}
+        run: node --expose-gc --import tsx bench/http-route-symbols/measure.mjs --check --output http-route-symbols.json
+        working-directory: gitnexus
+
+      - name: Upload HTTP route symbol measurements
+        if: always()
+        uses: ./.github/actions/upload-test-artifact
+        with:
+          name: http-route-symbols-benchmark
+          path: gitnexus/http-route-symbols.json
+          retention-days: 5
+
+      - name: Ownership-reconciliation correctness + scaling guards
+        if: ${{ !cancelled() }}
+        # Build-free: extracts the corpus with the TypeScript scope extractor on
+        # the main thread. Pins what reconcileOwnership registers (exact cells and
+        # fingerprints), including empty ownerless buckets, checks
+        # its time scaling as the file count grows 4x (budget 1.5), and counts the
+        # registry entries the pass reads: they must grow with the defs, not with
+        # defs x shared-bucket size (budget 1.1).
+        run: node --import tsx bench/ownership-reconcile/measure.mjs --check
+        working-directory: gitnexus
+
+      - name: Scope capture and binding work guards (#3915)
+        if: ${{ !cancelled() }}
+        run: node --import tsx bench/scope-processing/measure.mjs --check
         working-directory: gitnexus
 
       - name: Scope-emission guards (#2699)
@@ -1750,6 +1790,14 @@ jobs:
           GITNEXUS_DEBUG_HEAP: '1'
         run: node --import tsx bench/scope-resolution/dense-java.mts 300 20 10 --check 2>&1 | tee scope-resolution-dense-java.log
         working-directory: gitnexus
+      - name: Check Java on-demand import storage and its graph baseline
+        shell: bash
+        run: node --expose-gc --import tsx bench/scope-resolution/wildcard-java.mts 700 700 --check 2>&1 | tee scope-resolution-wildcard-java.log
+        working-directory: gitnexus
+      - name: Check Java on-demand import storage while re-export closures are built
+        shell: bash
+        run: node --expose-gc --max-old-space-size=180 --import tsx bench/scope-resolution/wildcard-java.mts 700 700 --closure --check 2>&1 | tee scope-resolution-wildcard-java-closure.log
+        working-directory: gitnexus
       - name: Check Java overload and ingestion scaling
         run: node bench/java-overload-resolution/measure.js --check --output java-overload-resolution-benchmark.json
         working-directory: gitnexus
@@ -1763,6 +1811,8 @@ jobs:
             gitnexus/scope-resolution-call-signature-memory.json
             gitnexus/import-emission/measure.json
             gitnexus/scope-resolution-dense-java.log
+            gitnexus/scope-resolution-wildcard-java.log
+            gitnexus/scope-resolution-wildcard-java-closure.log
             gitnexus/java-overload-resolution-benchmark.json
           retention-days: 5
 
