@@ -24,6 +24,7 @@ import { createRequire } from 'node:module';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import vm from 'node:vm';
 import {
   runHook as spawnHook,
   parseHookOutput,
@@ -53,15 +54,6 @@ const RESOLVE_CJS = path.resolve(
   'claude',
   'resolve-analyze-cmd.cjs',
 );
-const RESOLVE_PLUGIN_CJS = path.resolve(
-  __dirname,
-  '..',
-  '..',
-  '..',
-  'gitnexus-claude-plugin',
-  'hooks',
-  'resolve-analyze-cmd.cjs',
-);
 const PLUGIN_HOOK = path.resolve(
   __dirname,
   '..',
@@ -71,30 +63,13 @@ const PLUGIN_HOOK = path.resolve(
   'hooks',
   'gitnexus-hook.js',
 );
-const PLUGIN_HOOK_LOCK = path.resolve(
-  __dirname,
-  '..',
-  '..',
-  '..',
-  'gitnexus-claude-plugin',
-  'hooks',
-  'hook-lock.js',
-);
+const CJS_RUNTIME = path.join(path.dirname(CJS_HOOK), 'claude-hook-runtime.cjs');
 const CJS_HOOK_DB_PROBE = path.resolve(
   __dirname,
   '..',
   '..',
   'hooks',
   'claude',
-  'hook-db-lock-probe.cjs',
-);
-const PLUGIN_HOOK_DB_PROBE = path.resolve(
-  __dirname,
-  '..',
-  '..',
-  '..',
-  'gitnexus-claude-plugin',
-  'hooks',
   'hook-db-lock-probe.cjs',
 );
 
@@ -183,10 +158,14 @@ let tmpDir: string;
 let gitNexusDir: string;
 let hookHome: string;
 const originalGitNexusHome = process.env.GITNEXUS_HOME;
+const originalNodePath = process.env.NODE_PATH;
 
 const HOOK_TEST_IDENTITY: GitIdentity = { name: 'Test', email: 'test@test.com' };
 
 beforeAll(() => {
+  // The standalone plugin resolves the installed npm package. Expose this
+  // checkout as that package without invoking npm or reaching the network.
+  process.env.NODE_PATH = path.resolve(__dirname, '..', '..', '..');
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitnexus-hook-test-'));
   gitNexusDir = path.join(tmpDir, '.gitnexus');
   fs.mkdirSync(gitNexusDir, { recursive: true });
@@ -211,6 +190,8 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  if (originalNodePath === undefined) delete process.env.NODE_PATH;
+  else process.env.NODE_PATH = originalNodePath;
   if (originalGitNexusHome === undefined) delete process.env.GITNEXUS_HOME;
   else process.env.GITNEXUS_HOME = originalGitNexusHome;
   fs.rmSync(hookHome, { recursive: true, force: true });
@@ -329,10 +310,10 @@ describe('Hook files exist', () => {
 
 describe('Shell injection regression', () => {
   for (const [label, hookPath] of [
-    ['CJS', CJS_HOOK],
-    ['Plugin', PLUGIN_HOOK],
+    ['CJS adapter', CJS_HOOK],
+    ['CJS runtime', CJS_RUNTIME],
+    ['Plugin adapter', PLUGIN_HOOK],
     ['Resolve CJS', RESOLVE_CJS],
-    ['Resolve Plugin', RESOLVE_PLUGIN_CJS],
   ] as const) {
     it(`${label} hook has no shell: true in spawnSync calls`, () => {
       const source = fs.readFileSync(hookPath, 'utf-8');
@@ -384,13 +365,12 @@ describe('Shell injection regression', () => {
 describe('windowsHide regression', () => {
   // Hook-layer files. Adding a new hook file MUST be reflected here.
   const HOOK_FILES: Array<readonly [string, string]> = [
-    ['gitnexus/hooks/claude/gitnexus-hook.cjs', CJS_HOOK],
+    ['gitnexus/hooks/claude/claude-hook-runtime.cjs', CJS_RUNTIME],
     [
       'gitnexus/hooks/claude/registry-query.cjs',
       path.resolve(__dirname, '..', '..', 'hooks', 'claude', 'registry-query.cjs'),
     ],
     ['gitnexus/hooks/claude/resolve-analyze-cmd.cjs', RESOLVE_CJS],
-    ['gitnexus-claude-plugin/hooks/resolve-analyze-cmd.cjs', RESOLVE_PLUGIN_CJS],
     [
       'gitnexus/hooks/antigravity/gitnexus-antigravity-hook.cjs',
       path.resolve(__dirname, '..', '..', 'hooks', 'antigravity', 'gitnexus-antigravity-hook.cjs'),
@@ -401,18 +381,6 @@ describe('windowsHide regression', () => {
     ],
     ['gitnexus-claude-plugin/hooks/gitnexus-hook.js', PLUGIN_HOOK],
     [
-      'gitnexus-claude-plugin/hooks/registry-query.cjs',
-      path.resolve(
-        __dirname,
-        '..',
-        '..',
-        '..',
-        'gitnexus-claude-plugin',
-        'hooks',
-        'registry-query.cjs',
-      ),
-    ],
-    [
       'gitnexus-cursor-integration/hooks/registry-query.cjs',
       path.resolve(
         __dirname,
@@ -422,18 +390,6 @@ describe('windowsHide regression', () => {
         'gitnexus-cursor-integration',
         'hooks',
         'registry-query.cjs',
-      ),
-    ],
-    [
-      'gitnexus-claude-plugin/hooks/hook-db-lock-probe.cjs',
-      path.resolve(
-        __dirname,
-        '..',
-        '..',
-        '..',
-        'gitnexus-claude-plugin',
-        'hooks',
-        'hook-db-lock-probe.cjs',
       ),
     ],
     [
@@ -581,25 +537,21 @@ describe('windowsHide regression', () => {
 // ─── Source code regression: .cmd extensions for Windows ─────────────
 
 describe('Windows .cmd extension handling', () => {
-  // The `npx.cmd` assertions that sat here covered the npm-fetch branch, which
-  // this fork removed: `npx -y gitnexus` runs the published package, which has no
-  // Apex support. Only the plugin hook still spawns a PATH command needing the
-  // Windows shim; the CJS and antigravity hooks spawn process.execPath with a
-  // resolved CLI path, which takes no extension. The removal itself is asserted
-  // in resolve-invocation.test.ts.
-  it('Plugin hook uses .cmd extension for Windows gitnexus binary', () => {
+  // The plugin hook is now a bootstrap that locates the installed package; it
+  // resolves the `gitnexus` launcher through PATH with Windows `.cmd` suffixes.
+  // There is no `npx.cmd` branch: this fork is not published to npm, so an npm
+  // fetch would run upstream's package (no Apex support).
+  it('Plugin hook resolves Windows .cmd launchers on PATH and never spawns npx', () => {
     const source = fs.readFileSync(PLUGIN_HOOK, 'utf-8');
-    expect(source).toContain('gitnexus.cmd');
+    expect(source).toContain("['.cmd', '.exe', '.bat', '']");
+    expect(source).not.toMatch(/npx|bunx|dlx|gitnexus@/);
   });
 });
 
 // ─── Source code regression: cwd validation ─────────────────────────
 
 describe('cwd validation guards', () => {
-  for (const [label, hookPath] of [
-    ['CJS', CJS_HOOK],
-    ['Plugin', PLUGIN_HOOK],
-  ] as const) {
+  for (const [label, hookPath] of [['CJS', CJS_RUNTIME]] as const) {
     it(`${label} hook validates cwd is absolute path`, () => {
       const source = fs.readFileSync(hookPath, 'utf-8');
       const cwdChecks = (source.match(/path\.isAbsolute\(cwd\)/g) || []).length;
@@ -612,10 +564,7 @@ describe('cwd validation guards', () => {
 // ─── Source code regression: sendHookResponse used consistently ──────
 
 describe('sendHookResponse consistency', () => {
-  for (const [label, hookPath] of [
-    ['CJS', CJS_HOOK],
-    ['Plugin', PLUGIN_HOOK],
-  ] as const) {
+  for (const [label, hookPath] of [['CJS', CJS_RUNTIME]] as const) {
     it(`${label} hook uses sendHookResponse in both handlers`, () => {
       const source = fs.readFileSync(hookPath, 'utf-8');
       const calls = (source.match(/sendHookResponse\(/g) || []).length;
@@ -636,10 +585,7 @@ describe('sendHookResponse consistency', () => {
 // ─── Source code regression: dispatch map pattern ────────────────────
 
 describe('Dispatch map pattern', () => {
-  for (const [label, hookPath] of [
-    ['CJS', CJS_HOOK],
-    ['Plugin', PLUGIN_HOOK],
-  ] as const) {
+  for (const [label, hookPath] of [['CJS', CJS_RUNTIME]] as const) {
     it(`${label} hook uses dispatch map instead of if/else`, () => {
       const source = fs.readFileSync(hookPath, 'utf-8');
       expect(source).toContain('const handlers = {');
@@ -654,10 +600,7 @@ describe('Dispatch map pattern', () => {
 // ─── Source code regression: debug error truncation ──────────────────
 
 describe('Debug error message truncation', () => {
-  for (const [label, hookPath] of [
-    ['CJS', CJS_HOOK],
-    ['Plugin', PLUGIN_HOOK],
-  ] as const) {
+  for (const [label, hookPath] of [['CJS', CJS_RUNTIME]] as const) {
     it(`${label} hook truncates error messages to 200 chars`, () => {
       const source = fs.readFileSync(hookPath, 'utf-8');
       expect(source).toContain('.slice(0, 200)');
@@ -668,10 +611,7 @@ describe('Debug error message truncation', () => {
 // ─── extractPattern regression (via source analysis) ────────────────
 
 describe('extractPattern coverage', () => {
-  for (const [label, hookPath] of [
-    ['CJS', CJS_HOOK],
-    ['Plugin', PLUGIN_HOOK],
-  ] as const) {
+  for (const [label, hookPath] of [['CJS', CJS_RUNTIME]] as const) {
     it(`${label} hook extracts pattern from Grep tool input`, () => {
       const source = fs.readFileSync(hookPath, 'utf-8');
       expect(source).toContain("toolName === 'Grep'");
@@ -687,11 +627,6 @@ describe('extractPattern coverage', () => {
       const source = fs.readFileSync(hookPath, 'utf-8');
       expect(source).toMatch(/\\brg\\b.*\\bgrep\\b/);
     });
-
-    it(`${label} hook rejects patterns shorter than 3 chars`, () => {
-      const source = fs.readFileSync(hookPath, 'utf-8');
-      expect(source).toContain('cleaned.length >= 3');
-    });
   }
 });
 
@@ -700,10 +635,7 @@ describe('extractPattern coverage', () => {
 describe('Git mutation regex', () => {
   const GIT_REGEX = /\\bgit\\s\+\(commit\|merge\|rebase\|cherry-pick\|pull\)/;
 
-  for (const [label, hookPath] of [
-    ['CJS', CJS_HOOK],
-    ['Plugin', PLUGIN_HOOK],
-  ] as const) {
+  for (const [label, hookPath] of [['CJS', CJS_RUNTIME]] as const) {
     it(`${label} hook detects git commit`, () => {
       const source = fs.readFileSync(hookPath, 'utf-8');
       expect(source).toContain('commit');
@@ -735,9 +667,8 @@ describe('Git mutation regex', () => {
 // ─── Source code regression: PreToolUse concurrency guard (#1486) ──
 
 describe('PreToolUse concurrency guard', () => {
-  for (const [label, hookPath, lockPath] of [
-    ['CJS', CJS_HOOK, CJS_HOOK_LOCK],
-    ['Plugin', PLUGIN_HOOK, PLUGIN_HOOK_LOCK],
+  for (const [label, hookPath, lockPath, runtimePath] of [
+    ['CJS', CJS_HOOK, CJS_HOOK_LOCK, CJS_RUNTIME],
   ] as const) {
     it(`${label} hook loads acquireHookSlot helper`, () => {
       const source = fs.readFileSync(hookPath, 'utf-8');
@@ -752,7 +683,7 @@ describe('PreToolUse concurrency guard', () => {
     });
 
     it(`${label} hook calls acquireHookSlot in handlePreToolUse`, () => {
-      const source = fs.readFileSync(hookPath, 'utf-8');
+      const source = fs.readFileSync(runtimePath, 'utf-8');
       const preBody = source.slice(
         source.indexOf('function handlePreToolUse'),
         source.indexOf('function handlePostToolUse'),
@@ -815,10 +746,7 @@ describe('acquireHookSlot stale-slot eviction', () => {
   const FOREIGN_TOKEN = `${process.ppid}:ffffffffffffffff`;
   const OWN_TOKEN = new RegExp(`^${process.pid}:[0-9a-f]{16}$`);
 
-  for (const [label, lockPath] of [
-    ['CJS', CJS_HOOK_LOCK],
-    ['Plugin', PLUGIN_HOOK_LOCK],
-  ] as const) {
+  for (const [label, lockPath] of [['CJS', CJS_HOOK_LOCK]] as const) {
     const loadAcquire = (): AcquireHookSlot =>
       (createRequire(import.meta.url)(lockPath) as { acquireHookSlot: AcquireHookSlot })
         .acquireHookSlot;
@@ -1076,7 +1004,6 @@ describe('acquireHookSlot stale-slot eviction', () => {
 describe('acquireHookSlot keeps live slots valid past the old 30s bound', () => {
   const LOCK_COPIES = [
     ['CJS', CJS_HOOK_LOCK],
-    ['Plugin', PLUGIN_HOOK_LOCK],
     [
       'Factory',
       path.resolve(__dirname, '..', '..', '..', 'gitnexus-factory-plugin', 'hooks', 'hook-lock.js'),
@@ -1149,7 +1076,7 @@ describe('acquireHookSlot keeps live slots valid past the old 30s bound', () => 
     });
   }
 
-  it('keeps the four adapter copies byte-identical', () => {
+  it('keeps the package, Factory, and Cursor helpers byte-identical', () => {
     // They share one `.hook-locks` directory, so a divergence in the stale
     // bound would let one adapter evict another adapter's live slot.
     const [primary, ...copies] = LOCK_COPIES.map(([, p]) => fs.readFileSync(p, 'utf-8'));
@@ -1388,10 +1315,7 @@ describe('PreToolUse concurrency guard (integration)', { retry: 1 }, () => {
 // ─── Source: cross-platform DB lock probe module (#1493) ─────────────
 
 describe('Cross-platform DB lock probe (source)', () => {
-  for (const [label, hookPath, probePath] of [
-    ['CJS', CJS_HOOK, CJS_HOOK_DB_PROBE],
-    ['Plugin', PLUGIN_HOOK, PLUGIN_HOOK_DB_PROBE],
-  ] as const) {
+  for (const [label, hookPath, probePath] of [['CJS', CJS_RUNTIME, CJS_HOOK_DB_PROBE]] as const) {
     it(`${label} probe file exists`, () => {
       expect(fs.existsSync(probePath)).toBe(true);
     });
@@ -1417,26 +1341,59 @@ describe('Cross-platform DB lock probe (source)', () => {
       expect(p).toContain('resolveUnixGuardTimeout');
     });
   }
+});
 
-  // T5 (#2163): the two probe copies were only kept in sync by convention
-  // (setup.ts copies the canonical gitnexus/hooks/claude/ file; the plugin
-  // ships its own). Enforce byte-parity in CI, mirroring the
-  // resolve-analyze-cmd.cjs parity test. `.gitattributes` pins `eol=lf`
-  // repo-wide, so the byte comparison is safe on the Windows lane too.
-  it('keeps the two hook-db-lock-probe.cjs copies byte-identical', () => {
-    expect(fs.readFileSync(CJS_HOOK_DB_PROBE, 'utf-8')).toBe(
-      fs.readFileSync(PLUGIN_HOOK_DB_PROBE, 'utf-8'),
-    );
+// Byte identity cannot catch a broken edit in the canonical source. Compile and
+// run the Restart Manager script through the probe's Windows PowerShell route.
+describe.runIf(process.platform === 'win32')('win-rm-list-json.ps1 runs on Windows (#1591)', () => {
+  it('compiles its Restart Manager types and reports no holder for an unused file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-rm-list-'));
+    try {
+      const target = path.join(dir, 'unused.lbug');
+      fs.writeFileSync(target, '');
+      const source = fs
+        .readFileSync(path.join(path.dirname(CJS_HOOK), 'win-rm-list-json.ps1'), 'utf8')
+        .replace(/^\uFEFF/, '')
+        .replace(/\r\n/g, '\n');
+      const encoded = Buffer.from(source, 'utf16le').toString('base64');
+      const powershell = path.join(
+        process.env.SystemRoot || 'C:\\Windows',
+        'System32',
+        'WindowsPowerShell',
+        'v1.0',
+        'powershell.exe',
+      );
+      const result = spawnSync(
+        powershell,
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-STA',
+          '-EncodedCommand',
+          encoded,
+        ],
+        {
+          encoding: 'utf-8',
+          timeout: 60_000,
+          windowsHide: true,
+          env: { ...process.env, GITNEXUS_HOOK_RM_TARGET: target },
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout.trim())).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
 // ─── Source: hook slot must gate the DB-owner probe (#2163) ──────────
 
 describe('PreToolUse source order: tool guard before registry scan', () => {
-  for (const [label, hookPath] of [
-    ['CJS', CJS_HOOK],
-    ['Plugin', PLUGIN_HOOK],
-  ] as const) {
+  for (const [label, hookPath] of [['CJS', CJS_RUNTIME]] as const) {
     it(`${label}: tool guard appears before resolveHookRepo in handlePreToolUse`, () => {
       const source = fs.readFileSync(hookPath, 'utf-8');
       const start = source.indexOf('function handlePreToolUse');
@@ -1471,8 +1428,7 @@ describe('Hook slot gates the DB-owner probe (source order, #2163)', () => {
   // buildAfterToolContext) from probe+augment (runAugment), so its slice
   // spans both functions to express the same call-order contract.
   for (const [label, hookPath, sliceStart, sliceEnd] of [
-    ['CJS', CJS_HOOK, 'function handlePreToolUse', 'function handlePostToolUse'],
-    ['Plugin', PLUGIN_HOOK, 'function handlePreToolUse', 'function handlePostToolUse'],
+    ['CJS', CJS_RUNTIME, 'function handlePreToolUse', 'function handlePostToolUse'],
     [
       'Antigravity',
       ANTIGRAVITY_HOOK,
@@ -1975,16 +1931,15 @@ describe('Augment CLI guard wrap (source, #2163 follow-up)', () => {
     'gitnexus-antigravity-hook.cjs',
   );
 
+  // Claude's shared runner is exercised through direct/npx/Windows/no-guard
+  // behavioral tests in claude-hook-runtime.test.ts. This legacy adapter still
+  // owns its spawning logic and retains its source guard.
   // The cursor integration is deliberately ABSENT from this list: it does
   // not install hook-db-lock-probe.cjs (see gitnexus-cursor-integration/
   // README.md "What's installed manually vs. automated"), so there is no
   // resolver sibling to require — wrapping its augment child is the
   // "cursor probe" item on the #2163 follow-up list.
-  for (const [label, hookPath] of [
-    ['CJS', CJS_HOOK],
-    ['Plugin', PLUGIN_HOOK],
-    ['Antigravity', ANTIGRAVITY_HOOK],
-  ] as const) {
+  for (const [label, hookPath] of [['Antigravity', ANTIGRAVITY_HOOK]] as const) {
     it(`${label}: runGitNexusCli wraps via resolveUnixGuardTimeout with a ceil(ms/1000)+1 budget`, () => {
       const source = fs.readFileSync(hookPath, 'utf-8');
       const start = source.indexOf('function runGitNexusCli');
@@ -2003,23 +1958,18 @@ describe('Augment CLI guard wrap (source, #2163 follow-up)', () => {
       // Coreutils `-k 1` escalation…
       expect(fn).toContain("'-k',");
       // …with a budget STRICTLY above the inner spawnSync timeout:
-      // ceil(inner/1000)+1. The formula is counted exactly — once per wrapped
-      // direct-exec branch (the Plugin adapter has two:
-      // GITNEXUS_HOOK_CLI_PATH and the PATH-direct `gitnexus` branch, its most
-      // common production path) — so a partial revert of any single branch
-      // cannot pass unnoticed.
+      // ceil(inner/1000)+1. The formula is counted exactly for this adapter's
+      // direct-exec branch, so a partial revert cannot pass unnoticed.
       const directBudgetCount = (fn.match(/Math\.ceil\(timeout \/ 1000\) \+ 1/g) ?? []).length;
-      expect(directBudgetCount).toBe(label === 'Plugin' ? 2 : 1);
+      expect(directBudgetCount).toBe(1);
       // Argv-order pin (#2169 review): the budget token must appear BEFORE
       // the command word — `timeout … <budget> <cmd>` — or coreutils would
       // parse the command word as its DURATION argument. Token presence and
       // the counts above alone would let a transposed argv pass.
       const directOrderCount = (
-        fn.match(
-          /String\(Math\.ceil\(timeout \/ 1000\) \+ 1\),\s*(?:process\.execPath|'gitnexus')/g,
-        ) ?? []
+        fn.match(/String\(Math\.ceil\(timeout \/ 1000\) \+ 1\),\s*process\.execPath/g) ?? []
       ).length;
-      expect(directOrderCount).toBe(label === 'Plugin' ? 2 : 1);
+      expect(directOrderCount).toBe(1);
       // Every surviving arm execs the CLI as the guard's DIRECT child, so
       // TERM-first `-k 1` is both gentler and sufficient and `-s` must not
       // appear at all. `-s KILL` and the `timeout + 5000` budget existed only
@@ -2030,10 +1980,7 @@ describe('Augment CLI guard wrap (source, #2163 follow-up)', () => {
     });
   }
 
-  for (const [label, probePath] of [
-    ['CJS', CJS_HOOK_DB_PROBE],
-    ['Plugin', PLUGIN_HOOK_DB_PROBE],
-  ] as const) {
+  for (const [label, probePath] of [['CJS', CJS_HOOK_DB_PROBE]] as const) {
     it(`${label} probe exports resolveUnixGuardTimeout`, () => {
       const source = fs.readFileSync(probePath, 'utf-8');
       const exportsSlice = source.slice(source.indexOf('module.exports'));
@@ -2235,7 +2182,10 @@ describe('PreToolUse augmentation filtering (integration)', () => {
           expect(output!.additionalContext).toContain('mcp__gitnexus__query');
           expect(output!.additionalContext).toContain('validateUser');
           expect(result.status).toBe(0);
-          expect(result.stderr).toContain('[GitNexus] augment skipped: MCP server owns DB');
+          expect(output!.additionalContext).toContain('graph DB may be held');
+          expect(result.stderr).toContain(
+            '[GitNexus] augment skipped: graph DB may be held by another GitNexus process',
+          );
           expect(fs.existsSync(markerPath)).toBe(false);
         } finally {
           fs.rmSync(lbugPath, { force: true });
@@ -2351,9 +2301,351 @@ describe.skipIf(SKIP_LSOF_PATH)('MCP-owner hint throttle (#2396)', () => {
   }
 });
 
-// #2396: buildMcpQueryHint and its throttle are triplicated across the three hook
-// copies (the repo's deliberate no-shared-module hook convention). Guard against
-// silent drift with a source-level byte-identity check — runs on every platform,
+describe('MCP hint throttle across processes', () => {
+  interface Claim {
+    owned: () => boolean;
+    release: () => void;
+  }
+
+  function loadThrottle(
+    options: {
+      windowMs?: string;
+      now?: () => number;
+      fs?: Partial<typeof fs>;
+    } = {},
+  ) {
+    const require = createRequire(CJS_RUNTIME);
+    const module = {
+      exports: {} as {
+        shouldEmitMcpHint: (storagePath: string) => boolean;
+        acquireMcpHintClaim: (storagePath: string) => Claim | null;
+      },
+    };
+    vm.runInNewContext(
+      fs.readFileSync(CJS_RUNTIME, 'utf8') +
+        '\nmodule.exports = { shouldEmitMcpHint, acquireMcpHintClaim };',
+      {
+        module,
+        require: (id: string) => (id === 'fs' ? { ...fs, ...options.fs } : require(id)),
+        process: {
+          ...process,
+          env: { ...process.env, GITNEXUS_MCP_HINT_THROTTLE_MS: options.windowMs },
+        },
+        Date: { now: options.now ?? Date.now },
+      },
+    );
+    return module.exports;
+  }
+
+  it.each(['missing', 'expired'])(
+    'allows exactly one simultaneous emitter with a %s marker',
+    async (initialMarker) => {
+      const { spawn } = await import('child_process');
+      const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-hint-burst-'));
+      const marker = path.join(storage, '.mcp-hint-shown');
+      const barrier = path.join(storage, 'go');
+      if (initialMarker === 'expired') {
+        fs.writeFileSync(marker, '');
+        const expired = new Date(Date.now() - 120000);
+        fs.utimesSync(marker, expired, expired);
+      }
+      // Freeze each process's initial marker snapshot until all contenders have
+      // read it. This deterministically exposes the old stat-then-write race;
+      // every later marker read, including the one under the claim, is real.
+      const script = `
+const fs = require('fs');
+const vm = require('vm');
+const { createRequire } = require('module');
+const [runtime, storage, barrier] = process.argv.slice(1);
+const marker = require('path').join(storage, '.mcp-hint-shown');
+const requireRuntime = createRequire(runtime);
+const moduleForRuntime = { exports: {} };
+let first = true;
+const filesystem = { ...fs, statSync(...args) {
+  if (!first || String(args[0]) !== marker) return fs.statSync(...args);
+  first = false;
+  let snapshot, failure;
+  try { snapshot = fs.statSync(...args); } catch (error) { failure = error; }
+  process.send('ready');
+  const deadline = Date.now() + 10000;
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  while (!fs.existsSync(barrier)) {
+    if (Date.now() > deadline) throw new Error('marker barrier timed out');
+    Atomics.wait(wait, 0, 0, 5);
+  }
+  if (failure) throw failure;
+  return snapshot;
+} };
+vm.runInNewContext(fs.readFileSync(runtime, 'utf8') + '\\nmodule.exports = { shouldEmitMcpHint };', {
+  module: moduleForRuntime,
+  require: (id) => id === 'fs' ? filesystem : requireRuntime(id),
+  process,
+});
+process.stdout.write(JSON.stringify(moduleForRuntime.exports.shouldEmitMcpHint(storage)));
+process.disconnect();
+`;
+      const children = Array.from({ length: 8 }, () => {
+        const child = spawn(process.execPath, ['-e', script, CJS_RUNTIME, storage, barrier], {
+          stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+          windowsHide: true,
+          env: { ...process.env, GITNEXUS_MCP_HINT_THROTTLE_MS: '60000' },
+        });
+        let stdout = '';
+        let stderr = '';
+        child.stdout!.on('data', (chunk) => {
+          stdout += chunk;
+        });
+        child.stderr!.on('data', (chunk) => {
+          stderr += chunk;
+        });
+        let announced = false;
+        const ready = new Promise<void>((resolve, reject) => {
+          child.once('message', () => {
+            announced = true;
+            resolve();
+          });
+          child.once('error', reject);
+          child.once('exit', () => {
+            if (!announced) reject(new Error(`contender exited before barrier: ${stderr}`));
+          });
+        });
+        const finished = new Promise<{ code: number | null; stdout: string; stderr: string }>(
+          (resolve) => child.once('close', (code) => resolve({ code, stdout, stderr })),
+        );
+        return { child, ready, finished };
+      });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('hint contenders timed out')), 12000);
+      });
+      try {
+        await Promise.race([Promise.all(children.map(({ ready }) => ready)), deadline]);
+        fs.writeFileSync(barrier, '');
+        const results = await Promise.race([
+          Promise.all(children.map(({ finished }) => finished)),
+          deadline,
+        ]);
+        for (const result of results) {
+          expect(result.code, result.stderr).toBe(0);
+          expect(result.stderr).toBe('');
+        }
+        expect(results.filter(({ stdout }) => stdout === 'true')).toHaveLength(1);
+        expect(results.filter(({ stdout }) => stdout === 'false')).toHaveLength(7);
+        expect(fs.existsSync(marker)).toBe(true);
+      } finally {
+        clearTimeout(timer);
+        for (const { child } of children) {
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        }
+        await Promise.all(children.map(({ finished }) => finished));
+        fs.rmSync(storage, { recursive: true, force: true });
+      }
+    },
+    20000,
+  );
+
+  it('honors a legacy marker and starts each rolling window at the last emission', () => {
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-hint-window-'));
+    const marker = path.join(storage, '.mcp-hint-shown');
+    const base = 1700000000000;
+    let now = base + 1000;
+    fs.writeFileSync(marker, '');
+    fs.utimesSync(marker, new Date(base + 900), new Date(base + 900));
+    const runtime = loadThrottle({
+      windowMs: '1000',
+      now: () => now,
+      fs: {
+        writeFileSync: (...args: Parameters<typeof fs.writeFileSync>) => {
+          fs.writeFileSync(...args);
+          if (String(args[0]) === marker) fs.utimesSync(marker, new Date(now), new Date(now));
+        },
+      },
+    });
+    try {
+      expect(runtime.shouldEmitMcpHint(storage)).toBe(false);
+      now = base + 1899;
+      expect(runtime.shouldEmitMcpHint(storage)).toBe(false);
+      now = base + 1901;
+      expect(runtime.shouldEmitMcpHint(storage)).toBe(true);
+      now = base + 2000;
+      expect(runtime.shouldEmitMcpHint(storage)).toBe(false);
+      now = base + 2902;
+      expect(runtime.shouldEmitMcpHint(storage)).toBe(true);
+    } finally {
+      fs.rmSync(storage, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['0', '-1', 'invalid', 'Infinity'])('disables throttling for %s', (windowMs) => {
+    const statSync = vi.fn(() => {
+      throw new Error('disabled throttle touched disk');
+    });
+    const runtime = loadThrottle({ windowMs, fs: { statSync } });
+    expect(runtime.shouldEmitMcpHint('/unused')).toBe(true);
+    expect(runtime.shouldEmitMcpHint('/unused')).toBe(true);
+    expect(statSync).not.toHaveBeenCalled();
+  });
+
+  it.each(['claim', 'marker'])(
+    'fails open on a %s filesystem error and releases its claim',
+    (phase) => {
+      const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-hint-error-'));
+      const marker = path.join(storage, '.mcp-hint-shown');
+      const fail = () => {
+        throw Object.assign(new Error('read-only filesystem'), { code: 'EROFS' });
+      };
+      const runtime = loadThrottle({
+        fs:
+          phase === 'claim'
+            ? { mkdtempSync: fail }
+            : {
+                writeFileSync: (...args: Parameters<typeof fs.writeFileSync>) => {
+                  if (String(args[0]) === marker) fail();
+                  fs.writeFileSync(...args);
+                },
+              },
+      });
+      try {
+        expect(runtime.shouldEmitMcpHint(storage)).toBe(true);
+        expect(fs.existsSync(path.join(storage, '.mcp-hint-shown.lock'))).toBe(false);
+        expect(loadThrottle().shouldEmitMcpHint(storage)).toBe(true);
+      } finally {
+        fs.rmSync(storage, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('expires an orphan and prevents its delayed release from deleting the successor', () => {
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-hint-orphan-'));
+    const lock = path.join(storage, '.mcp-hint-shown.lock');
+    const runtime = loadThrottle();
+    try {
+      const oldClaim = runtime.acquireMcpHintClaim(storage)!;
+      expect(oldClaim).not.toBeNull();
+      expect(runtime.shouldEmitMcpHint(storage)).toBe(false);
+      const oldOwner = path.join(lock, fs.readdirSync(lock)[0]);
+      const expired = new Date(Date.now() - 180001);
+      fs.utimesSync(oldOwner, expired, expired);
+      const successor = runtime.acquireMcpHintClaim(storage)!;
+      expect(successor).not.toBeNull();
+      oldClaim.release();
+      expect(successor.owned()).toBe(true);
+      expect(runtime.shouldEmitMcpHint(storage)).toBe(false);
+      successor.release();
+      expect(runtime.shouldEmitMcpHint(storage)).toBe(true);
+    } finally {
+      fs.rmSync(storage, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves a replacement claim intact when a stale contender resumes cleanup', () => {
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-hint-replaced-'));
+    const lock = path.join(storage, '.mcp-hint-shown.lock');
+    const runtime = loadThrottle();
+    let successor: Claim | null = null;
+    try {
+      const oldClaim = runtime.acquireMcpHintClaim(storage)!;
+      const oldOwner = path.join(lock, fs.readdirSync(lock)[0]);
+      const expired = new Date(Date.now() - 180001);
+      fs.utimesSync(oldOwner, expired, expired);
+      const contender = loadThrottle({
+        fs: {
+          unlinkSync: (file) => {
+            if (String(file) === oldOwner && !successor) {
+              oldClaim.release();
+              successor = runtime.acquireMcpHintClaim(storage);
+            }
+            fs.unlinkSync(file);
+          },
+        },
+      });
+      expect(contender.acquireMcpHintClaim(storage)).toBeNull();
+      expect(successor).not.toBeNull();
+      expect((successor as Claim | null)?.owned()).toBe(true);
+    } finally {
+      (successor as Claim | null)?.release();
+      fs.rmSync(storage, { recursive: true, force: true });
+    }
+  });
+
+  it('recovers an empty claim directory left by a crash during release', () => {
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-hint-empty-'));
+    const lock = path.join(storage, '.mcp-hint-shown.lock');
+    fs.mkdirSync(lock);
+    let blocked = false;
+    const runtime = loadThrottle({
+      fs: {
+        renameSync: (source, destination) => {
+          if (!blocked && String(destination) === lock) {
+            blocked = true;
+            throw Object.assign(new Error('destination exists'), { code: 'EPERM' });
+          }
+          fs.renameSync(source, destination);
+        },
+      },
+    });
+    try {
+      expect(runtime.shouldEmitMcpHint(storage)).toBe(true);
+      expect(fs.existsSync(path.join(storage, '.mcp-hint-shown'))).toBe(true);
+    } finally {
+      fs.rmSync(storage, { recursive: true, force: true });
+    }
+  });
+
+  it('treats disappearing owner metadata as contention rather than emitting twice', () => {
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-hint-disappeared-'));
+    const lock = path.join(storage, '.mcp-hint-shown.lock');
+    const existing = loadThrottle().acquireMcpHintClaim(storage)!;
+    const owner = path.join(lock, fs.readdirSync(lock)[0]);
+    const runtime = loadThrottle({
+      fs: {
+        lstatSync: ((file: fs.PathLike) => {
+          if (String(file) === owner) existing.release();
+          return fs.lstatSync(file);
+        }) as typeof fs.lstatSync,
+      },
+    });
+    try {
+      expect(runtime.shouldEmitMcpHint(storage)).toBe(false);
+      expect(fs.existsSync(path.join(storage, '.mcp-hint-shown'))).toBe(false);
+    } finally {
+      existing.release();
+      fs.rmSync(storage, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['publish', 'EACCES'],
+    ['cleanup', 'EPERM'],
+    ['cleanup', 'EACCES'],
+  ])('treats Windows claim %s errors (%s) as contention', (phase, code) => {
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-hint-busy-'));
+    const lock = path.join(storage, '.mcp-hint-shown.lock');
+    fs.mkdirSync(lock);
+    const runtime = loadThrottle({
+      fs: {
+        renameSync: () => {
+          throw Object.assign(new Error('destination exists'), {
+            code: phase === 'publish' ? code : 'EPERM',
+          });
+        },
+        rmdirSync: () => {
+          throw Object.assign(new Error('directory pending deletion'), { code });
+        },
+      },
+    });
+    try {
+      expect(runtime.shouldEmitMcpHint(storage)).toBe(false);
+      expect(fs.existsSync(path.join(storage, '.mcp-hint-shown'))).toBe(false);
+      expect(fs.readdirSync(storage)).toEqual(['.mcp-hint-shown.lock']);
+    } finally {
+      fs.rmSync(storage, { recursive: true, force: true });
+    }
+  });
+});
+
+// #2396: Claude uses the package runtime; Antigravity still owns its handlers.
+// Guard its shared hint behavior against drift with source byte identity on every platform,
 // unlike the owner-path behavior tests which are macOS-only.
 describe('hook copy drift guard (#2396)', () => {
   const ANTIGRAVITY_HOOK = path.resolve(
@@ -2365,8 +2657,7 @@ describe('hook copy drift guard (#2396)', () => {
     'gitnexus-antigravity-hook.cjs',
   );
   const HOOK_SOURCES: ReadonlyArray<readonly [string, string]> = [
-    ['claude', CJS_HOOK],
-    ['plugin', PLUGIN_HOOK],
+    ['claude', CJS_RUNTIME],
     ['antigravity', ANTIGRAVITY_HOOK],
   ];
 
@@ -2375,13 +2666,12 @@ describe('hook copy drift guard (#2396)', () => {
     return match ? match[0] : `<${name} not found>`;
   }
 
-  for (const fnName of ['buildMcpQueryHint', 'shouldEmitMcpHint']) {
-    it(`${fnName} is byte-identical across all three hook copies`, () => {
-      const [claude, plugin, antigravity] = HOOK_SOURCES.map(([, p]) =>
+  for (const fnName of ['buildMcpQueryHint']) {
+    it(`${fnName} is byte-identical in the package runtime and Antigravity`, () => {
+      const [claude, antigravity] = HOOK_SOURCES.map(([, p]) =>
         extractFn(fs.readFileSync(p, 'utf-8'), fnName),
       );
       expect(claude).toContain(`function ${fnName}`);
-      expect(plugin).toBe(claude);
       expect(antigravity).toBe(claude);
     });
   }
@@ -2655,9 +2945,9 @@ describe.skipIf(SKIP_LSOF_PATH)(
 
       // #2396/#1913: the fail-closed (probe-timeout) skip routes through the SAME
       // owner branch, so it now emits the conditional MCP-query hint on stdout —
-      // truthful here because the hint only asks the agent to use the MCP tools
-      // "if they are live". The stderr diagnostic stays debug-gated (empty by
-      // default), so strict runners still see no unexpected diagnostic. Symmetric
+      // truthful here because ownership is uncertain and MCP use is conditional.
+      // The stderr diagnostic stays debug-gated and empty by default, so strict
+      // runners still see no unexpected diagnostic. Symmetric
       // counterpart to the debug-on test above.
       it(`${label}: ETIMEDOUT lsof → emits hint on stdout, stderr silent by default`, () => {
         const markerPath = path.join(os.tmpdir(), `gn-hook-etime-silent-${process.pid}-${label}`);
@@ -2683,6 +2973,7 @@ describe.skipIf(SKIP_LSOF_PATH)(
           );
           const output = parseHookOutput(result.stdout);
           expect(output!.additionalContext).toContain('mcp__gitnexus__query');
+          expect(output!.additionalContext).toContain('graph DB may be held');
           expect(result.stderr.trim()).toBe('');
           expect(result.status).toBe(0);
           expect(fs.existsSync(markerPath)).toBe(false);
@@ -4468,20 +4759,6 @@ describe('PostToolUse with missing/corrupt meta.json', () => {
 describe('Hook metadata-filename drift guard', () => {
   for (const [label, resolverPath] of [
     ['CJS (claude)', path.resolve(__dirname, '..', '..', 'hooks', 'claude', 'registry-query.cjs')],
-    [
-      'Plugin',
-      path.resolve(
-        __dirname,
-        '..',
-        '..',
-        '..',
-        'gitnexus-claude-plugin',
-        'hooks',
-        'registry-query.cjs',
-      ),
-    ],
-    // The Antigravity installer copies this canonical helper beside its adapter.
-    ['Antigravity', path.resolve(__dirname, '..', '..', 'hooks', 'claude', 'registry-query.cjs')],
   ] as const) {
     it(`${label}: registry resolver references gitnexus.json, not only meta.json`, () => {
       const source = fs.readFileSync(resolverPath, 'utf-8');
@@ -4493,15 +4770,6 @@ describe('Hook metadata-filename drift guard', () => {
 describe('Hook registry resolver drift guard', () => {
   const resolverPaths = [
     path.resolve(__dirname, '..', '..', 'hooks', 'claude', 'registry-query.cjs'),
-    path.resolve(
-      __dirname,
-      '..',
-      '..',
-      '..',
-      'gitnexus-claude-plugin',
-      'hooks',
-      'registry-query.cjs',
-    ),
     path.resolve(
       __dirname,
       '..',

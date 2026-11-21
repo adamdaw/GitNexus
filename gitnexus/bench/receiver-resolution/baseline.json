@@ -180,7 +180,7 @@
       "plainDeepChain": "RESOLVES",
       "optionalChain": "RESOLVES",
       "nonNullAssert": "VISIBLE-GAP",
-      "awaitParen": "WRONG-TARGET",
+      "awaitParen": "RESOLVES",
       "explicitTypeArgs": "VISIBLE-GAP",
       "indexElement": "INVISIBLE-GAP",
       "fieldReceiverCall": "RESOLVES",
@@ -202,10 +202,10 @@
     }
   },
   "countArm": {
-    "callDrops": 142,
-    "totalDropsAllKinds": 176,
+    "callDrops": 141,
+    "totalDropsAllKinds": 175,
     "bySiteKind": {
-      "call": 142,
+      "call": 141,
       "read": 34
     },
     "callDropsByExtension": {
@@ -219,20 +219,20 @@
       ".rs": 6,
       ".cs": 5,
       ".go": 4,
-      ".dart": 2,
       ".js": 1,
       ".swift": 1,
-      ".cls": 1
+      ".cls": 1,
+      ".dart": 1
     },
     "callDropsByShape": {
       "chain-field": 57,
-      "no-chain": 40,
+      "no-chain": 39,
       "chain-call": 31,
       "<<unclassified>>": 13,
       "chain-unwrap": 1
     },
     "callDropsByOrigin": {
-      "unknown": 65,
+      "unknown": 64,
       "in-program": 53,
       "external": 22,
       "<<unclassified>>": 2

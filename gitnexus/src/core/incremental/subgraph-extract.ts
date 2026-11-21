@@ -80,7 +80,7 @@ import { isSalesforceResolvedRelationship } from '../ingestion/salesforce-metada
  * rule, but they are included here too: the delete-all removes them as well, so
  * anything not re-included would be dropped rather than merely stale.
  */
-const isGraphWideNode = (node: GraphNode): boolean =>
+export const isGraphWideNode = (node: GraphNode): boolean =>
   node.label === 'Community' ||
   node.label === 'Process' ||
   node.label === 'Destination' ||
@@ -125,7 +125,7 @@ const isGraphWideNode = (node: GraphNode): boolean =>
 // declaring the same field or object changes which definition a name binds
 // to, between two files that never changed. Selected by reason, because the
 // types they ride on (CONTAINS / USES / CALLS) are shared with every language.
-const isGraphWideRelationship = (relationship: GraphRelationship): boolean =>
+export const isGraphWideRelationship = (relationship: GraphRelationship): boolean =>
   relationship.type === 'TAINT_PATH' ||
   relationship.type === 'CALL_SUMMARY' ||
   relationship.type === 'INJECTS' ||

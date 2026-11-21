@@ -11,6 +11,12 @@ import path from 'path';
 // wrapper to add, because there is no npx shim to wrap.
 const SELF_MCP_ARRAY = [process.execPath, path.resolve(process.argv[1]!), 'mcp'];
 
+// Windows runs codex through a shell, so setup composes one command line.
+const selfMcpWinLine = async (): Promise<string> => {
+  const { composeWin32Command } = await import('../../src/core/embeddings/runtime-install.js');
+  return composeWin32Command('codex', ['mcp', 'add', 'gitnexus', '--', ...SELF_MCP_ARRAY]);
+};
+
 const execFileMock = vi.fn((...args: any[]) => {
   const callback = args.at(-1);
   if (typeof callback === 'function') {
@@ -80,8 +86,8 @@ describe('setupCommand codex execution', () => {
     await setupCommand();
 
     expect(execFileMock).toHaveBeenCalledWith(
-      'codex',
-      ['mcp', 'add', 'gitnexus', '--', ...SELF_MCP_ARRAY],
+      await selfMcpWinLine(),
+      [],
       { shell: true, windowsHide: true },
       expect.any(Function),
     );
@@ -95,8 +101,26 @@ describe('setupCommand codex execution', () => {
     await setupCommand();
 
     expect(execFileMock).toHaveBeenCalledWith(
-      'codex',
-      ['mcp', 'add', 'gitnexus', '--', ...SELF_MCP_ARRAY],
+      await selfMcpWinLine(),
+      [],
+      { shell: true, windowsHide: true },
+      expect.any(Function),
+    );
+  });
+
+  it('quotes a gitnexus.cmd under a path with spaces for the Windows shell', async () => {
+    execFileSyncMock.mockReturnValueOnce(
+      'C:\\Program Files\\nodejs\\gitnexus\r\nC:\\Program Files\\nodejs\\gitnexus.cmd\r\n',
+    );
+
+    const { setupCommand } = await import('../../src/cli/setup.js');
+
+    await setupCommand({ codingAgent: 'codex' });
+
+    // cmd.exe splits unquoted spaces, so the path must arrive as one argument.
+    expect(execFileMock).toHaveBeenCalledWith(
+      'codex mcp add gitnexus -- "C:\\Program Files\\nodejs\\gitnexus.cmd" mcp',
+      [],
       { shell: true, windowsHide: true },
       expect.any(Function),
     );
@@ -146,8 +170,8 @@ describe('setupCommand codex execution', () => {
     await setupCommand({ codingAgent: 'codex' });
 
     expect(execFileMock).toHaveBeenCalledWith(
-      'codex',
-      ['mcp', 'add', 'gitnexus', '--', ...SELF_MCP_ARRAY],
+      await selfMcpWinLine(),
+      [],
       { shell: true, windowsHide: true },
       expect.any(Function),
     );

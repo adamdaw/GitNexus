@@ -19,15 +19,6 @@ const CANONICAL_CJS = path.resolve(
   'claude',
   'resolve-analyze-cmd.cjs',
 );
-const PLUGIN_CJS = path.resolve(
-  __dirname,
-  '..',
-  '..',
-  '..',
-  'gitnexus-claude-plugin',
-  'hooks',
-  'resolve-analyze-cmd.cjs',
-);
 
 type InvocationMode = 'gitnexus' | 'unavailable';
 
@@ -364,12 +355,6 @@ describe('formatAnalyzeCommand end-to-end via the pure scan (#1938)', () => {
     binDir = mkdtempSync(path.join(os.tmpdir(), 'gn-e2e-empty-'));
     process.env.PATH = binDir;
     expect(cjs.resolveInvocationMode()).toBe('unavailable');
-  });
-});
-
-describe('resolve-analyze-cmd.cjs parity', () => {
-  it('keeps the two CJS hook copies byte-identical', () => {
-    expect(readFileSync(CANONICAL_CJS, 'utf-8')).toBe(readFileSync(PLUGIN_CJS, 'utf-8'));
   });
 });
 
