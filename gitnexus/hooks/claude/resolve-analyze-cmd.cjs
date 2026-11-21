@@ -15,14 +15,11 @@
  * and `npm link` (see the setup guide); a missing binary now prints how, instead
  * of quietly fetching a different tool.
  *
- * This stays self-contained CJS because the Claude/Antigravity hooks run as
- * standalone files copied into the user's hook dir, where no package import is
- * available. The CLI reuses this module from src/cli/resolve-invocation.ts via
- * createRequire rather than re-implementing it. Two committed copies must stay
- * byte-identical (enforced by resolve-invocation.test.ts) — edit both together:
- * gitnexus/hooks/claude/ (the canonical copy the CLI and `gitnexus setup` read)
- * and gitnexus-claude-plugin/hooks/. A THIRD copy is written at runtime to
- * `<repo>/.gitnexus/run.cjs` by `gitnexus analyze` (ai-context.ts) so docs can
+ * This stays self-contained CJS for the Antigravity hook installed outside the
+ * package. Claude-schema hooks call the package entrypoint and use this source
+ * directly. The CLI reuses it from src/cli/resolve-invocation.ts via createRequire.
+ * `gitnexus analyze` (ai-context.ts) also writes it at runtime to
+ * `<repo>/.gitnexus/run.cjs` so docs can
  * reference it directly via the `require.main === module` exec tail below; that
  * copy is gitignored and refreshed on every analyze, so it cannot drift for long.
  */
