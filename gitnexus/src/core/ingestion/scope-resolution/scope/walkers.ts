@@ -20,7 +20,7 @@
  * as-is for TypeScript, Java, Kotlin, Ruby, etc.
  */
 
-import { lookupLexicalName, nameClaimsFor } from 'gitnexus-shared';
+import { importTargetDirectory, lookupLexicalName, nameClaimsFor } from 'gitnexus-shared';
 import type {
   NameLookupOptions,
   NameClaimResult,
@@ -45,6 +45,7 @@ import {
   stripTemplateArguments,
 } from '../../utils/template-arguments.js';
 import { definitionIdPosition } from '../utils/definition-id.js';
+import { cachedNameLookupStart } from './name-lookup-cache.js';
 
 const EMPTY_BINDINGS: readonly BindingRef[] = Object.freeze([]);
 const DEFER_WORKSPACE: IndexedNameLookupOptions = Object.freeze({ deferWorkspace: true });
@@ -80,11 +81,11 @@ export function lookupNameClaim(
   options: IndexedNameLookupOptions = {},
 ): NameClaimResult {
   return lookupLexicalName(
-    startScope,
+    cachedNameLookupStart(startScope, name, scopes, options.skipEnclosingClasses),
     name,
     {
       scopes: scopes.scopeTree,
-      importsAt: (scope) => scopes.imports?.get(scope.id) ?? scope.imports,
+      importsAt: (scope) => scopes.imports?.edgesAt(scope.id) ?? scope.imports,
       bindingsAt: (scope, spelling) => {
         const local = compatibleClassBindings(
           scope.bindings.get(spelling) ?? EMPTY_BINDINGS,
@@ -652,6 +653,47 @@ export function findReceiverTypeBinding(
   // every file (see `workspaceTypeBindings` doc), so this flat channel is the
   // final, unconditional fallback (#1871).
   return scopes.workspaceTypeBindings?.get(receiverName);
+}
+
+/**
+ * The scope that stopped the receiver walk for `receiverName` ONLY because it
+ * lists the name in `Scope.lexicalNames` and gives it no type: an untyped
+ * parameter, local, catch or pattern variable (DART-11).
+ *
+ * `findReceiverTypeBinding` already honours that stop. The shared claim walk
+ * treats a lexical name as ownership, so it returns `undefined` there instead
+ * of climbing to an enclosing scope's binding of the same spelling, and it
+ * skips the namespace and workspace fallbacks. What `undefined` cannot say is
+ * WHY. This answers it, so a caller can record the decline instead of letting
+ * a later, name-only route treat the site as an ordinary miss.
+ *
+ * Deliberately narrow. Returns `undefined` when the owning scope also carries
+ * a type, a value binding or an import for the name (those are answers, not
+ * stops), and when explicit name claims decide the name: claims are the
+ * provider's own ownership model and govern instead of `lexicalNames`.
+ * `scope.bindings` is never read as a binder signal on its own, because it
+ * also holds imports, classes and functions.
+ */
+export function findUntypedReceiverBinder(
+  startScope: ScopeId,
+  receiverName: string,
+  scopes: ScopeResolutionIndexes,
+  options?: NameLookupOptions,
+): Scope | undefined {
+  const claim = lookupNameClaim(startScope, receiverName, scopes, options);
+  const scope = claim.scope;
+  if (
+    scope === undefined ||
+    claim.status !== 'blocked' ||
+    claim.typeBinding !== undefined ||
+    claim.claims.length > 0 ||
+    claim.bindings.length > 0 ||
+    claim.imports.length > 0 ||
+    scope.lexicalNames?.has(receiverName) !== true
+  ) {
+    return undefined;
+  }
+  return scope;
 }
 
 /**
@@ -1878,39 +1920,23 @@ export function resolveAmbiguousInheritanceBaseViaImports(
   // module scope is where `#include` / `using` land).
   const moduleScopeId = moduleScopeIdOf(startScope, scopes);
   if (moduleScopeId === null) return undefined;
-  const importEdges = scopes.imports.get(moduleScopeId);
-  if (importEdges === undefined || importEdges.length === 0) return undefined;
-  const importedFiles = new Set<string>();
-  const importedDirs = new Set<string>();
-  for (const edge of importEdges) {
-    if (edge.targetFile === null) continue;
-    importedFiles.add(edge.targetFile);
-    importedDirs.add(dirnameOf(edge.targetFile));
-  }
-  if (importedFiles.size === 0) return undefined;
+  // A scope that imports nothing reaches no candidate, so both tiers below
+  // come up empty and the name stays refused.
+  const imports = scopes.imports;
 
   // Tier 1 — exact file match (C++ `#include "handler_a.h"`).
-  const exact = candidates.filter((c) => importedFiles.has(c.filePath));
+  const exact = candidates.filter((c) => imports.reaches(moduleScopeId, c.filePath));
   if (exact.length === 1) return exact[0];
   if (exact.length > 1) return undefined; // still ambiguous → refuse
 
   // Tier 2 — same-directory match (C# namespace `using`, where the namespace
   // import resolves to one representative file in the namespace's directory).
-  const sameDir = candidates.filter((c) => importedDirs.has(dirnameOf(c.filePath)));
+  const sameDir = candidates.filter((c) =>
+    imports.reachesDirectory(moduleScopeId, importTargetDirectory(c.filePath)),
+  );
   if (sameDir.length === 1) return sameDir[0];
 
   return undefined;
-}
-
-/**
- * Directory portion of a forward-slash workspace-relative path. Returns `''`
- * for a bare filename (no directory). Workspace paths are always normalized to
- * `/` separators upstream, so a simple `lastIndexOf('/')` is sufficient and
- * keeps this dependency-free.
- */
-function dirnameOf(filePath: string): string {
-  const idx = filePath.lastIndexOf('/');
-  return idx === -1 ? '' : filePath.slice(0, idx);
 }
 
 /**
@@ -1990,13 +2016,15 @@ export function isClassFileImportGrounded(
   const callerFile = scopes.scopeTree.getScope(startScope)?.filePath;
   if (callerFile !== undefined && classDef.filePath === callerFile) return true;
   if (callerModule === null) return false;
-  const importEdges = scopes.imports.get(callerModule);
-  if (importEdges === undefined || importEdges.length === 0) return false;
-  for (const edge of importEdges) {
+  if (scopes.imports.reaches(callerModule, classDef.filePath)) return true;
+  for (const edge of scopes.imports.edgesAt(callerModule) ?? []) {
     if (edge.targetDefId !== undefined && edge.targetDefId === classDef.nodeId) return true;
-    if (edge.targetFile === null) continue;
-    if (edge.targetFile === classDef.filePath) return true;
-    if (importedName.length > 0 && edge.targetExportedName === importedName) return true;
+    if (
+      edge.targetFile !== null &&
+      importedName.length > 0 &&
+      edge.targetExportedName === importedName
+    )
+      return true;
   }
   return false;
 }
