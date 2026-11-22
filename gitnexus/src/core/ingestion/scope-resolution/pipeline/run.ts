@@ -1068,6 +1068,11 @@ export function runScopeResolution(
     hooks: {
       ownedMembersBindAtModuleScope: provider.ownedMembersBindAtModuleScope,
       importsBindAtLexicalScope: provider.importsBindAtLexicalScope === true,
+      // `GITNEXUS_DISABLE_IMPORT_GROUPS=1` restores one edge per imported file,
+      // for comparing the two storage forms on the same build.
+      groupsWildcardTargets:
+        provider.groupsWildcardImportTargets === true &&
+        !parseTruthyEnv(process.env.GITNEXUS_DISABLE_IMPORT_GROUPS),
       resolveImportTarget: (targetRaw, fromFile, _workspaceIndex, parsedImport) =>
         provider.resolveImportTarget(targetRaw, fromFile, allFilePaths, resolutionConfig, {
           parsedFiles,
@@ -1084,10 +1089,14 @@ export function runScopeResolution(
               filterWildcardNames(targetModuleScope, names, parsedFiles),
       mergeBindings: (existing, incoming, scopeId) =>
         provider.mergeBindings(existing, incoming, scopeId),
+      mergeBindingsAreAssociative: provider.mergeBindingsAreAssociative,
       wildcardCollisionIsAmbiguous: provider.exclusiveWildcardReexports === true,
       namedImportsBindTopLevelOnly: provider.namedImportsBindTopLevelOnly === true,
     },
   });
+  // Import-visible namespaces are bindings: publish them before the first pass
+  // that reads one (inheritance resolution below).
+  provider.populateImportNamespaces?.(parsedFiles, finalized);
   if (referenceBindings !== undefined) {
     for (const site of finalized.referenceSites)
       referenceBindings.set(site, {
@@ -1227,16 +1236,25 @@ export function runScopeResolution(
   const runWorkspaceAndSiblings = (idx: ReturnType<typeof buildIndexes>) => {
     const wsIndex = buildWorkspaceResolutionIndex(parsedFiles, idx.scopeTree, {
       stripTypePreservingDecoration: provider.stripTypePreservingDecoration,
+      namespaceExports: provider.namespaceExportsFromModuleExports
+        ? provider.moduleExports
+        : undefined,
     });
     logHeapProbe('sr-post-workspaceIndex', `lang=${provider.language}`);
+    // Install the provider's namespace exports before the sibling hook reads
+    // the indexes. A fresh spread, never a post-construction mutation.
+    const withExports: ReturnType<typeof buildIndexes> =
+      wsIndex.namespaceExportsByFile === undefined
+        ? idx
+        : { ...idx, namespaceExportsByFile: wsIndex.namespaceExportsByFile };
     if (provider.populateNamespaceSiblings !== undefined) {
-      provider.populateNamespaceSiblings(parsedFiles, idx, {
+      provider.populateNamespaceSiblings(parsedFiles, withExports, {
         fileContents: getFileContents(),
         treeCache,
         resolutionConfig,
       });
     }
-    return wsIndex;
+    return { wsIndex, indexes: withExports };
   };
 
   let indexes: ReturnType<typeof buildIndexes>;
@@ -1251,8 +1269,9 @@ export function runScopeResolution(
     // the populated `methodDispatch` for the `:653+` downstream tail — a
     // fresh spread (never a post-construction mutation), carrying forward the
     // in-place `workspaceFqnBindings`/`bindingAugmentations` writes.
-    indexes = buildIndexes(finalized.methodDispatch);
-    workspaceIndex = runWorkspaceAndSiblings(indexes);
+    ({ wsIndex: workspaceIndex, indexes } = runWorkspaceAndSiblings(
+      buildIndexes(finalized.methodDispatch),
+    ));
     const heritage = runHeritageAndMro(indexes);
     preEmittedInheritanceSites = heritage.preEmittedInheritanceSites;
     postHeritageNodeLookup = heritage.postHeritageNodeLookup;
@@ -1269,10 +1288,11 @@ export function runScopeResolution(
     const heritage = runHeritageAndMro(finalized);
     preEmittedInheritanceSites = heritage.preEmittedInheritanceSites;
     postHeritageNodeLookup = heritage.postHeritageNodeLookup;
-    indexes = buildIndexes(
-      buildPopulatedMethodDispatch(heritage.mroByClassDefId, heritage.extendsOnlyMroByClassDefId),
-    );
-    workspaceIndex = runWorkspaceAndSiblings(indexes);
+    ({ wsIndex: workspaceIndex, indexes } = runWorkspaceAndSiblings(
+      buildIndexes(
+        buildPopulatedMethodDispatch(heritage.mroByClassDefId, heritage.extendsOnlyMroByClassDefId),
+      ),
+    ));
   }
 
   const tFinalize = PROF ? process.hrtime.bigint() : 0n;
@@ -1297,6 +1317,9 @@ export function runScopeResolution(
       provider.resolveQualifiedCallee,
       allFilePaths,
       provider.elementTypeOf,
+      provider.followsInstanceCallResultTypes === true
+        ? (owner, name) => input.model.methods.lookupAllByOwner(owner, name)
+        : undefined,
     );
   }
 
