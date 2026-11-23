@@ -32,6 +32,7 @@ const SAMPLES = {
   kotlin: 'class A {\n  fun m() {}\n}\n',
   zig: 'pub fn main() void {}\n',
   apex: 'public class A {\n  public void m() {}\n}\n',
+  r: 'f <- function(x) x\n',
 };
 
 async function check(installedDir) {
