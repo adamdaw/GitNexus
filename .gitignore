@@ -122,6 +122,7 @@ __pycache__/
 !.claude/skills/gitnexus-plan/
 !.claude/skills/gitnexus-work/
 !.claude/skills/gitnexus-lfg/
+!.claude/skills/pr-tri-review/
 
 .history/
 
