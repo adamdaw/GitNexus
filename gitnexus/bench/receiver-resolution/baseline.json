@@ -97,7 +97,7 @@
       "nonNullAssert": "N/A",
       "awaitParen": "N/A",
       "explicitTypeArgs": "RESOLVES",
-      "indexElement": "VISIBLE-GAP",
+      "indexElement": "RESOLVES",
       "fieldReceiverCall": "RESOLVES",
       "decoratedReceiverBase": "N/A",
       "decoratedFieldType": "N/A"
@@ -202,14 +202,14 @@
     }
   },
   "countArm": {
-    "callDrops": 141,
-    "totalDropsAllKinds": 175,
+    "callDrops": 154,
+    "totalDropsAllKinds": 188,
     "bySiteKind": {
-      "call": 141,
+      "call": 154,
       "read": 34
     },
     "callDropsByExtension": {
-      ".java": 50,
+      ".java": 63,
       ".py": 24,
       ".ts": 18,
       ".zig": 10,
@@ -228,14 +228,14 @@
       "chain-field": 57,
       "no-chain": 39,
       "chain-call": 31,
-      "<<unclassified>>": 13,
+      "<<unclassified>>": 26,
       "chain-unwrap": 1
     },
     "callDropsByOrigin": {
       "unknown": 64,
       "in-program": 53,
       "external": 22,
-      "<<unclassified>>": 2
+      "<<unclassified>>": 15
     }
   }
 }
