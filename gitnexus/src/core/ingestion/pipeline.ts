@@ -28,6 +28,7 @@ import {
   runPipeline,
   getPhaseOutput,
   scanPhase,
+  type ScanOutput,
   structurePhase,
   markdownPhase,
   cobolPhase,
@@ -522,6 +523,10 @@ export const runPipelineFromRepo = async (
     graph,
     repoPath,
     totalFileCount: totalFiles,
+    scannedFileBytes: getPhaseOutput<ScanOutput>(results, 'scan').scannedFiles.reduce(
+      (bytes, file) => bytes + file.size,
+      0,
+    ),
     graphEmitManifest,
     communityResult,
     processResult,

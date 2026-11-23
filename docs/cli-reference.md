@@ -58,7 +58,7 @@ Watch mode accepts `--debounce`, `--workers`, `--worker-timeout`,
 `--max-file-size`, `--max-processes`, `--max-process-branching`,
 `--max-process-trace-depth`, `--max-entry-point-candidates`, `--branch`, `--pdg`, `--skip-fts`, `--name`, `--allow-duplicate-name`, and
 `--verbose`. Explicit one-shot options such as `--force`, `--repair-fts`,
-embedding flags, `--skills`, `--self-commit`, `--index-only`, and `--skip-git`
+embedding flags, `--skills`, `--instruction-file`, `--self-commit`, `--index-only`, and `--skip-git`
 are rejected. Unsupported defaults from `.gitnexusrc` are ignored with a
 warning rather than making an otherwise valid repository unwatchable.
 
@@ -91,6 +91,7 @@ gitnexus analyze --skills        # Generate repo-specific skill files from detec
 gitnexus analyze --skip-embeddings  # Skip embedding generation (faster)
 gitnexus analyze --embeddings [limit]  # Enable embedding generation (slower, better search)
 gitnexus analyze --skip-agents-md   # Preserve custom AGENTS.md/CLAUDE.md gitnexus section edits
+gitnexus analyze --instruction-file CLAUDE.md  # Write the managed block only to CLAUDE.md
 gitnexus analyze --skip-skills      # Skip installing standard skill files under .claude/skills/ and .agents/skills/
 gitnexus analyze --skip-git         # Index folders that are not Git repositories
 gitnexus analyze --default-branch develop  # Branch used in the generated regression-compare example (base_ref)
@@ -218,10 +219,15 @@ Notes:
 
 - The default branch is resolved as: `--default-branch` > `.gitnexusrc` `defaultBranch`/`branch` > auto-detected `origin/HEAD` > `main`.
 - `skipContextFiles` / `skipAiContext` are aliases for `skipAgentsMd` — they skip the `AGENTS.md` / `CLAUDE.md` block only. They do **not** imply `skipSkills`. `indexOnly` is the stronger option that skips all file injection.
-- Supported keys: `defaultBranch` (`branch`), `skipAgentsMd` (`skipContextFiles`, `skipAiContext`), `skipSkills`, `indexOnly`, `stats`/`noStats`, `embeddings`, `dropEmbeddings`, `name`, `allowDuplicateName`, `maxFileSize`, `workerTimeout`, `walCheckpointThreshold`, `workers`, `maxProcesses`, `maxProcessBranching`, `maxProcessTraceDepth`, `maxEntryPointCandidates`, `springActuator`, `embeddingThreads`, `embeddingBatchSize`, `embeddingSubBatchSize`, `embeddingDevice`.
+- `instructionFile` selects `AGENTS.md` or `CLAUDE.md` for the managed block. The default writes both. An explicit analyze refreshes displayed counts, including on an up-to-date index. Set `noStats` to omit them or use `skipAgentsMd` to skip instruction files entirely.
+- Supported keys: `defaultBranch` (`branch`), `instructionFile`, `skipAgentsMd` (`skipContextFiles`, `skipAiContext`), `skipSkills`, `indexOnly`, `stats`/`noStats`, `embeddings`, `dropEmbeddings`, `name`, `allowDuplicateName`, `maxFileSize`, `workerTimeout`, `walCheckpointThreshold`, `workers`, `maxProcesses`, `maxProcessBranching`, `maxProcessTraceDepth`, `maxEntryPointCandidates`, `springActuator`, `embeddingThreads`, `embeddingBatchSize`, `embeddingSubBatchSize`, `embeddingDevice`.
 - The file is JSON only. Unknown keys and wrong JSON types fail fast with an actionable error before analysis starts. Process-detection knobs (`maxProcesses`, `maxProcessBranching`, `maxProcessTraceDepth`, `maxEntryPointCandidates`) that are not a positive integer warn and fall through to env, then the built-in default.
 
 ## Environment variables
+
+| Scope index variable | Default | Effect | When to tune |
+| --- | --- | --- | --- |
+| `GITNEXUS_DISK_SCOPE_INDEX` | Unset or blank (automatic) | Any language that builds a PDG can spill lexical scopes to a backing store at 70% or more of the V8 heap limit. Full-scope debug output and resolved-file callbacks keep scopes resident in automatic mode. `1`, `true`, or `yes` forces disk storage. Other nonblank values, including `0`, keep scopes resident. | Use `0` to avoid shard I/O or `1` to explicitly select disk-backed resolution. |
 
 | HTTP embedding variable | Default | Effect | When to tune |
 | --- | --- | --- | --- |
