@@ -839,6 +839,18 @@ GitNexus builds a complete knowledge graph of your codebase through a multi-phas
 resolution works without the import columns because Apex has no import statement: a class in
 the same namespace is referenced by name.
 
+R (experimental) also has a registered provider (`.r` / `.R`, parsed with
+`@eagleoutice/tree-sitter-r`): functions, S4, R6 and RefClass classes with their
+methods and fields, `library()` / `require()` / `source()` imports to local
+packages and files, `obj$method()` and `pkg::fn()` calls, R6 `inherit=` / S4
+`contains=` heritage and NAMESPACE-driven export status. Calls through function
+values, `do.call()`, infix operators and S3 dispatch are not linked; `.Rmd`,
+`box::use()` and external (CRAN) packages are not supported. With `--pdg` it
+builds a control-flow graph (control dependence only, no reaching definitions),
+and `rename` handles plain functions while refusing classes, members, S3 methods,
+exported package functions and names spelled as strings. See
+[docs/languages/r-provider.md](docs/languages/r-provider.md) for coverage and limits.
+
 **Imports** — cross-file import resolution · **Named Bindings** — `import { X as Y }` / re-export tracking · **Exports** — public/exported symbol detection · **Heritage** — class inheritance, interfaces, mixins · **Type Annotations** — explicit type extraction for receiver resolution · **Constructor Inference** — infer receiver type from constructor calls (`self`/`this` resolution included for all languages) · **Config** — language toolchain config parsing (tsconfig, go.mod, etc.) · **Frameworks** — AST-based framework pattern detection · **Entry Points** — entry point scoring heuristics
 
 **Control flow (CFG, opt-in `--pdg`)** — per-function control-flow graphs (`BasicBlock` nodes + `CFG` edges) feeding the PDG/taint substrate, currently **TypeScript & JavaScript** (#2081 M1); other languages planned. Off by default.

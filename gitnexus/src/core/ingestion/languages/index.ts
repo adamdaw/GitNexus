@@ -29,6 +29,7 @@ import { rubyProvider } from './ruby.js';
 import { swiftProvider } from './swift.js';
 import { dartProvider } from './dart.js';
 import { vueProvider } from './vue.js';
+import { rProvider } from './r.js';
 import { cobolProvider } from './cobol.js';
 import { apexProvider } from './apex/index.js';
 import { zigProvider } from './zig.js';
@@ -50,6 +51,7 @@ export const providers = {
   [SupportedLanguages.Swift]: swiftProvider,
   [SupportedLanguages.Dart]: dartProvider,
   [SupportedLanguages.Vue]: vueProvider,
+  [SupportedLanguages.R]: rProvider,
   [SupportedLanguages.Cobol]: cobolProvider,
   [SupportedLanguages.Apex]: apexProvider,
   [SupportedLanguages.Zig]: zigProvider,
