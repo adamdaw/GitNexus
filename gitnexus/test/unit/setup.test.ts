@@ -13,7 +13,6 @@ import { packageVersion } from '../../src/core/package-version.js';
 const SELF_MCP = { command: process.execPath, args: [path.resolve(process.argv[1]!), 'mcp'] };
 
 const PKG_VERSION = packageVersion();
-const MCP_PINNED_REF = `gitnexus@${PKG_VERSION}`;
 
 /** Flatten the spied console.log calls into one searchable string. */
 const logLines = () =>
@@ -144,10 +143,7 @@ describe('setupClaudeCode', () => {
       await setupCommand();
 
       const config = JSON.parse(await fs.readFile(path.join(configDir, '.claude.json'), 'utf-8'));
-      expect(config.mcpServers.gitnexus).toEqual({
-        command: 'npx',
-        args: ['-y', MCP_PINNED_REF, 'mcp'],
-      });
+      expect(config.mcpServers.gitnexus).toEqual({ ...SELF_MCP });
       await expect(fs.access(path.join(tempHome, '.claude.json'))).rejects.toThrow();
       await expect(fs.access(path.join(tempHome, '.claude'))).rejects.toThrow();
     });
