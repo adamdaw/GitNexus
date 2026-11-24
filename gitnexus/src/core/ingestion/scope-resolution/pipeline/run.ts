@@ -33,7 +33,6 @@ import type {
   SymbolDefinition,
 } from 'gitnexus-shared';
 import type { TypeRef } from 'gitnexus-shared';
-import { SupportedLanguages } from 'gitnexus-shared';
 import type { KnowledgeGraph } from '../../../graph/types.js';
 import { GraphReferenceIntegrityError } from '../../../graph/relationship-integrity.js';
 import { generateId } from '../../../../lib/utils.js';
@@ -1290,15 +1289,16 @@ export function runScopeResolution(
   // typeBindings may be refined; finalized `bindings` stay immutable (I8).
   const runWorkspaceAndSiblings = (idx: ReturnType<typeof buildIndexes>) => {
     // Port of upstream #4039: the finalized module-exports surface overrides the
-    // provider's namespaceExports. Apex stays on the fork's gating below unless
-    // its provider sets namespaceExportsFromModuleExports.
+    // provider's namespaceExports. Providers that re-sequence heritage after the
+    // siblings (`resolveHeritageAfterSiblings`) keep the flag-gated default below
+    // unless they also set namespaceExportsFromModuleExports.
     const moduleExports = idx.moduleExports;
     let namespaceExports = provider.namespaceExportsFromModuleExports
       ? provider.moduleExports
       : undefined;
     if (
       moduleExports !== undefined &&
-      (provider.language !== SupportedLanguages.Apex ||
+      (provider.resolveHeritageAfterSiblings !== true ||
         provider.namespaceExportsFromModuleExports === true)
     ) {
       namespaceExports = (file) => moduleExports.values(file.filePath);
