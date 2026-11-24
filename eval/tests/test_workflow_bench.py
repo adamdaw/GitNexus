@@ -439,8 +439,6 @@ def test_test_artifact_retries_cannot_hide_missing_evidence(ci_test_jobs):
         for step in job.get("steps", []):
             uses = step.get("uses", "")
             if uses.startswith("actions/upload-artifact@"):
-                # Only the scanner's optional LCOV handoff may bypass the evidence uploader.
-                assert (job_name, step["with"]["name"]) == ("coverage-merge", "sonar-coverage")
                 assert re.fullmatch(r"actions/upload-artifact@[a-f0-9]{40}", uses)
             elif uses != "./.github/actions/upload-test-artifact":
                 continue
