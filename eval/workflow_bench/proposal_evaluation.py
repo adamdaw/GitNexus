@@ -29,6 +29,7 @@ from .proposer_sandbox import (
     baseline_gitnexus_mounts,
     build_claude_settings,
     build_sandbox_environment,
+    redact_text,
 )
 from .proposal_tools import TOOLS
 from .release_controls import REFERENCES
@@ -44,6 +45,8 @@ from .verification_diagnostics import verification_metrics
 
 # A full typecheck of the pinned repository can exceed five minutes on small hosts.
 GRADING_TIMEOUT_S = 15 * 60
+# Bound on the failure reason a not-ok row keeps, so an early stop says why.
+MAX_ERROR_DETAIL_CHARS = 2000
 
 
 @dataclass(frozen=True)
@@ -357,6 +360,16 @@ def _prepare_tasks(
     return prepared
 
 
+def failure_detail(detail: object, secrets: Sequence[str] = ()) -> str:
+    """The redacted, bounded reason a cell failed; the session record itself is unredacted."""
+    text = detail if isinstance(detail, str) else json.dumps(detail, default=str, sort_keys=True)
+    text = redact_text(text, secrets)
+    if len(text) <= MAX_ERROR_DETAIL_CHARS:
+        return text
+    marker = f"…[truncated {len(text)} chars]"
+    return text[: MAX_ERROR_DETAIL_CHARS - len(marker)] + marker
+
+
 def _measure(
     prepared: PreparedTask,
     *,
@@ -398,16 +411,20 @@ def _measure(
                     patch=patch if patch.is_file() else None,
                     parent=parent,
                 )
-            except (ManagedProcessError, SandboxError, OSError):
+            except (ManagedProcessError, SandboxError, OSError) as exc:
                 # Preserve the completed model's usage and stop the sweep if its grader failed to run.
-                session.update(ok=False, error_kind="grading-infrastructure")
+                session.update(
+                    ok=False, error_kind="grading-infrastructure", error_detail=f"{type(exc).__name__}: {exc}"
+                )
     authored = applied and authored
     error = session["error_kind"]
     if error is None and not authored:
         error = "verify-failed"
     elif error is None and not hidden:
         error = "oracle-failed"
-    session.pop("error_detail", None)
+    detail = session.pop("error_detail", None)
+    if not session["ok"] and detail:
+        session["error_detail"] = failure_detail(detail, (client.api_key,))
     return {
         **session,
         **prepared.assets.dependency_binding,

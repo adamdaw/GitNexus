@@ -134,6 +134,8 @@ def build_report(rows: list[Any], metadata: dict[str, Any], *, now: datetime | N
         if proposal:
             for field in ("executor", "worker_image", "claude_version", "proposal_applied", "usage_source"):
                 safe_row[field] = _json_safe(row.get(field))
+            if row.get("ok") is not True and "error_detail" in row:  # The evaluator redacts and bounds it.
+                safe_row["error_detail"] = _json_safe(row["error_detail"])
         safe_row.update(public_cell_diagnostics(row))
         safe_rows.append(safe_row)
         task, run, arm = row.get("task"), row.get("run"), row.get("arm")
