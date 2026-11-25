@@ -69,6 +69,109 @@ def test_unusable_measurement_preserves_model_usage_and_stops_the_sweep(monkeypa
     assert row["cost_usd"] == cost and row["input_tokens"] == 14
 
 
+def stopped_early(report):
+    """Why the paired sweep produced fewer cells than expected."""
+    rows = [
+        {key: row.get(key) for key in ("arm", "run", "ok", "error_kind", "error_detail")}
+        for row in report.get("per_run", [])
+    ]
+    return json.dumps({"complete": report.get("complete"), "problems": report.get("problems"), "rows": rows}, indent=2)
+
+
+@pytest.mark.parametrize(
+    ("session", "grader_error", "expected"),
+    [
+        (
+            dict(
+                ok=False,
+                cost_usd=None,
+                error_kind="session-error",
+                error_detail={"stdout_tail": "sk-ant-api03-leakedkey123 offline-key " + "x" * 5000},
+            ),
+            None,
+            "session-error",
+        ),
+        (
+            dict(ok=True, cost_usd=0.01, error_kind=None, error_detail=None),
+            evaluator.SandboxError("Authorization: Bearer offline-key worker did not start"),
+            "grading-infrastructure",
+        ),
+    ],
+)
+def test_failed_measurement_keeps_a_redacted_bounded_reason(monkeypatch, tmp_path, session, grader_error, expected):
+    source = evaluator.Source(tmp_path, tmp_path, [])
+    task = {"id": "sample", "prompt": "Inspect this fixture.", "ref": "a" * 40}
+    prepared = evaluator.PreparedTask(
+        task, tmp_path, source, SimpleNamespace(digest="d"), SimpleNamespace(dependency_binding={})
+    )
+    client = evaluator.ModelClient(Path("claude"), "claude-sonnet-4-6", "high", "offline-key")
+    monkeypatch.setattr(evaluator, "propose", lambda *_a, **_kw: dict(session, input_tokens=14))
+
+    def unavailable(*_args, **_kwargs):
+        raise grader_error
+
+    monkeypatch.setattr(evaluator, "grade", unavailable)
+    metadata = {"runtime_sha": "a" * 40, "harness_sha": "b" * 40, "usage_source": "fixture"}
+    row = evaluator._measure(
+        prepared,
+        arm="baseline",
+        run=0,
+        client=client,
+        out=tmp_path,
+        parent=tmp_path,
+        metadata=metadata,
+        version=release_report.PROPOSAL_CLIENT,
+    )
+    assert not row["ok"] and row["error_kind"] == expected
+    detail = row["error_detail"]
+    assert len(detail) <= evaluator.MAX_ERROR_DETAIL_CHARS
+    assert "offline-key" not in detail and "leakedkey123" not in detail
+    if grader_error is None:
+        assert detail.startswith('{"stdout_tail": "[REDACTED] [REDACTED] xxx') and detail.endswith(" chars]")
+        assert "…[truncated " in detail
+    else:
+        assert detail == "SandboxError: Authorization: Bearer [REDACTED] worker did not start"
+    # The incomplete failure receipt carries the reason through to the published report.
+    report = release_report.build_report(
+        [row],
+        {
+            **metadata,
+            "task_set_digest": "1" * 64,
+            "model": client.model,
+            "effort": "high",
+            "runs": 3,
+            "tasks": {"sample": {"sha": "a" * 40, "oracle_digest": "d"}},
+            "executor": release_report.PROPOSAL_EXECUTOR,
+        },
+    )
+    assert not report["complete"] and report["per_run"][0]["error_detail"] == detail
+    assert json.loads(stopped_early(report))["rows"][0]["error_detail"] == detail
+
+
+def test_successful_measurement_reports_no_error_detail(monkeypatch, tmp_path):
+    source = evaluator.Source(tmp_path, tmp_path, [])
+    task = {"id": "sample", "prompt": "Inspect this fixture.", "ref": "a" * 40}
+    prepared = evaluator.PreparedTask(
+        task, tmp_path, source, SimpleNamespace(digest="d"), SimpleNamespace(dependency_binding={})
+    )
+    client = evaluator.ModelClient(Path("claude"), "claude-sonnet-4-6", "high", "offline-key")
+    monkeypatch.setattr(
+        evaluator, "propose", lambda *_a, **_kw: dict(ok=True, cost_usd=0.01, error_kind=None, error_detail=None)
+    )
+    monkeypatch.setattr(evaluator, "grade", lambda *_a, **_kw: (True, True, True, None))
+    row = evaluator._measure(
+        prepared,
+        arm="baseline",
+        run=0,
+        client=client,
+        out=tmp_path,
+        parent=tmp_path,
+        metadata={"runtime_sha": "a" * 40, "harness_sha": "b" * 40, "usage_source": "fixture"},
+        version=release_report.PROPOSAL_CLIENT,
+    )
+    assert row["ok"] and row["resolved"] and "error_detail" not in row
+
+
 @native
 def test_offline_worker_credentials_namespaces_and_readonly_checkout(tmp_path, monkeypatch):
     checkout = tmp_path / "checkout"
@@ -234,7 +337,7 @@ def test_native_paired_proposal_cost_and_grading(tmp_path):
             Path(os.environ["CLAUDE_CANARY_BIN"]), model, "high", "offline-fixture", provider.base_url, timeout=150
         )
         report = evaluator.evaluate([task], meta, runtime_root=runtime, client=client, out=out, oracle_root=oracles)
-        assert len(provider.requests) == 12
+        assert len(provider.requests) == 12, stopped_early(report)
     assert observed == {False: 3, True: 3}
     assert len(tool_results) == 6
     for augmented, names, results in tool_results:

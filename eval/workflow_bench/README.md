@@ -142,7 +142,8 @@ uv run --locked --extra dev --directory eval python -m workflow_bench.proposal_e
 
 Four tasks, two arms and three repetitions produce 24 model sessions. The
 example sets a USD 1 limit per session. A budget stop or infrastructure failure
-makes the evidence incomplete. Each session records the CLI's input, output
+makes the evidence incomplete, and the failed row's `error_detail` says why
+(redacted and capped at 2,000 characters). Each session records the CLI's input, output
 and cache token counts, estimated USD and wall time. An incorrect submission
 still counts in its arm's solve rate. Each offline grading command has a
 15-minute deadline. `proposal-evaluation.json` binds those
