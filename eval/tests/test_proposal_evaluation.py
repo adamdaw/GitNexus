@@ -96,6 +96,14 @@ def stopped_early(report):
             evaluator.SandboxError("Authorization: Bearer offline-key worker did not start"),
             "grading-infrastructure",
         ),
+        (
+            dict(ok=True, cost_usd=0.01, error_kind=None, error_detail=None),
+            evaluator.ManagedProcessError(
+                ["docker", "run"],
+                SimpleNamespace(state="exited", returncode=125, detail="Authorization: Bearer offline-key", stderr_tail=""),
+            ),
+            "grading-infrastructure",
+        ),
     ],
 )
 def test_failed_measurement_keeps_a_redacted_bounded_reason(monkeypatch, tmp_path, session, grader_error, expected):
@@ -129,8 +137,10 @@ def test_failed_measurement_keeps_a_redacted_bounded_reason(monkeypatch, tmp_pat
     if grader_error is None:
         assert detail.startswith('{"stdout_tail": "[REDACTED] [REDACTED] xxx') and detail.endswith(" chars]")
         assert "…[truncated " in detail
-    else:
+    elif isinstance(grader_error, evaluator.SandboxError):
         assert detail == "SandboxError: Authorization: Bearer [REDACTED] worker did not start"
+    else:
+        assert detail == "ManagedProcessError: managed command failed (exited, exit=125): Authorization: Bearer [REDACTED]"
     # The incomplete failure receipt carries the reason through to the published report.
     report = release_report.build_report(
         [row],
@@ -146,6 +156,17 @@ def test_failed_measurement_keeps_a_redacted_bounded_reason(monkeypatch, tmp_pat
     )
     assert not report["complete"] and report["per_run"][0]["error_detail"] == detail
     assert json.loads(stopped_early(report))["rows"][0]["error_detail"] == detail
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("push failed: ghp_abcdefgh12345678 rejected", "push failed: [REDACTED] rejected"),
+        ("clone https://ci:hunter2@github.com/o/r.git failed", "clone https://[REDACTED]@github.com/o/r.git failed"),
+    ],
+)
+def test_failure_detail_redacts_github_tokens_and_url_credentials(raw, expected):
+    assert evaluator.failure_detail(raw) == expected
 
 
 def test_successful_measurement_reports_no_error_detail(monkeypatch, tmp_path):

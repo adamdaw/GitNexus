@@ -146,6 +146,23 @@ def test_proposal_reports_bind_usage_source_toolset_image_and_token_counts():
     assert json.loads(json.dumps(invalid, allow_nan=False))["per_run"][0]["worker_image"] == [None]
 
 
+def test_complete_proposal_report_rejects_error_detail_on_a_successful_cell():
+    meta = {**metadata(), "executor": release_report.PROPOSAL_EXECUTOR, "usage_source": "fixture"}
+    measured = [dict(row, sandbox_backend="docker", executor=meta["executor"], usage_source="fixture",
+                     claude_version=release_report.PROPOSAL_CLIENT, worker_image=release_report.WORKER_IMAGE,
+                     runtime_sha=SHA, harness_sha=meta["harness_sha"], proposal_applied=True,
+                     input_tokens=11, output_tokens=7, cache_creation_input_tokens=0, cache_read_input_tokens=0)
+                for row in rows()]
+    report = build_report(measured, meta, now=NOW)
+    check = dict(runtime_sha=SHA, task_set_digest=DIGEST, now=NOW, expected_schema=release_report.PROPOSAL_SCHEMA,
+                 expected_usage_source="fixture")
+    validate_report(report, **check)
+    assert report["per_run"][0]["ok"] is True
+    report["per_run"][0]["error_detail"] = "sk-ant-unredacted " + "x" * 5000
+    with pytest.raises(ValueError, match="outside the published report schema"):
+        validate_report(report, **check)
+
+
 @pytest.mark.parametrize("exposure", [None, "readable", "none"])
 def test_mcp_measurements_require_host_recorded_socket_isolation(exposure):
     measured = rows()
