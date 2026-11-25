@@ -32,7 +32,7 @@ import type { ScopeResolutionIndexes } from '../../model/scope-resolution-indexe
 import type { SemanticModel } from '../../model/semantic-model.js';
 import type { WorkspaceResolutionIndex } from '../workspace-index.js';
 import type { GraphNodeLookup } from '../graph-bridge/node-lookup.js';
-import type { ScopeResolver } from '../contract/scope-resolver.js';
+import type { ReceiverMemberResolution, ScopeResolver } from '../contract/scope-resolver.js';
 import {
   callSuppressionIdentities,
   providerCallOutcome,
@@ -127,6 +127,7 @@ export function emitFreeCallFallback(
     /** Mirrors `ScopeResolver.qualifiedFreeCallOutranksNameClaim`. */
     readonly qualifiedFreeCallOutranksNameClaim?: boolean;
     readonly resolveUnqualifiedCall?: ScopeResolver['resolveUnqualifiedCall'];
+    readonly resolveConstructorCall?: ScopeResolver['resolveConstructorCall'];
     readonly selectedCalls?: Map<string, SymbolDefinition | null>;
     readonly onSelectedCall?: (key: string, definition: SymbolDefinition | null) => void;
     readonly conversionRankFn?: ConversionRankFn;
@@ -356,48 +357,15 @@ export function emitFreeCallFallback(
       // Language visibility vetoes the constructed TYPE (Class/Struct), not a
       // Constructor child — Go refuses any `qualifiedName` containing `.`.
       let globalFallbackVetoTarget: SymbolDefinition | undefined;
-      if (site.callForm !== 'constructor' && site.rawQualifiedName === undefined) {
-        const resolution = options.resolveUnqualifiedCall?.(site, scopes, model);
-        if (resolution !== undefined && resolution.kind !== 'resolved') {
-          options.selectedCalls?.set(selectedCallKey(parsed.filePath, site.atRange), null);
-          options.onSelectedCall?.(selectedCallKey(parsed.filePath, site.atRange), null);
-          options.recordSourceBinding?.(site, {
-            status:
-              resolution.kind === 'ambiguous'
-                ? 'ambiguous'
-                : resolution.kind === 'inapplicable'
-                  ? 'blocked'
-                  : 'unresolved',
-            targetDefIds: resolution.candidateIds,
-            basis:
-              resolution.kind === 'ambiguous'
-                ? 'member-lookup-ambiguous'
-                : `overload-${resolution.kind}`,
-          });
-          options.recordResolutionOutcome?.(
-            providerCallOutcome(
-              resolution,
-              site,
-              parsed.filePath,
-              'free-call-fallback',
-              outcomeContext,
-            ),
-          );
-          handledSites.add(siteKey(parsed.filePath, site));
-          continue;
-        }
-        if (resolution?.kind === 'resolved') {
-          fnDef = resolution.definition;
-          fnDefFromProvider = true;
-        }
-      }
+      let resolution: ReceiverMemberResolution | undefined;
       if (site.callForm === 'constructor') {
         // Most languages link `Type(...)` to the explicit Constructor def when one
         // exists (else the Class). `constructorCallTargetsClass` opts into always
         // linking to the Class. `conservativeOverloadResolution` (Apex, REQ-015)
         // narrows the constructor overloads by argument types and records an
-        // undisambiguable set as unresolved; every other language keeps the
-        // byte-identical arity-only `pickConstructorOrClass` path.
+        // undisambiguable set as unresolved. Otherwise a language
+        // `resolveConstructorCall` hook (Java) may decide the explicit
+        // constructors, else the arity-only `pickConstructorOrClass` path.
         const resolveCtorTarget = (cls: SymbolDefinition): SymbolDefinition | undefined => {
           if (options.constructorCallTargetsClass === true) return cls;
           if (options.conservativeOverloadResolution === true) {
@@ -413,7 +381,10 @@ export function emitFreeCallFallback(
             }
             return outcome.def;
           }
-          return pickConstructorOrClass(cls, workspaceIndex, scopes, site.arity);
+          const constructors = explicitConstructors(cls, workspaceIndex, scopes);
+          if (constructors.length > 0)
+            resolution = options.resolveConstructorCall?.(cls, constructors, site, scopes, model);
+          return resolution ? undefined : pickConstructorOrClass(cls, constructors, site.arity);
         };
         // `ns.Type{}` names its type through a namespace import: a type the
         // language will not let that qualifier reach is not found, rather than
@@ -463,6 +434,40 @@ export function emitFreeCallFallback(
           writtenDefinition = classDef;
           fnDef = resolveCtorTarget(classDef);
         }
+      } else if (site.rawQualifiedName === undefined) {
+        resolution = options.resolveUnqualifiedCall?.(site, scopes, model);
+      }
+      if (resolution?.kind === 'resolved') {
+        fnDef = resolution.definition;
+        fnDefFromProvider = true;
+      } else if (resolution !== undefined) {
+        const key = selectedCallKey(parsed.filePath, site.atRange);
+        options.selectedCalls?.set(key, null);
+        options.onSelectedCall?.(key, null);
+        options.recordSourceBinding?.(site, {
+          status:
+            resolution.kind === 'ambiguous'
+              ? 'ambiguous'
+              : resolution.kind === 'inapplicable'
+                ? 'blocked'
+                : 'unresolved',
+          targetDefIds: resolution.candidateIds,
+          basis:
+            resolution.kind === 'ambiguous'
+              ? 'member-lookup-ambiguous'
+              : `overload-${resolution.kind}`,
+        });
+        options.recordResolutionOutcome?.(
+          providerCallOutcome(
+            resolution,
+            site,
+            parsed.filePath,
+            'free-call-fallback',
+            outcomeContext,
+          ),
+        );
+        handledSites.add(siteKey(parsed.filePath, site));
+        continue;
       }
       if (ctorUnresolved !== undefined) {
         recordSuppressed({
@@ -858,7 +863,11 @@ export function emitFreeCallFallback(
           fnDef =
             options.constructorCallTargetsClass === true
               ? writtenDefinition
-              : pickConstructorOrClass(writtenDefinition, workspaceIndex, scopes, site.arity);
+              : pickConstructorOrClass(
+                  writtenDefinition,
+                  explicitConstructors(writtenDefinition, workspaceIndex, scopes),
+                  site.arity,
+                );
         }
       }
       // Name-guess tier: pickUniqueGlobalCallable consults no import context —
@@ -1500,11 +1509,12 @@ function logicalCallableKey(def: SymbolDefinition): string {
 /** Collect a class's explicit Constructor defs (own class-scope ownedDefs
  *  plus any nested non-Class child scopes). Empty when the class has only an
  *  implicit constructor. Shared by `pickConstructorOrClass` (arity-only, the
- *  default) and `selectConstructorConservative` (argument-type narrowing). */
-function collectConstructors(
+ *  default), the language `resolveConstructorCall` hook, and
+ *  `selectConstructorConservative` (argument-type narrowing). */
+function explicitConstructors(
   classDef: SymbolDefinition,
   workspaceIndex: WorkspaceResolutionIndex,
-  scopes?: ScopeResolutionIndexes,
+  scopes: ScopeResolutionIndexes,
 ): SymbolDefinition[] {
   const classScope = workspaceIndex.classScopeByDefId.get(classDef.nodeId);
   if (classScope === undefined) return [];
@@ -1512,32 +1522,21 @@ function collectConstructors(
   for (const def of classScope.ownedDefs) {
     if (def.type === 'Constructor') ctors.push(def);
   }
-  if (scopes !== undefined) {
-    for (const childId of scopes.scopeTree.getChildren(classScope.id)) {
-      const childScope = scopes.scopeTree.getScope(childId);
-      if (childScope === undefined || childScope.kind === 'Class') continue;
-      for (const def of childScope.ownedDefs) {
-        if (def.type === 'Constructor') ctors.push(def);
-      }
+  for (const childId of scopes.scopeTree.getChildren(classScope.id)) {
+    const childScope = scopes.scopeTree.getScope(childId);
+    if (childScope === undefined || childScope.kind === 'Class') continue;
+    for (const def of childScope.ownedDefs) {
+      if (def.type === 'Constructor') ctors.push(def);
     }
   }
   return ctors;
 }
 
-/** For a constructor call `new X(...)`, return the X class's explicit
- *  Constructor def (by walking the class scope's ownedDefs) or the
- *  Class def itself when no explicit Constructor exists. Matches
- *  legacy behavior — tests assert targetLabel === 'Class' for implicit
- *  ctors and targetLabel === 'Constructor' for explicit ones. */
 function pickConstructorOrClass(
   classDef: SymbolDefinition,
-  workspaceIndex: WorkspaceResolutionIndex,
-  scopes?: ScopeResolutionIndexes,
+  ctors: readonly SymbolDefinition[],
   callArity?: number,
 ): SymbolDefinition {
-  const classScope = workspaceIndex.classScopeByDefId.get(classDef.nodeId);
-  if (classScope === undefined) return classDef;
-  const ctors = collectConstructors(classDef, workspaceIndex, scopes);
   if (ctors.length === 0) return classDef;
   if (callArity !== undefined) {
     const narrowed = narrowByArity(ctors, callArity);
@@ -1560,10 +1559,10 @@ function selectConstructorConservative(
   classDef: SymbolDefinition,
   site: ParsedFile['referenceSites'][number],
   workspaceIndex: WorkspaceResolutionIndex,
-  scopes: ScopeResolutionIndexes | undefined,
+  scopes: ScopeResolutionIndexes,
   hookCtx: OverloadNarrowingHookCtx,
 ): { def: SymbolDefinition } | { unresolved: readonly SymbolDefinition[] } {
-  const ctors = collectConstructors(classDef, workspaceIndex, scopes);
+  const ctors = explicitConstructors(classDef, workspaceIndex, scopes);
   if (ctors.length === 0) return { def: classDef };
   if (ctors.length === 1) return { def: ctors[0]! };
   const candidates = narrowOverloadCandidates(ctors, site.arity, site.argumentTypes, hookCtx);
