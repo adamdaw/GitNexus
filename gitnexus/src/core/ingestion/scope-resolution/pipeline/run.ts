@@ -1288,11 +1288,24 @@ export function runScopeResolution(
   // `bindingAugmentations`/`workspaceFqnBindings` in place; existing scope
   // typeBindings may be refined; finalized `bindings` stay immutable (I8).
   const runWorkspaceAndSiblings = (idx: ReturnType<typeof buildIndexes>) => {
+    // Port of upstream #4039: the finalized module-exports surface overrides the
+    // provider's namespaceExports. Providers that re-sequence heritage after the
+    // siblings (`resolveHeritageAfterSiblings`) keep the flag-gated default below
+    // unless they also set namespaceExportsFromModuleExports.
+    const moduleExports = idx.moduleExports;
+    let namespaceExports = provider.namespaceExportsFromModuleExports
+      ? provider.moduleExports
+      : undefined;
+    if (
+      moduleExports !== undefined &&
+      (provider.resolveHeritageAfterSiblings !== true ||
+        provider.namespaceExportsFromModuleExports === true)
+    ) {
+      namespaceExports = (file) => moduleExports.values(file.filePath);
+    }
     const wsIndex = buildWorkspaceResolutionIndex(parsedFiles, idx.scopeTree, {
       stripTypePreservingDecoration: provider.stripTypePreservingDecoration,
-      namespaceExports: provider.namespaceExportsFromModuleExports
-        ? provider.moduleExports
-        : undefined,
+      namespaceExports,
     });
     logHeapProbe('sr-post-workspaceIndex', `lang=${provider.language}`);
     // Install the provider's namespace exports before the sibling hook reads
