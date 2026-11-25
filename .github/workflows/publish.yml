@@ -277,7 +277,8 @@ jobs:
   publish:
     name: Publish to npm
     needs: [route, rc-guard, ci]
-    if: ${{ always() && needs.ci.result == 'success' && (needs.route.outputs.mode == 'stable' || needs.rc-guard.outputs.should_run == 'true') }}
+    # Fork guard: release side effects run only in the upstream repository.
+    if: ${{ always() && github.repository == 'abhigyanpatwari/GitNexus' && needs.ci.result == 'success' && (needs.route.outputs.mode == 'stable' || needs.rc-guard.outputs.should_run == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -948,7 +949,8 @@ jobs:
   docker:
     name: Build & Push RC Docker images
     needs: [route, publish]
-    if: ${{ needs.route.outputs.mode == 'rc' && needs.publish.outputs.vtag != '' }}
+    # Fork guard: release side effects run only in the upstream repository.
+    if: ${{ github.repository == 'abhigyanpatwari/GitNexus' && needs.route.outputs.mode == 'rc' && needs.publish.outputs.vtag != '' }}
     uses: ./.github/workflows/docker.yml
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
