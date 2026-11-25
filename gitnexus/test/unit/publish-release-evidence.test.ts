@@ -38,11 +38,12 @@ function permitsPublication({
   mode = 'rc',
   ci = 'success',
   guarded = 'true',
-}: { mode?: string; ci?: string; guarded?: string } = {}) {
+  repository = 'abhigyanpatwari/GitNexus',
+}: { mode?: string; ci?: string; guarded?: string; repository?: string } = {}) {
   const expression = String(publish.if)
     .replace(/^\$\{\{|\}\}$/g, '')
     .replace(/needs\.([\w-]+)/g, 'needs["$1"]');
-  const evaluate = new Function('needs', 'always', `return (${expression});`);
+  const evaluate = new Function('needs', 'always', 'github', `return (${expression});`);
   return evaluate(
     {
       route: { result: 'success', outputs: { mode } },
@@ -50,6 +51,7 @@ function permitsPublication({
       ci: { result: ci },
     },
     () => true,
+    { repository },
   );
 }
 
@@ -63,6 +65,7 @@ describe('publish.yml release evidence', () => {
     expect(permitsPublication()).toBe(true);
     expect(permitsPublication({ ci: 'failure' })).toBe(false);
     expect(permitsPublication({ guarded: 'false' })).toBe(false);
+    expect(permitsPublication({ repository: 'adamdaw/GitNexus' })).toBe(false);
   });
 
   it('attaches this run’s fixed-answer accuracy to every release', () => {
