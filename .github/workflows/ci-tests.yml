@@ -11,8 +11,10 @@ jobs:
     name: parse cache / speed and memory (${{ matrix.corpus }})
     runs-on: ubuntu-latest
     # A noisy runner extends the comparison from 7 to at most 21 pairs. The
-    # real corpus takes about five minutes per pair, plus one warmup pair.
-    timeout-minutes: 150
+    # real corpus takes five to seven minutes per pair, plus one warmup pair
+    # and about two minutes of build, so all three looks need up to ~155
+    # minutes; 210 is that plus about 30%.
+    timeout-minutes: ${{ matrix.corpus == 'real' && 210 || 150 }}
     strategy:
       fail-fast: false
       matrix:
