@@ -10,6 +10,8 @@ export interface ExtractedClassSymbol {
   name: string;
   type: ClassLikeNodeLabel;
   qualifiedName: string;
+  /** Use the qualified name for this graph ID when the file has a same-name declaration. */
+  qualifiedNodeId?: true;
   templateArguments?: string[];
   /** Extra marker properties merged onto the emitted node (e.g. a node-kind
    *  discriminant for a type captured under a shared label). Mirrors how method
