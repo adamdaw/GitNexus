@@ -50,6 +50,7 @@ for (const args of [
   ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture'],
   ['tag', 'v2.0.0'],
   ['tag', 'v2.0.0-rc.1'],
+  ['tag', 'v1.2.3-rc.1'],
 ]) {
   const result = spawnSync('git', args, { cwd: fixture, encoding: 'utf8' });
   if (result.status !== 0) throw new Error(result.stderr);
@@ -68,6 +69,7 @@ function classify({
   publishedSha = sha,
   dryRun = false,
   packageVersion = '2.0.0',
+  repository = 'abhigyanpatwari/GitNexus',
 }: {
   event?: string;
   ref?: string;
@@ -75,6 +77,7 @@ function classify({
   publishedSha?: string;
   dryRun?: boolean;
   packageVersion?: string;
+  repository?: string;
 } = {}) {
   const output = path.join(fixture, 'output');
   writeFileSync(output, '');
@@ -89,6 +92,7 @@ function classify({
       ...process.env,
       EVENT_NAME: event,
       GITHUB_REF: ref,
+      GITHUB_REPOSITORY: repository,
       INPUT_TAG: tag,
       PUBLISHED_SHA: publishedSha,
       INPUT_DRY_RUN: String(dryRun),
@@ -107,6 +111,25 @@ function classify({
 }
 
 describe('Docker release mode guard', () => {
+  it('does not publish or log in for a fork tag push', () => {
+    const repository = 'adamdaw/GitNexus';
+    const result = classify({
+      repository,
+      ref: 'refs/tags/v1.2.3-rc.1',
+      packageVersion: '1.2.3-rc.1',
+    });
+    expect(result).toEqual({ status: 0, output: { sha, publish: 'false' } });
+    const logins = image.steps.filter((step) => step.uses?.startsWith('docker/login-action@'));
+    expect(logins).toHaveLength(2);
+    for (const login of logins) {
+      const expression = String(login.if).replace(/needs\.([\w-]+)/g, 'needs["$1"]');
+      const evaluate = new Function('needs', 'github', `return (${expression});`);
+      expect(evaluate({ 'release-gate': { outputs: { publish: 'true' } } }, { repository })).toBe(
+        false,
+      );
+    }
+  });
+
   it('publishes a matching stable tag and pins its checkout SHA', () => {
     expect(docker.on.push.tags).toEqual(['v*-*']);
     expect(classify({ tag: 'v2.0.0' })).toEqual({
@@ -190,7 +213,12 @@ describe('Docker publication prerequisites', () => {
         step.run?.includes('cosign sign'),
     );
     expect(writes).toHaveLength(5);
-    for (const step of writes) expect(step.if).toBe("needs.release-gate.outputs.publish == 'true'");
+    for (const step of writes)
+      expect(step.if).toBe(
+        step.uses?.startsWith('docker/login-action@')
+          ? "github.repository == 'abhigyanpatwari/GitNexus' && needs.release-gate.outputs.publish == 'true'"
+          : "needs.release-gate.outputs.publish == 'true'",
+      );
     const build = image.steps.find((step) => step.id === 'build');
     expect(build?.with?.push).toBe("${{ needs.release-gate.outputs.publish == 'true' }}");
   });
