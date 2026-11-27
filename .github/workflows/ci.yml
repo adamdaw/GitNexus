@@ -2,6 +2,11 @@ name: CI
 
 on:
   pull_request:
+  # Fork: run the full release matrix on every push to main, because PRs
+  # skip the release-only jobs (containment, parse cache, cross-platform,
+  # benchmarks and the execution audit).
+  push:
+    branches: [main]
   workflow_call:
 
 permissions:
@@ -16,6 +21,7 @@ permissions:
 # invocations use `CI-<ref>`; invocations from a reusable-workflow caller fall
 # into a per-run-unique group that never serializes with the caller. Publish
 # calls this workflow for a manual RC request on main or a stable version tag.
+# Pushes to main also use the per-run group, so they are never cancelled.
 concurrency:
   group: ${{ github.event_name == 'pull_request' && format('CI-{0}', github.ref) || format('CI-nested-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

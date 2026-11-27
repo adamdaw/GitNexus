@@ -42,6 +42,14 @@ function jobsFor(workflow: string) {
   return (load(readFileSync(file, 'utf8')) as { jobs: Record<string, WorkflowJob> }).jobs;
 }
 
+// Fork policy: PRs skip the release matrix, so every push to main runs it.
+it('runs CI, and so the release matrix, on every push to main', () => {
+  const file = path.resolve(__dirname, '../../../.github/workflows/ci.yml');
+  const triggers = (load(readFileSync(file, 'utf8')) as { on: Record<string, unknown> }).on;
+  expect(Object.keys(triggers).sort()).toEqual(['pull_request', 'push', 'workflow_call']);
+  expect(triggers.push).toEqual({ branches: ['main'] });
+});
+
 it('reserves the release matrix for Publish', () => {
   const jobs = jobsFor('ci-tests');
   for (const name of [
