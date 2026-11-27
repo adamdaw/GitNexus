@@ -2,7 +2,11 @@ name: CI
 
 on:
   pull_request:
-    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+  # Fork: run the full release matrix on every push to main, because PRs
+  # skip the release-only jobs (containment, parse cache, cross-platform,
+  # benchmarks and the execution audit).
+  push:
+    branches: [main]
   workflow_call:
 
 permissions:
@@ -15,35 +19,66 @@ permissions:
 # prefix that could resolve to the caller's name would share a concurrency group
 # with the caller → deadlock. A literal prefix is immune. Direct `pull_request`
 # invocations use `CI-<ref>`; invocations from a reusable-workflow caller fall
-# into a per-run-unique group that never serializes with the caller. `push` to
-# main is handled by publish.yml (RC mode), which calls this workflow once
-# before publishing.
+# into a per-run-unique group that never serializes with the caller. Publish
+# calls this workflow for a manual RC request on main or a stable version tag.
+# Pushes to main also use the per-run group, so they are never cancelled.
 concurrency:
   group: ${{ github.event_name == 'pull_request' && format('CI-{0}', github.ref) || format('CI-nested-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # ── Reusable workflow orchestration ─────────────────────────────────
 # Each concern lives in its own workflow file for maintainability:
-#   ci-quality.yml       — typecheck (tsc --noEmit)
-#   ci-tests.yml         — unit + integration tests with coverage + cross-platform
-#                          (includes the scope-resolution resolver tests)
-#   ci-e2e.yml           — E2E tests (only when gitnexus-web/ changes)
+#   ci-quality.yml       — formatting, lint and selected typechecks
+#   ci-tests.yml         — affected PR suites and the full release matrix
+#   ci-e2e.yml           — Chromium checks selected by the plan
 #
 # Shared setup is DRY via .github/actions/setup-gitnexus composite action.
 
 jobs:
+  plan:
+    name: Select CI checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      checks: ${{ steps.select.outputs.plan }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        id: select
+        with:
+          retries: 2
+          script: await require('./.github/scripts/ci-plan.cjs').plan({ github, context, core })
+
   quality:
+    needs: plan
     uses: ./.github/workflows/ci-quality.yml
+    with:
+      plan: ${{ needs.plan.outputs.checks }}
     permissions:
       contents: read
 
   tests:
+    needs: plan
     uses: ./.github/workflows/ci-tests.yml
+    with:
+      plan: ${{ needs.plan.outputs.checks }}
     permissions:
       contents: read
+      actions: read
 
   e2e:
+    needs: plan
     uses: ./.github/workflows/ci-e2e.yml
+    with:
+      run-browser: ${{ fromJSON(needs.plan.outputs.checks).run.browser }}
     permissions:
       contents: read
 
@@ -54,7 +89,8 @@ jobs:
   # fetch-depth 2: HEAD is the PR merge commit, HEAD^1 the base tip.
   test-dupes:
     name: Duplicate test scan
-    if: github.event_name == 'pull_request'
+    needs: plan
+    if: github.event_name == 'pull_request' && fromJSON(needs.plan.outputs.checks).run.cli
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
@@ -86,7 +122,7 @@ jobs:
   save-pr-meta:
     name: Save PR Metadata
     if: always() && github.event_name == 'pull_request'
-    needs: [quality, tests, e2e]
+    needs: [plan, quality, tests, e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -94,11 +130,13 @@ jobs:
         shell: bash
         env:
           PR_NUMBER: ${{ github.event.number }}
+          COUNTS: ${{ needs.tests.outputs.package-counts }}
           QUALITY: ${{ needs.quality.result }}
           TESTS: ${{ needs.tests.result }}
-          E2E: ${{ needs.e2e.result }}
+          E2E: ${{ needs.e2e.result == 'success' && !fromJSON(needs.plan.outputs.checks || '{}').run.browser && 'skipped' || needs.e2e.result }}
         run: |
           mkdir -p pr-meta
+          echo "$COUNTS" > pr-meta/package_counts
           echo "$PR_NUMBER"      > pr-meta/pr_number
           echo "$QUALITY"        > pr-meta/quality_result
           echo "$TESTS"          > pr-meta/tests_result
@@ -125,7 +163,7 @@ jobs:
   # Single required check for branch protection.
   ci-status:
     name: CI Gate
-    needs: [quality, tests, e2e]
+    needs: [plan, quality, tests, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -144,19 +182,27 @@ jobs:
           # so a resolver regression makes TESTS != success and blocks here.
           TESTS: ${{ needs.tests.result }}
           E2E: ${{ needs.e2e.result }}
+          E2E_REQUIRED: ${{ fromJSON(needs.plan.outputs.checks || '{}').run.browser }}
+          PLAN_RESULT: ${{ needs.plan.result }}
+          PLAN_AVAILABLE: ${{ needs.plan.outputs.checks != '' }}
+          QUALITY_REQUIRED: ${{ fromJSON(needs.plan.outputs.checks || '{}').run.quality || fromJSON(needs.plan.outputs.checks || '{}').run.cli || fromJSON(needs.plan.outputs.checks || '{}').run.web || fromJSON(needs.plan.outputs.checks || '{}').run.workflows }}
         run: |
           echo "Quality:        $QUALITY"
           echo "Tests:          $TESTS"
           echo "E2E:            $E2E"
+          if [[ "$PLAN_RESULT" != success || "$PLAN_AVAILABLE" != true ]]; then
+            echo "::error::Select CI checks finished with $PLAN_RESULT (plan available: $PLAN_AVAILABLE)."
+            exit 1
+          fi
           # A failed `abi-assert` job (#1922) inside the tests reusable
           # workflow makes TESTS != success, so this clause also blocks the
           # merge on a tree-sitter ABI mismatch.
-          if [[ "$QUALITY" != "success" ]] ||
+          if [[ "$QUALITY" != success && ( "$QUALITY_REQUIRED" == true || "$QUALITY" != skipped ) ]] ||
              [[ "$TESTS" != "success" ]]; then
             echo "::error::Quality or test jobs failed (includes the tree-sitter ABI gate, #1922)"
             exit 1
           fi
-          if [[ "$E2E" != "success" && "$E2E" != "skipped" ]]; then
+          if [[ "$E2E" != success && ( "$E2E_REQUIRED" == true || "$E2E" != skipped ) ]]; then
             echo "::error::E2E job failed"
             exit 1
           fi
