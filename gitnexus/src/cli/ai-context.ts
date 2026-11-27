@@ -232,7 +232,7 @@ ${tableBody}`
   // is written into indexed repos — so a wrong command here propagates outward.
   const bootstrapNote =
     `No \`${runnerPath}\`? Build from source and re-run — ` +
-    'the npm build has no Apex support and reports no error.';
+    'the npm package lacks Apex support and reports no error.';
 
   // This block is injected into every user's repo and its total size is capped
   // by test (ai-context.test.ts, #856) — a new bullet or clause has to be paid
