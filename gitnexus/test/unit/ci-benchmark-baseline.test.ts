@@ -10,7 +10,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 type Job = {
   name: string;
   needs: string;
-  steps: { with?: { ref?: string } }[];
+  steps: { with?: { ref?: string; script?: string } }[];
   strategy?: { matrix: Record<string, string[]> };
 };
 const { jobs } = load(
@@ -35,7 +35,12 @@ const repo = { owner: 'org', repo: 'repo' };
 const { benchmarkBaseline } = createRequire(import.meta.url)(
   '../../../.github/scripts/benchmark-baseline.cjs',
 ) as {
-  benchmarkBaseline(options: { github: unknown; repo: typeof repo; cwd: string }): Promise<string>;
+  benchmarkBaseline(options: {
+    github: unknown;
+    repo: typeof repo;
+    cwd: string;
+    allowFirstParentFallback?: boolean;
+  }): Promise<string>;
 };
 
 it.each(paired)('%s checks out the selected release baseline', (id) => {
@@ -113,4 +118,57 @@ it.each(['push', 'workflow_dispatch'])('uses the last measured %s ancestor', asy
     { ...passed[0], conclusion: 'skipped' },
   ]);
   await expect(benchmarkBaseline({ github, repo, cwd })).rejects.toThrow('No ancestor');
+});
+
+const unmeasured = () => {
+  const actions = {
+    listWorkflowRuns: vi.fn(async ({ head_sha }: { head_sha: string }) => [
+      { id: head_sha, event: 'push' },
+    ]),
+    listJobsForWorkflowRun: vi.fn(async () => [{ name: 'RC guard', conclusion: 'success' }]),
+  };
+  return {
+    rest: { actions },
+    paginate: <P, T>(fn: (params: P) => Promise<T>, params: P) => fn(params),
+  };
+};
+
+it('falls back to the first parent only when opted in and no ancestor qualifies', async () => {
+  mark(); // An rc marker without a measured Publish run does not qualify.
+  git('commit', '-qm', 'parent', '--allow-empty');
+  const parent = git('rev-parse', 'HEAD');
+  git('commit', '-qm', 'pushed tip', '--allow-empty');
+  const github = unmeasured();
+  const notice = vi.spyOn(console, 'log').mockImplementation(() => {});
+  expect(await benchmarkBaseline({ github, repo, cwd, allowFirstParentFallback: true })).toBe(
+    parent,
+  );
+  expect(notice).toHaveBeenCalledWith(expect.stringMatching(new RegExp('^::notice::.*' + parent)));
+  notice.mockRestore();
+  await expect(benchmarkBaseline({ github, repo, cwd })).rejects.toThrow(
+    'No ancestor has a successful main Publish run with every paired benchmark.',
+  );
+});
+
+it('prefers a measured rc ancestor over the first-parent fallback', async () => {
+  const good = mark();
+  git('commit', '-qm', 'parent', '--allow-empty');
+  git('commit', '-qm', 'pushed tip', '--allow-empty');
+  const github = unmeasured();
+  github.rest.actions.listJobsForWorkflowRun.mockImplementation(async () => passed);
+  expect(await benchmarkBaseline({ github, repo, cwd, allowFirstParentFallback: true })).toBe(good);
+});
+
+it('fails clearly when the fallback has no first parent', async () => {
+  await expect(
+    benchmarkBaseline({ github: unmeasured(), repo, cwd, allowFirstParentFallback: true }),
+  ).rejects.toThrow('HEAD^1');
+});
+
+it('opts into the first-parent fallback only on the adamdaw/GitNexus fork', () => {
+  const script = jobs['benchmark-baseline'].steps.find((s) => s.with?.script)?.with?.script;
+  expect(script).toContain(
+    "allowFirstParentFallback: context.repo.owner + '/' + context.repo.repo === 'adamdaw/GitNexus'",
+  );
+  expect(script?.match(/allowFirstParentFallback/g)).toHaveLength(1);
 });

@@ -95,7 +95,12 @@ jobs:
           result-encoding: string
           script: |
             const { benchmarkBaseline } = require('./.github/scripts/benchmark-baseline.cjs')
-            return benchmarkBaseline({ github, repo: context.repo })
+            return benchmarkBaseline({
+              github,
+              repo: context.repo,
+              // Fork only: its guarded Publish writes no rc/<sha> markers, so fall back to HEAD^1.
+              allowFirstParentFallback: context.repo.owner + '/' + context.repo.repo === 'adamdaw/GitNexus',
+            })
 
   file-result-reuse-benchmark:
     if: fromJSON(inputs.plan).release
