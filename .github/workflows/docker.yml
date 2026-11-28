@@ -86,7 +86,8 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           # Reusable calls inherit the caller's event. An explicit tag is what
           # distinguishes a publish call from a direct manual dry run.
-          if [[ "$EVENT_NAME" == 'pull_request' ]] || \
+          if [[ "$GITHUB_REPOSITORY" != 'abhigyanpatwari/GitNexus' ]] || \
+             [[ "$EVENT_NAME" == 'pull_request' ]] || \
              [[ "$EVENT_NAME" == 'workflow_dispatch' && -z "$INPUT_TAG" && "$INPUT_DRY_RUN" == 'true' ]]; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -192,7 +193,7 @@ jobs:
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       - name: Log in to GitHub Container Registry
-        if: needs.release-gate.outputs.publish == 'true'
+        if: github.repository == 'abhigyanpatwari/GitNexus' && needs.release-gate.outputs.publish == 'true'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
@@ -207,7 +208,7 @@ jobs:
       # access token, NOT the account password) with write access to the
       # `akonlabs/gitnexus` and `akonlabs/gitnexus-web` repos.
       - name: Log in to Docker Hub
-        if: needs.release-gate.outputs.publish == 'true'
+        if: github.repository == 'abhigyanpatwari/GitNexus' && needs.release-gate.outputs.publish == 'true'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
