@@ -11,7 +11,12 @@ const benchmarkJobs = [
   'embedding chunking benchmark',
 ].map((name) => 'ci / tests / ' + name);
 
-async function benchmarkBaseline({ github, repo, cwd = process.cwd() }) {
+async function benchmarkBaseline({
+  github,
+  repo,
+  cwd = process.cwd(),
+  allowFirstParentFallback = false,
+}) {
   const git = (...args) =>
     execFileSync(gitExecutable, args, { cwd, encoding: 'utf8' }).trim().split('\n');
   // Publish writes a lightweight rc/<main SHA> marker after its CI gate passes.
@@ -38,6 +43,14 @@ async function benchmarkBaseline({ github, repo, cwd = process.cwd() }) {
       const passed = new Set(jobs.filter((job) => job.conclusion === 'success').map((j) => j.name));
       if (benchmarkJobs.every((name) => passed.has(name))) return sha;
     }
+  }
+  // Opt-in for forks, whose Publish never writes rc markers: compare with the pushed tip's parent.
+  if (allowFirstParentFallback) {
+    const [parent] = git('rev-parse', '--verify', 'HEAD^1');
+    console.log(
+      `::notice::No measured rc ancestor; fork fallback uses the first parent ${parent} as the benchmark baseline.`,
+    );
+    return parent;
   }
   throw new Error('No ancestor has a successful main Publish run with every paired benchmark.');
 }
